@@ -57,11 +57,11 @@ class Screen:
                     self.rows[self.row][self.col] = char
                 self.col += 1
 
-    def wait(self, master, process, marker, seconds=10):
+    def wait(self, master, process, marker, seconds=10, receive=None):
         deadline = time.monotonic() + seconds
         while time.monotonic() < deadline:
             if select.select([master], [], [], 0.1)[0]:
-                self.feed(os.read(master, 65536))
+                self.feed(receive() if receive else os.read(master, 65536))
             screen = "\n".join("".join(row) for row in self.rows)
             if marker.decode() in screen:
                 return
