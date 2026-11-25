@@ -10,8 +10,17 @@ pub struct Model {
     pub id: String,
     #[serde(default)]
     pub status: Option<serde_json::Value>,
+    #[serde(default)]
+    pub meta: Option<serde_json::Value>,
 }
 impl Model {
+    pub fn context_limit(&self) -> Option<u64> {
+        self.meta
+            .as_ref()
+            .and_then(|meta| meta.get("n_ctx"))
+            .and_then(|v| v.as_u64())
+            .filter(|&n| n >= 128)
+    }
     pub fn state(&self) -> &str {
         self.status
             .as_ref()
