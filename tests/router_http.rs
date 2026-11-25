@@ -60,3 +60,32 @@ fn router_snapshot_load_and_unload() {
     client.set_loaded("example", false).unwrap();
     server.join().unwrap();
 }
+
+#[test]
+fn denied_props_is_not_a_single_model_server() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let server = thread::spawn(move || {
+        for (path, status, body) in [
+            ("/health", "200 OK", r#"{"status":"ok"}"#),
+            ("/props", "403 Forbidden", r#"{"error":"denied"}"#),
+        ] {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut line = String::new();
+            reader.read_line(&mut line).unwrap();
+            assert_eq!(line.split_whitespace().nth(1), Some(path));
+            loop {
+                line.clear();
+                reader.read_line(&mut line).unwrap();
+                if line == "\r\n" || line.is_empty() {
+                    break;
+                }
+            }
+            write!(stream,"HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len()).unwrap();
+        }
+    });
+    let error = Client::new(&endpoint).unwrap().snapshot().unwrap_err();
+    assert_eq!(error.to_string(), "HTTP 403");
+    server.join().unwrap();
+}

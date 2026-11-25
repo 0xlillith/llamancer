@@ -541,6 +541,9 @@ impl Runtime {
             }
             KeyCode::Enter => {
                 let (next, theme) = settings::apply(&self.app.config, *field, input, &self.root)?;
+                let credential_cleared = self.app.config.api_key_file.is_some()
+                    && next.api_key_file.is_none()
+                    && next.endpoint != self.app.config.endpoint;
                 let endpoint_changed = next.endpoint != self.app.config.endpoint
                     || next.server_binary != self.app.config.server_binary
                     || next.device != self.app.config.device
@@ -568,7 +571,12 @@ impl Runtime {
                     self.app.server.status = "Endpoint changed; refresh server".into();
                 }
                 self.app.edit = None;
-                self.app.notice = "Settings saved".into();
+                self.app.notice = if credential_cleared {
+                    "Endpoint changed; previous API key cleared. Set a new key if needed."
+                } else {
+                    "Settings saved"
+                }
+                .into();
             }
             _ => edit_text(input, key, 4096),
         }
