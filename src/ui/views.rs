@@ -222,32 +222,48 @@ pub fn content(app: &App, body: Rect) -> (&'static str, String) {
                     };
                     let mut lines = vec![
                         format!(
-                            "Hugging Face | Search: {}{}",
-                            safe(&d.query),
+                            "Hugging Face | {}: {}{}",
+                            if d.repo.is_some() {
+                                d.variant_sort.label()
+                            } else {
+                                d.ranking.label()
+                            },
+                            safe(if d.repo.is_some() {
+                                &d.variant_filter
+                            } else {
+                                &d.query
+                            }),
                             if d.editing { "▏" } else { "" }
                         ),
                         safe(&d.status),
-                        "/ search | @owner/repo | license:mit | quant:Q4_K_M | d queue | D choose root | n next"
-                            .into(),
+                        if d.repo.is_some() {
+                            "/ filter variants | s sort | d download | D choose root | Backspace back".into()
+                        } else {
+                            "/ search | s ranking | author:owner | license:mit | quant:Q4_K_M | n next".into()
+                        },
                     ];
                     let (offset, capacity) = super::viewport(d.cursor, body.height, 6);
                     if let Some(repo) = &d.repo {
                         lines.push(safe(repo));
-                        for (i, f) in d.files.iter().enumerate().skip(offset).take(capacity) {
+                        for (i, v) in d.variants.iter().enumerate().skip(offset).take(capacity) {
                             lines.push(format!(
-                                "{} {} | {:.2} GiB",
+                                "{} {:>8.2} GiB | {}/{} | {}{}",
                                 if i == d.cursor { ">" } else { " " },
-                                safe(&f.name),
-                                f.size as f64 / 1073741824.0
+                                v.bytes() as f64 / 1073741824.0,
+                                v.files.len(),
+                                v.expected,
+                                safe(&v.name),
+                                if v.complete() { "" } else { " [incomplete]" }
                             ));
                         }
                     } else {
                         for (i, r) in d.repos.iter().enumerate().skip(offset).take(capacity) {
                             lines.push(format!(
-                                "{} {} | {} downloads{}",
+                                "{} {:>9} DL | {:>6} likes | {}{}",
                                 if i == d.cursor { ">" } else { " " },
-                                safe(&r.id),
                                 r.downloads,
+                                r.likes,
+                                safe(&r.id),
                                 if r.gated == serde_json::Value::Bool(false) || r.gated.is_null() {
                                     ""
                                 } else {

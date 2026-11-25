@@ -12,6 +12,14 @@ pub struct Repository {
     #[serde(default)]
     pub downloads: u64,
     #[serde(default)]
+    pub likes: u64,
+    #[serde(default, rename = "trendingScore")]
+    pub trending_score: Option<f64>,
+    #[serde(default, rename = "createdAt")]
+    pub created_at: Option<String>,
+    #[serde(default, rename = "lastModified")]
+    pub updated_at: Option<String>,
+    #[serde(default)]
     pub gated: serde_json::Value,
     #[serde(default)]
     pub private: bool,
@@ -211,10 +219,49 @@ pub fn validate(file: &File) -> io::Result<()> {
     }
     Ok(())
 }
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum Ranking {
+    #[default]
+    Downloads,
+    Trending,
+    Newest,
+    Updated,
+    Likes,
+}
+impl Ranking {
+    pub fn next(self) -> Self {
+        match self {
+            Self::Downloads => Self::Trending,
+            Self::Trending => Self::Newest,
+            Self::Newest => Self::Updated,
+            Self::Updated => Self::Likes,
+            Self::Likes => Self::Downloads,
+        }
+    }
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Downloads => "Most downloaded",
+            Self::Trending => "Trending",
+            Self::Newest => "Newest",
+            Self::Updated => "Recently updated",
+            Self::Likes => "Most liked",
+        }
+    }
+    fn api(self) -> &'static str {
+        match self {
+            Self::Downloads => "downloads",
+            Self::Trending => "trendingScore",
+            Self::Newest => "createdAt",
+            Self::Updated => "lastModified",
+            Self::Likes => "likes",
+        }
+    }
+}
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct SearchSpec {
     pub query: String,
     pub license: Option<String>,
+    pub author: Option<String>,
     pub quant: Option<String>,
     pub repo: Option<String>,
 }
@@ -233,6 +280,11 @@ impl SearchSpec {
                     return Err(io::Error::other("Use one license:identifier filter"));
                 }
                 spec.license = Some(value.to_ascii_lowercase());
+            } else if let Some(value) = word.strip_prefix("author:") {
+                if !valid_segment(value) || spec.author.is_some() {
+                    return Err(io::Error::other("Use one author:owner filter"));
+                }
+                spec.author = Some(value.into());
             } else if let Some(value) = word.strip_prefix("quant:") {
                 if value.is_empty()
                     || !value
@@ -258,7 +310,9 @@ impl SearchSpec {
             }
         }
         spec.query = terms.join(" ");
-        if spec.repo.is_some() && (!spec.query.is_empty() || spec.license.is_some()) {
+        if spec.repo.is_some()
+            && (!spec.query.is_empty() || spec.license.is_some() || spec.author.is_some())
+        {
             return Err(io::Error::other(
                 "Exact repository searches support only quant filters",
             ));
@@ -266,16 +320,22 @@ impl SearchSpec {
         Ok(spec)
     }
     pub fn url(&self) -> Url {
+        self.ranked_url(Ranking::Downloads)
+    }
+    pub fn ranked_url(&self, ranking: Ranking) -> Url {
         let mut url = Url::parse("https://huggingface.co/api/models").expect("constant URL");
         url.query_pairs_mut()
             .append_pair("search", &self.query)
             .append_pair("filter", "gguf")
-            .append_pair("sort", "downloads")
+            .append_pair("sort", ranking.api())
             .append_pair("direction", "-1")
             .append_pair("limit", "50");
         if let Some(license) = &self.license {
             url.query_pairs_mut()
                 .append_pair("filter", &format!("license:{license}"));
+        }
+        if let Some(author) = &self.author {
+            url.query_pairs_mut().append_pair("author", author);
         }
         url
     }

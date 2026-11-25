@@ -369,14 +369,18 @@ pub fn aside(frame: &mut Frame, area: Rect, app: &App, p: &Palette) {
                 let d = &app.discovery;
                 if let Some(repo) = &d.repo {
                     lines.push(Line::styled(safe(repo), p.heading));
-                    if let Some(f) = d.files.get(d.cursor) {
+                    if let Some(v) = d.variants.get(d.cursor) {
+                        let f = &v.files[0];
                         lines.push(Line::raw(""));
                         lines.push(Line::styled("Selected file", p.muted));
-                        lines.push(Line::raw(safe(&f.name)));
+                        lines.push(Line::raw(safe(&v.name)));
                         lines.push(Line::raw(format!(
-                            "{:.2} GiB",
-                            f.size as f64 / 1073741824.0
+                            "{:.2} GiB total · {}/{} files",
+                            v.bytes() as f64 / 1073741824.0,
+                            v.files.len(),
+                            v.expected
                         )));
+                        lines.push(Line::raw("Per-variant popularity unavailable"));
                         lines.push(Line::raw(if f.sha256.is_some() {
                             "SHA-256 available"
                         } else {
@@ -385,7 +389,25 @@ pub fn aside(frame: &mut Frame, area: Rect, app: &App, p: &Palette) {
                     }
                 } else if let Some(r) = d.repos.get(d.cursor) {
                     lines.push(Line::styled(safe(&r.id), p.heading));
-                    lines.push(Line::raw(format!("{} downloads", r.downloads)));
+                    lines.push(Line::raw(format!(
+                        "{} downloads · {} likes",
+                        r.downloads, r.likes
+                    )));
+                    if let Some(score) = r.trending_score {
+                        lines.push(Line::raw(format!("Trending score: {score:.1}")));
+                    }
+                    if let Some(date) = r.created_at.as_deref() {
+                        lines.push(Line::raw(format!(
+                            "Created: {}",
+                            safe(date.split('T').next().unwrap_or(date))
+                        )));
+                    }
+                    if let Some(date) = r.updated_at.as_deref() {
+                        lines.push(Line::raw(format!(
+                            "Updated: {}",
+                            safe(date.split('T').next().unwrap_or(date))
+                        )));
+                    }
                 } else {
                     lines.push(Line::styled("Discover GGUF models", p.heading));
                     lines.push(Line::raw(
