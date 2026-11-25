@@ -19,13 +19,13 @@ Llamancer brings local GGUF model discovery, inference preferences, server contr
 
 ## Status
 
-First Linux beta (0.1.0-beta.1). Native Linux x86_64 and aarch64 CI, managed CPU text/vision inference, checksum-verified public and authorized gated Hub downloads, systemd lifecycle, Arch package installation, AMD Vulkan/ROCm text and vision inference, pinned CPU/Vulkan/ROCm source builds, real OMP/Pi tool use and graphical agent exit have passed their documented acceptance tests. Authenticated OMP uses an isolated temporary profile. No general model compatibility, comprehensive security audit or stable-release certification is implied. See [verified status](docs/STATUS.md), [desktop results](docs/DESKTOP-RESULTS.md) and [release review](docs/BETA-REVIEW.md).
+Development version 0.1.0-beta.2 (second Linux beta candidate). Native Linux x86_64 and aarch64 CI, managed CPU text/vision inference, checksum-verified public and authorized gated Hub downloads, systemd lifecycle, Arch package installation, AMD Vulkan/ROCm text and vision inference, pinned CPU/Vulkan/ROCm source builds, real OMP/Pi tool use and graphical agent exit have passed their documented acceptance tests. Authenticated OMP uses an isolated temporary profile. No general model compatibility, comprehensive security audit or stable-release certification is implied. See [verified status](docs/STATUS.md), [desktop results](docs/DESKTOP-RESULTS.md) and [release review](docs/BETA-REVIEW.md).
 
 | Workspace | Current functionality |
 | --- | --- |
 | Library | Read-only GGUF indexing (including Hugging Face cache snapshot links), shard grouping, search, favorites, inspector, inference profiles, import, hide/restore and recoverable managed-file quarantine |
-| Discover | Paginated Hugging Face search, exact repository lookup, license/quantization filters, pinned revisions and shard selection |
-| Downloads | Persistent queue, sequential resumable transfers, bounded retry, throughput and ETA, explicit per-bundle storage, free-space checks, pinned destination identity, file locking and integrity validation |
+| Discover | Direct search, repository rankings, author/license/quantization filters, pinned revisions and complete variant selection |
+| Downloads | Unified multipart model queue, automatic sequential resumable transfers, bounded retry, throughput and ETA, explicit per-bundle storage, free-space checks, pinned destination identity, file locking and integrity validation |
 | Server | External attach, managed session, headless router supervisor, router presets, load/unload, logs, Web UI and btop |
 | Settings | XDG TOML preferences, Eight built-in/custom themes, optional Nerd Font icons, model roots, agent, backend/device, workspace root and active project |
 
@@ -45,8 +45,8 @@ cd llamancer
 cargo run --locked --release
 ```
 
-1. Open Settings (5), add an existing absolute model directory, and optionally specify the llama-server executable and agent project directory.
-2. Open Library (1), scan with r, inspect a model with Enter and edit its inference profile with p.
+1. Press G for guided setup; confirm a model directory and use B to select a backend.
+2. Open Discover (2), type a query and press Enter. Open a repository, select a model variant and confirm its download destination once. All shards download automatically and the Library refreshes when complete. For existing models, open Library (1), inspect with Enter and edit the inference profile with p.
 3. Press l to launch an owned single-model session, or open Server (4) and press s to start a router using indexed models and generated presets. Press r to attach to an existing server instead.
 4. In the Server view, select a router model and press l to load it. Once ready, press a to launch the configured agent in the current terminal. Return to Llamancer by exiting the agent.
 5. Press x in Server to stop an owned session. External servers are never stopped by Llamancer.
@@ -55,7 +55,7 @@ Keyless OMP launches use the documented LLAMA_CPP_BASE_URL runtime override; che
 
 ## Installation packages
 
-Beta packages are available for Linux x86_64 and aarch64 on the [GitHub release page](https://github.com/0xlillith/llamancer/releases/tag/v0.1.0-beta.1). Download the matching archive and its SHA-256 file, then run:
+The currently published beta packages are available for Linux x86_64 and aarch64 on the [GitHub release page](https://github.com/0xlillith/llamancer/releases/tag/v0.1.0-beta.1). Download the matching archive and its SHA-256 file, then run:
 
 ```sh
 # Choose x86_64 or aarch64 to match uname -m
