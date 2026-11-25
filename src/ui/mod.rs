@@ -148,14 +148,21 @@ pub fn draw_themed(frame: &mut Frame, app: &App, theme: &Theme) {
         } else {
             base
         };
+        let label = if rect.width < 12 {
+            let short = ["Lib", "Find", "DL", "Srv", "Cfg"][index];
+            format!(
+                "{}{}{}",
+                if index == app.tab { ">" } else { "" },
+                index + 1,
+                short
+            )
+        } else if index == app.tab {
+            format!(">{}", TABS[index])
+        } else {
+            TABS[index].into()
+        };
         frame.render_widget(
-            Paragraph::new(if index == app.tab {
-                format!(">{}", TABS[index])
-            } else {
-                TABS[index].into()
-            })
-            .style(style)
-            .block(
+            Paragraph::new(label).style(style).block(
                 Block::bordered()
                     .border_type(BorderType::Rounded)
                     .border_style(palette.muted),
@@ -163,7 +170,32 @@ pub fn draw_themed(frame: &mut Frame, app: &App, theme: &Theme) {
             rect,
         );
     }
-    if app.tab == 0
+    if let Some(action) = app.backend_confirmation.filter(|_| app.backend_open) {
+        use crate::backends::{Kind, RELEASES};
+        let kind = Kind::ALL[app.backend_cursor].name();
+        let release = RELEASES[app.backend_version];
+        let verb = match action {
+            'i' => "Install",
+            'd' => "Remove",
+            'b' => "Benchmark",
+            _ => "Confirm",
+        };
+        let message = format!("{verb} {kind} {release}?\ny confirm / n cancel");
+        let detail = match action {
+            'i' => "Download and verify the official archive.",
+            'd' => "Delete only this managed backend. Stop all inference first.",
+            'b' => "Run the selected local GGUF (maximum 512 MiB).",
+            _ => "",
+        };
+        let content = format!("{message}\n{detail}");
+        frame.render_widget(
+            Paragraph::new(content)
+                .style(base)
+                .wrap(Wrap { trim: false })
+                .block(palette.panel(" Backend confirmation ")),
+            body,
+        );
+    } else if app.tab == 0
         && !app.backend_open
         && !app.help
         && app.edit.is_none()
@@ -188,7 +220,9 @@ pub fn draw_themed(frame: &mut Frame, app: &App, theme: &Theme) {
         };
         frame.render_widget(paragraph, body);
     }
-    let footer_text = if app.backend_open && app.notice.is_empty() {
+    let footer_text = if app.backend_open && app.backend_confirmation.is_some() {
+        "y confirm / n cancel / Esc back"
+    } else if app.backend_open && app.notice.is_empty() {
         "↑↓ select  i install  Enter use  v version  p probe  b benchmark  d remove  x cancel  Esc back"
     } else if app.notice.is_empty() {
         match app.tab {
@@ -201,6 +235,19 @@ pub fn draw_themed(frame: &mut Frame, app: &App, theme: &Theme) {
     } else {
         &app.notice
     };
+    let footer_text =
+        if footer.width < 60 && app.notice.is_empty() && app.backend_confirmation.is_none() {
+            match (app.backend_open, app.tab) {
+                (true, _) => "↑↓ i install Enter use v ver p probe d rm b bench",
+                (false, 0) => "r scan / find p profile Enter inspect ? help",
+                (false, 1) => "/ find Enter open d queue ? help",
+                (false, 2) => "r run x pause t move T restore ? help",
+                (false, 3) => "s start x stop a agent B backends ? help",
+                _ => "↑↓ Enter edit B backends ? help q quit",
+            }
+        } else {
+            footer_text
+        };
     frame.render_widget(
         Paragraph::new(safe(footer_text)).style(palette.heading),
         footer,
@@ -281,6 +328,27 @@ mod tests {
                 ..App::default()
             };
             terminal.draw(|f| draw_themed(f, &app, &theme)).unwrap();
+        }
+    }
+    #[test]
+    fn narrow_backend_confirmation_exposes_target_and_controls() {
+        let app = App {
+            tab: 4,
+            backend_open: true,
+            backend_cursor: 1,
+            backend_confirmation: Some('d'),
+            ..App::default()
+        };
+        for (w, h) in [(40, 12), (60, 14), (80, 24)] {
+            let mut terminal = Terminal::new(TestBackend::new(w, h)).unwrap();
+            terminal.draw(|f| draw(f, &app)).unwrap();
+            let buffer = terminal.backend().buffer();
+            let screen = (0..h)
+                .map(|y| (0..w).map(|x| buffer[(x, y)].symbol()).collect::<String>())
+                .collect::<Vec<_>>()
+                .join("\n");
+            assert!(screen.contains("Remove vulkan b12721?"), "{screen}");
+            assert!(screen.contains("y confirm / n cancel"), "{screen}");
         }
     }
     #[test]
