@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Opt-in local tool-call preflight (Responses SSE for OMP), exact argument checks and explicit failure confirmation.
+- Persistent OMP thinking preference and an explicitly selected revision-specific model-card sampler preset.
+
 - Release inference owned by independent agent windows when the last window closes; retain independently started sessions.
 - Expose clickable server stop, unload and disconnect actions.
 - Persistent global and per-model context settings directly in the launch menu; apply changed single-model context on relaunch.

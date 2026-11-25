@@ -43,6 +43,8 @@ pub struct Runtime {
     scan: Option<Job<Scan>>,
     rescan_pending: bool,
     pending_agent: Option<(Option<String>, std::time::Instant, bool)>,
+    probe: Option<Job<()>>,
+    probe_attempted: bool,
     auto_release: std::collections::HashSet<AgentScope>,
     release_pending: std::collections::HashSet<AgentScope>,
     backend: Option<(Job<BackendResult>, Arc<AtomicU64>, u64)>,
@@ -75,6 +77,8 @@ impl Runtime {
             scan: None,
             rescan_pending: false,
             pending_agent: None,
+            probe: None,
+            probe_attempted: false,
             auto_release: Default::default(),
             release_pending: Default::default(),
             backend: None,
@@ -83,7 +87,8 @@ impl Runtime {
         })
     }
     pub fn active(&self) -> bool {
-        self.scan.is_some()
+        self.probe.is_some()
+            || self.scan.is_some()
             || self.backend.is_some()
             || self.app.server.polling()
             || self.app.discovery.busy()
@@ -210,13 +215,19 @@ impl Runtime {
             return Ok(Effect::None);
         };
         let server = &self.app.server;
-        if std::time::Instant::now() >= *deadline || !server.active() {
+        if (self.app.probe_warning.is_none() && std::time::Instant::now() >= *deadline)
+            || !server.active()
+        {
             let scope = AgentScope {
                 generation: self.app.server.generation,
                 model: target.clone(),
             };
             let exclusive = *exclusive;
             self.pending_agent = None;
+            if let Some(job) = self.probe.take() {
+                job.cancel();
+            }
+            self.app.probe_warning = None;
             self.app.launching_agent = false;
             let status = server.status.clone();
             if exclusive {
@@ -244,6 +255,40 @@ impl Runtime {
         };
         if !ready {
             return Ok(Effect::None);
+        }
+        if self.app.probe_warning.is_some() {
+            return Ok(Effect::None);
+        }
+        let model = snapshot
+            .models
+            .iter()
+            .find(|m| target.as_ref().is_none_or(|id| m.id == *id))
+            .ok_or_else(|| io::Error::other("No ready model"))?;
+        let profile = self.active_profile(&model.id);
+        if profile.tool_preflight && !self.probe_attempted {
+            if self.probe.is_none() {
+                let client = crate::llama::client::Client::from_config(&self.app.config)?;
+                let id = model.id.clone();
+                let responses = self.app.config.default_agent == "omp";
+                self.probe = Some(Job::start(move |_| {
+                    client.tool_preflight(&id, profile.agent_thinking, responses)
+                })?);
+                self.app.notice = "Checking tool arguments (no commands executed)…".into();
+                return Ok(Effect::None);
+            }
+            let Some(result) = self.probe.as_mut().and_then(|j| j.poll()) else {
+                return Ok(Effect::None);
+            };
+            if let Some(job) = self.probe.take() {
+                job.finish();
+            }
+            self.probe_attempted = true;
+            if let Err(e) = result {
+                self.app.probe_warning =
+                    Some(format!("{e}. Enter launches anyway; Esc cancels agent."));
+                self.app.notice = self.app.probe_warning.clone().unwrap();
+                return Ok(Effect::None);
+            }
         }
         let (target, _, exclusive) = self.pending_agent.take().unwrap();
         self.app.launching_agent = false;
@@ -360,7 +405,7 @@ impl Runtime {
                 .server
                 .router_context_matches(&group, &self.app.config)
             {
-                return Err(io::Error::other("Saved context differs from the running router. Stop server in Server, then launch this model again (or restart router)."));
+                return Err(io::Error::other("Saved inference profile differs from the running router. Stop server in Server, then launch this model again (or restart router)."));
             }
             let id = crate::llama::router::id(&group);
             self.app.server.select_id(&id)?;
@@ -379,13 +424,7 @@ impl Runtime {
             }
             Some(id)
         } else if self.app.server.is_single_model(&group)
-            && self.app.server.active_context
-                == self
-                    .app
-                    .config
-                    .effective_profile(&group)
-                    .engine
-                    .context_size
+            && self.app.server.profile_matches(&group, &self.app.config)
         {
             None
         } else {
@@ -423,6 +462,8 @@ impl Runtime {
             self.auto_release.remove(&scope);
         }
         if agent {
+            self.probe_attempted = false;
+            self.app.probe_warning = None;
             if exclusive {
                 self.auto_release.insert(scope);
             }
@@ -438,6 +479,73 @@ impl Runtime {
             return self.poll_launch();
         }
         Ok(Effect::None)
+    }
+    fn active_profile(&self, id: &str) -> models::profile::Profile {
+        if !self.app.server.owns_server() {
+            return Default::default();
+        }
+        self.app
+            .candidates
+            .iter()
+            .find(|g| self.app.server.is_single_model(g) || crate::llama::router::id(g) == id)
+            .map(|g| self.app.config.effective_profile(g))
+            .unwrap_or_default()
+    }
+    fn change_launch_preference(&mut self, index: usize, back: bool) -> io::Result<()> {
+        use models::profile::{apply_recommended, recommended, Thinking};
+        let group = self
+            .app
+            .launch_menu
+            .as_ref()
+            .ok_or_else(|| io::Error::other("Select a model"))?;
+        let mut next = self.app.config.clone();
+        let profile = next
+            .profiles
+            .entry(models::library::identity(group))
+            .or_default();
+        match index {
+            5 => {
+                if next.default_agent != "omp" {
+                    return Err(io::Error::other(
+                        "Thinking selector currently supports OMP only",
+                    ));
+                }
+                let values = [
+                    None,
+                    Some(Thinking::Off),
+                    Some(Thinking::Minimal),
+                    Some(Thinking::Low),
+                    Some(Thinking::Medium),
+                    Some(Thinking::High),
+                    Some(Thinking::Xhigh),
+                    Some(Thinking::Max),
+                    Some(Thinking::Auto),
+                ];
+                let i = values
+                    .iter()
+                    .position(|v| *v == profile.agent_thinking)
+                    .unwrap_or(0);
+                profile.agent_thinking = values[if back {
+                    (i + values.len() - 1) % values.len()
+                } else {
+                    (i + 1) % values.len()
+                }];
+            }
+            6 => profile.tool_preflight = !profile.tool_preflight,
+            7 => {
+                if !recommended(group) {
+                    return Err(io::Error::other(
+                        "No reviewed model-card preset for this revision",
+                    ));
+                }
+                apply_recommended(profile);
+            }
+            _ => return Ok(()),
+        }
+        profile.validate()?;
+        self.persist(next)?;
+        self.app.notice = "Saved model preference; generation changes require relaunch".into();
+        Ok(())
     }
     pub fn agent_scope(&self) -> Option<AgentScope> {
         let s = &self.app.server;
@@ -579,7 +687,7 @@ impl Runtime {
             if self.app.context_input.is_some() {
                 return;
             }
-            if index < 5 {
+            if index < 8 {
                 self.app.launch_cursor = index;
             }
             return;
@@ -656,6 +764,13 @@ impl Runtime {
             return Ok(Effect::None);
         }
         if self.app.launching_agent {
+            if self.app.probe_warning.is_some() && key.code == KeyCode::Enter {
+                self.app.probe_warning = None;
+                if let Some((_, deadline, _)) = self.pending_agent.as_mut() {
+                    *deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+                }
+                return self.poll_launch();
+            }
             if matches!(key.code, KeyCode::Esc | KeyCode::Char('x')) {
                 if let Some((target, _, exclusive)) = self.pending_agent.take() {
                     if exclusive {
@@ -665,6 +780,10 @@ impl Runtime {
                         });
                     }
                 }
+                if let Some(job) = self.probe.take() {
+                    job.cancel();
+                }
+                self.app.probe_warning = None;
                 self.app.launching_agent = false;
                 self.app.notice =
                     "Automatic agent launch cancelled; inference remains available.".into();
@@ -691,12 +810,17 @@ impl Runtime {
             match key.code {
                 KeyCode::Esc => self.app.launch_menu = None,
                 KeyCode::Up => self.app.launch_cursor = self.app.launch_cursor.saturating_sub(1),
-                KeyCode::Down => self.app.launch_cursor = (self.app.launch_cursor + 1).min(4),
+                KeyCode::Down => self.app.launch_cursor = (self.app.launch_cursor + 1).min(7),
                 KeyCode::Char('c') => {
                     self.app.launch_cursor = 3;
                     self.app.context_input = Some(String::new());
                 }
-                KeyCode::Left | KeyCode::Right if self.app.launch_cursor >= 3 => {
+                KeyCode::Left | KeyCode::Right if (5..=6).contains(&self.app.launch_cursor) => self
+                    .change_launch_preference(self.app.launch_cursor, key.code == KeyCode::Left)?,
+                KeyCode::Enter if self.app.launch_cursor >= 5 => {
+                    self.change_launch_preference(self.app.launch_cursor, false)?
+                }
+                KeyCode::Left | KeyCode::Right if (3..=4).contains(&self.app.launch_cursor) => {
                     let current = if self.app.launch_cursor == 4 {
                         self.app.config.default_context
                     } else {
@@ -1728,6 +1852,11 @@ impl Runtime {
             .prepare(&c.endpoint, &model.id, cwd)?,
             _ => return Err(io::Error::other("Unknown agent")),
         };
+        if c.default_agent == "omp" {
+            if let Some(t) = self.active_profile(&model.id).agent_thinking {
+                plan.args.extend(["--thinking".into(), t.label().into()]);
+            }
+        }
         if let Some(key) = crate::llama::auth::Key::for_endpoint(
             c.api_key_file.as_deref(),
             &crate::llama::client::endpoint(&c.endpoint)?,

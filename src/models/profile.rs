@@ -7,6 +7,8 @@ use std::{io, path::PathBuf};
 pub struct Profile {
     pub engine: Engine,
     pub generation: Generation,
+    pub agent_thinking: Option<Thinking>,
+    pub tool_preflight: bool,
 }
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -30,6 +32,68 @@ pub struct Generation {
     pub min_p: Option<f32>,
     pub repeat_penalty: Option<f32>,
     pub seed: Option<u32>,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Thinking {
+    Off,
+    Minimal,
+    Low,
+    Medium,
+    High,
+    Xhigh,
+    Max,
+    Auto,
+}
+impl Thinking {
+    pub const ALL: [Self; 8] = [
+        Self::Off,
+        Self::Minimal,
+        Self::Low,
+        Self::Medium,
+        Self::High,
+        Self::Xhigh,
+        Self::Max,
+        Self::Auto,
+    ];
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Minimal => "minimal",
+            Self::Low => "low",
+            Self::Medium => "medium",
+            Self::High => "high",
+            Self::Xhigh => "xhigh",
+            Self::Max => "max",
+            Self::Auto => "auto",
+        }
+    }
+}
+pub const RECOMMENDATION_REPO: &str =
+    "Qwen3.8-Flash-Next-Turbo-Brilliance-50x-Reasoning-Instruct-GSQ-RCO-GGUF";
+pub const RECOMMENDATION_REV: &str = "096fef2f967efa50c25529adda0c59637e2b4477";
+pub fn recommended(group: &super::group::Group) -> bool {
+    group.complete
+        && !group.projector
+        && group.files.iter().all(|f| {
+            let Some(rev) = f.path.parent() else {
+                return false;
+            };
+            rev.file_name().is_some_and(|n| n == RECOMMENDATION_REV)
+                && rev.parent().is_some_and(|r| {
+                    r.file_name().is_some_and(|n| n == RECOMMENDATION_REPO)
+                        && r.parent()
+                            .is_some_and(|a| a.file_name().is_some_and(|n| n == "DavidAU"))
+                })
+        })
+}
+pub fn apply_recommended(p: &mut Profile) {
+    p.generation.temperature = Some(1.0);
+    p.generation.top_p = Some(0.95);
+    p.generation.top_k = Some(20);
+    p.generation.min_p = Some(0.0);
+    p.generation.repeat_penalty = Some(1.0);
+    p.agent_thinking = Some(Thinking::Medium);
 }
 fn invalid(message: &'static str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidInput, message)
