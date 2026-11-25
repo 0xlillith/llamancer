@@ -84,7 +84,7 @@ impl VariantSort {
 }
 fn group_variants(files: Vec<File>) -> Vec<Variant> {
     use std::{collections::BTreeMap, path::Path};
-    let mut groups: BTreeMap<(String, u64), Vec<File>> = BTreeMap::new();
+    let mut groups: BTreeMap<(String, String, String, u64), Vec<File>> = BTreeMap::new();
     for f in files {
         let p = Path::new(&f.name);
         let key = if let Some((base, _, total)) = crate::models::group::shard(p) {
@@ -97,11 +97,14 @@ fn group_variants(files: Vec<File>) -> Vec<Variant> {
         } else {
             (f.name.clone(), 1)
         };
-        groups.entry(key).or_default().push(f);
+        groups
+            .entry((f.repo.clone(), f.revision.clone(), key.0, key.1))
+            .or_default()
+            .push(f);
     }
     groups
         .into_iter()
-        .map(|((name, expected), mut files)| {
+        .map(|((_, _, name, expected), mut files)| {
             files.sort_by(|a, b| a.name.cmp(&b.name));
             files.dedup_by(|a, b| a.name == b.name);
             Variant {

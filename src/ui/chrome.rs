@@ -374,7 +374,7 @@ pub fn aside(frame: &mut Frame, area: Rect, app: &App, p: &Palette) {
                     if let Some(v) = d.variants.get(d.cursor) {
                         let f = &v.files[0];
                         lines.push(Line::raw(""));
-                        lines.push(Line::styled("Selected file", p.muted));
+                        lines.push(Line::styled("Selected variant", p.muted));
                         lines.push(Line::raw(safe(&v.name)));
                         lines.push(Line::raw(format!(
                             "{:.2} GiB total · {}/{} files",
@@ -420,52 +420,57 @@ pub fn aside(frame: &mut Frame, area: Rect, app: &App, p: &Palette) {
             2 => {
                 title = "Transfer";
                 if let Some(d) = &app.downloads {
+                    let groups = d.bundles();
                     lines.push(Line::styled(
-                        format!("{} queue entries", d.queue.items.len()),
+                        format!("{} model downloads", groups.len()),
                         p.heading,
                     ));
-                    if let Some(item) = d.queue.items.get(d.cursor) {
+                    if let Some(g) = groups.get(d.bundle_cursor(&groups)) {
                         lines.push(Line::raw(""));
-                        lines.push(Line::styled(safe(&item.file.name), p.muted));
+                        lines.push(Line::styled(safe(&g.name), p.heading));
                         lines.push(Line::raw(format!(
-                            "{:?} · {:.2} GiB",
-                            item.state,
-                            item.file.size as f64 / 1073741824.0
+                            "{} · {:.2} GiB",
+                            g.label(),
+                            g.bytes as f64 / 1073741824.0
                         )));
-                        if let Some(n) = d.known_bytes(d.cursor) {
-                            lines.push(Line::styled(meter(n, item.file.size, 28), p.heading));
-                            lines.push(Line::raw(format!(
-                                "{:.2}/{:.2} GiB · {:.1}%",
-                                n as f64 / 1073741824.0,
-                                item.file.size as f64 / 1073741824.0,
-                                n as f64 / item.file.size as f64 * 100.0
-                            )));
-                        }
-                        if d.is_verifying(d.cursor) {
-                            lines.push(Line::styled("Verifying SHA-256", p.heading));
-                        }
-                        if let Some((graph, peak)) = d.speed_history(d.cursor) {
-                            lines.push(Line::raw(""));
-                            lines.push(Line::styled("Recent transfer rate", p.muted));
-                            lines.push(Line::styled(graph, p.heading));
-                            lines.push(Line::raw(format!("Peak {:.1} MiB/s", peak / 1048576.0)));
-                        }
-                        if let Some((speed, eta)) = d.speed_eta(d.cursor) {
-                            lines.push(Line::raw(format!(
-                                "{:.1} MiB/s · {}m {}s",
-                                speed / 1048576.0,
-                                eta / 60,
-                                eta % 60
-                            )));
+                        lines.push(Line::styled(meter(g.received, g.bytes, 28), p.heading));
+                        lines.push(Line::raw(format!(
+                            "{:.2}/{:.2} GiB",
+                            g.received as f64 / 1073741824.0,
+                            g.bytes as f64 / 1073741824.0
+                        )));
+                        if let Some(i) = g.active {
+                            if let Some((graph, peak)) = d.speed_history(i) {
+                                lines.push(Line::raw("Recent transfer rate"));
+                                lines.push(Line::styled(graph, p.heading));
+                                lines
+                                    .push(Line::raw(format!("Peak {:.1} MiB/s", peak / 1048576.0)));
+                            }
+                            if let Some((speed, _)) = d.speed_eta(i) {
+                                lines.push(Line::raw(format!(
+                                    "{:.1} MiB/s (current part)",
+                                    speed / 1048576.0
+                                )));
+                            }
                         }
                         lines.push(Line::raw(""));
-                        if let Some(err) = &item.error {
-                            lines.push(Line::styled("Last error", p.base.fg(p.orange)));
-                            lines.push(Line::raw(safe(err)));
-                            lines.push(Line::raw(""));
+                        lines.push(Line::styled("Parts", p.muted));
+                        for &i in &g.indices {
+                            let item = &d.queue.items[i];
+                            let part =
+                                crate::models::group::shard(std::path::Path::new(&item.file.name))
+                                    .map(|(_, n, t)| format!("{n}/{t}"))
+                                    .unwrap_or_else(|| "1/1".into());
+                            lines.push(Line::raw(format!("{part} · {:?}", item.state)));
+                            if let Some(err) = &item.error {
+                                lines.push(Line::styled(safe(err), p.base.fg(p.orange)));
+                            }
                         }
+                        lines.push(Line::raw(""));
                         lines.push(Line::styled("Destination", p.muted));
-                        lines.push(Line::raw(safe(&item.root.to_string_lossy())));
+                        lines.push(Line::raw(safe(
+                            &d.queue.items[g.indices[0]].root.to_string_lossy(),
+                        )));
                     }
                 }
             }

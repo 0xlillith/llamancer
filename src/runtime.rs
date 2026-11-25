@@ -287,9 +287,7 @@ impl Runtime {
             1 if index < self.app.discovery.len() => self.app.discovery.cursor = index,
             2 => {
                 if let Some(d) = self.app.downloads.as_mut() {
-                    if index < d.queue.items.len() {
-                        d.cursor = index;
-                    }
+                    d.select_bundle(index);
                 }
             }
             3 => {
@@ -1189,12 +1187,12 @@ impl Runtime {
             return Ok(());
         };
         match key {
-            KeyCode::Up => d.cursor = d.cursor.saturating_sub(1),
-            KeyCode::Down => d.cursor = (d.cursor + 1).min(d.queue.items.len().saturating_sub(1)),
-            KeyCode::Char('r') => d.start()?,
+            KeyCode::Up => d.move_bundle(false),
+            KeyCode::Down => d.move_bundle(true),
+            KeyCode::Char('r') | KeyCode::Enter => d.resume_bundle()?,
             KeyCode::Char('R') => d.start_queue()?,
             KeyCode::Char('x') => d.pause(),
-            KeyCode::Char('z') => d.remove_selected()?,
+            KeyCode::Char('z') => d.remove_bundle()?,
             _ => {}
         }
         Ok(())

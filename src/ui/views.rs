@@ -306,50 +306,21 @@ pub fn content(app: &App, body: Rect) -> (&'static str, String) {
                         };
                         let mut lines = vec![
                             safe(&d.status),
-                            "r resume | R run queue | x pause | t quarantine | T restore | z remove entry".into(),
+                            "Enter/r resume model | R all queued | x pause | t quarantine | T restore | z remove model".into(),
                         ];
-                        let (offset, capacity) = super::viewport(d.cursor, body.height, 5);
-                        for (i, item) in
-                            d.queue.items.iter().enumerate().skip(offset).take(capacity)
-                        {
-                            let status = d
-                                .known_bytes(i)
-                                .map(|n| {
-                                    format!(
-                                        "{:.1}% ({:.2}/{:.2} GiB)",
-                                        n as f64 / item.file.size as f64 * 100.0,
-                                        n as f64 / 1073741824.0,
-                                        item.file.size as f64 / 1073741824.0
-                                    )
-                                })
-                                .unwrap_or_else(|| format!("{:?}", item.state));
-                            let status = if d.is_verifying(i) {
-                                format!("Verifying SHA-256 | {status}")
-                            } else if let Some((speed, eta)) = d.speed_eta(i) {
-                                format!(
-                                    "{status} | {:.1} MiB/s | ETA {}m {:02}s",
-                                    speed / 1048576.0,
-                                    eta / 60,
-                                    eta % 60
-                                )
-                            } else {
-                                status
-                            };
+                        let groups = d.bundles();
+                        let cursor = d.bundle_cursor(&groups);
+                        let (offset, capacity) = super::viewport(cursor, body.height, 5);
+                        for (i, g) in groups.iter().enumerate().skip(offset).take(capacity) {
                             lines.push(format!(
-                                "{} {:<12} {} | {} | {}",
-                                if i == d.cursor { ">" } else { " " },
-                                if d.is_verifying(i) {
-                                    "Verifying".into()
-                                } else if d.progress(i).is_some() {
-                                    "Downloading".into()
-                                } else {
-                                    format!("{:?}", item.state)
-                                },
-                                d.known_bytes(i)
-                                    .map(|n| super::chrome::meter(n, item.file.size, 12))
-                                    .unwrap_or_else(|| "────────────".into()),
-                                status,
-                                safe(&item.file.name)
+                                "{} {:<21} {} | {:>6.1}% | {:.2}/{:.2} GiB | {}",
+                                if i == cursor { ">" } else { " " },
+                                g.label(),
+                                super::chrome::meter(g.received, g.bytes, 12),
+                                100.0 * g.received as f64 / g.bytes.max(1) as f64,
+                                g.received as f64 / 1073741824.0,
+                                g.bytes as f64 / 1073741824.0,
+                                safe(&g.name)
                             ));
                         }
                         if d.queue.items.is_empty() {
