@@ -31,7 +31,7 @@ Pre-release development, targeting the first Linux beta. Native Linux x86_64 and
 
 ## Screenshots
 
-![Llamancer Library and GGUF inspector, Andromeda theme](assets/screenshots/andromeda-library.png)
+![Llamancer in Kitty with optional Nerd Font icons and Andromeda theme](assets/screenshots/polished-library.png)
 
 [More screenshots and terminal captures](docs/SCREENSHOTS.md): themes, project workspace, guided setup, memory advisory, benchmark comparison, inference profiles, discovery, downloads and the active router.
 
