@@ -206,6 +206,7 @@ fn main() -> io::Result<()> {
                             runtime.app.notice = match plan
                                 .terminal_command(mode)
                                 .and_then(|command| run_child(&mut terminal, command, &stop))
+                                .and(plan.finish())
                             {
                                 Ok(()) => {
                                     if mode == llamancer::agents::TerminalMode::Current {
