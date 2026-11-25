@@ -30,3 +30,4 @@
 
 - Added checksum-pinned official CPU, Vulkan and ROCm backend installation, device probing, selection, removal and bounded small-model benchmarks in the TUI. Added CLI installation/probe commands and actual managed CPU installation in live CI. GPU runtime requirements remain external.
 - Added side-by-side pinned b12721/b12726 upgrades and rollback with explicit version selection and a shared execution/exclusive mutation lock.
+- Added upstream release discovery, pinned source-build helper, gated Hub credential validation, actual GPU vision, real agent tool selection and graphical handoff, scoped authenticated OMP profiles and daemon cleanup, bounded local state, narrow modal navigation, and owned-router shutdown on terminal hangup.
