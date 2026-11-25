@@ -11,7 +11,7 @@ use ratatui::{
 };
 use theme::{color, Theme};
 
-pub(super) fn safe(text: &str) -> String {
+pub(crate) fn safe(text: &str) -> String {
     text.chars()
         .map(|c| if c.is_control() { '�' } else { c })
         .collect()
@@ -108,6 +108,7 @@ pub fn row_at(area: Rect, app: &App, column: u16, row: u16) -> Option<usize> {
         .then_some(usize::from(row));
     }
     if app.help
+        || app.fit_report.is_some()
         || app.hide_confirmation.is_some()
         || app.quarantine_confirmation.is_some()
         || app.profile_editor.is_some()
@@ -252,6 +253,7 @@ pub fn draw_themed(frame: &mut Frame, app: &App, theme: &Theme) {
     } else if app.tab == 0
         && !app.backend_open
         && app.projects.is_none()
+        && app.fit_report.is_none()
         && app.download_destination.is_none()
         && !app.help
         && app.edit.is_none()
@@ -278,6 +280,7 @@ pub fn draw_themed(frame: &mut Frame, app: &App, theme: &Theme) {
         // Keep list rows on one terminal line, so cursor and pointer geometry agree.
         let paragraph = if app.help
             || app.profile_editor.is_some()
+            || app.fit_report.is_some()
             || app.edit.is_some()
             || app.quarantine_confirmation.is_some()
         {
@@ -287,7 +290,9 @@ pub fn draw_themed(frame: &mut Frame, app: &App, theme: &Theme) {
         };
         frame.render_widget(paragraph, body);
     }
-    let footer_text = if app.download_destination.is_some() {
+    let footer_text = if app.fit_report.is_some() {
+        "Esc / Enter close  |  p profile to adjust settings"
+    } else if app.download_destination.is_some() {
         "↑↓ choose storage  Enter queue  Esc cancel"
     } else if app.projects.is_some() {
         "↑↓ choose project  Enter select  Esc cancel"
@@ -297,7 +302,7 @@ pub fn draw_themed(frame: &mut Frame, app: &App, theme: &Theme) {
         "↑↓ select  i install  Enter use  v version  c check  p probe  b benchmark  d remove  x cancel  Esc back"
     } else if app.notice.is_empty() {
         match app.tab {
-            0 => "r scan  / search  f favorite  s sort  p profile  l load  i invalid  h hide  t quarantine  ? help",
+            0 => "r scan  / search  f favorite  s sort  p profile  m fit  l load  i invalid  h hide  t quarantine  ? help",
             1 => "/ search  Enter open  d queue  D destination  n next page  Backspace back  ? help",
             2 => "r resume  R run queue  x pause  t quarantine  T restore  z remove entry  ? help",
             3 => "r refresh  D detach  s router  R restart  i probe  x stop  l/u load/unload  a agent  A current  w web  b btop  g logs  B backends  P project",
@@ -311,10 +316,11 @@ pub fn draw_themed(frame: &mut Frame, app: &App, theme: &Theme) {
         && app.backend_confirmation.is_none()
         && app.projects.is_none()
         && app.download_destination.is_none()
+        && app.fit_report.is_none()
     {
         match (app.backend_open, app.tab) {
             (true, _) => "↑↓ i install Enter use v ver c check p probe d rm",
-            (false, 0) => "r scan / find p profile Enter inspect ? help",
+            (false, 0) => "r scan / find p profile m fit ? help",
             (false, 1) => "/ find Enter open d queue ? help",
             (false, 2) => "r run x pause t move T restore ? help",
             (false, 3) => "s start x stop a agent B backends ? help",
