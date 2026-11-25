@@ -166,7 +166,9 @@ fn content_regions(body: Rect, app: &App) -> (Rect, Option<Rect>) {
     }
 }
 pub fn search_at(area: Rect, app: &App, column: u16, row: u16) -> bool {
-    if app.backend_open
+    if app.launch_menu.is_some()
+        || app.launching_agent
+        || app.backend_open
         || app.setup_open
         || app.projects.is_some()
         || app.download_destination.is_some()
@@ -193,6 +195,14 @@ pub fn search_at(area: Rect, app: &App, column: u16, row: u16) -> bool {
 }
 pub fn row_at(area: Rect, app: &App, column: u16, row: u16) -> Option<usize> {
     let (body, _) = content_regions(regions(area)[2], app);
+    if app.launch_menu.is_some() {
+        let index = usize::from(row.checked_sub(body.y.checked_add(4)?)?);
+        return (index < 3
+            && row < body.bottom().saturating_sub(1)
+            && column > body.x
+            && column < body.right().saturating_sub(1))
+        .then_some(index);
+    }
     if app.setup_open {
         let row = row.checked_sub(body.y.checked_add(2)?)?;
         let (offset, capacity) = viewport(app.setup_cursor, body.height, 4);
@@ -344,6 +354,7 @@ pub fn draw_themed(frame: &mut Frame, app: &App, theme: &Theme) {
             body,
         );
     } else if app.tab == 0
+        && app.launch_menu.is_none()
         && !app.backend_open
         && app.projects.is_none()
         && app.fit_report.is_none()
@@ -413,7 +424,11 @@ pub fn draw_themed(frame: &mut Frame, app: &App, theme: &Theme) {
     if let Some(side) = aside {
         chrome::aside(frame, side, app, &palette);
     }
-    let footer_text = if app.setup_open {
+    let footer_text = if app.launch_menu.is_some() {
+        "Enter launch  ↑↓ choose  Esc back"
+    } else if app.launching_agent {
+        "Starting inference → agent window  Esc cancel agent launch"
+    } else if app.setup_open {
         "↑↓ choose step  Enter open  Esc skip  G reopen"
     } else if app.benchmark_open {
         "Esc back  h back"
@@ -439,7 +454,7 @@ pub fn draw_themed(frame: &mut Frame, app: &App, theme: &Theme) {
         "↑↓ select  i install  Enter use  v version  c check  p probe  b benchmark  h compare  d remove  x cancel  Esc back"
     } else {
         match app.tab {
-            0 => "r scan  / search  f favorite  s sort  p profile  m fit  l Run model  i invalid  h hide  t quarantine  ? help",
+            0 => "Enter open / double-click  j inspect  p profile  m fit  F3 search  r refresh  ? help",
             1 => "F3 focus search  s sort  Enter open/download  d download  n next page  Backspace back  ? help",
             2 => "r resume  R run queue  x pause  t quarantine  T restore  z remove entry  ? help",
             3 => "r refresh  D detach  s Start router  R restart  i probe  x stop  l/u load/unload  a Launch agent  A current  w web  b btop  g logs  B backends  P project",

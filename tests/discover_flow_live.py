@@ -44,7 +44,7 @@ def main():
     if q["items"][0]["state"]=="Complete":break
    assert q["items"][0]["state"]=="Complete" and q["items"][0]["receipt"]
    send(b"1");wait("stories260K",20)
-   send(b"l");wait("Server",10)
+   send(b"\r");wait("Launch model");send(b"\x1b[B");send(b"\r");wait("Server",10)
    import urllib.request
    until=time.monotonic()+45
    while time.monotonic()<until:

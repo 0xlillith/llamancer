@@ -52,6 +52,81 @@ fn run_child(
         Err(io::Error::other("Child process exited with an error"))
     }
 }
+fn apply_effect(
+    runtime: &mut Runtime,
+    terminal: &mut ratatui::DefaultTerminal,
+    stop: &AtomicBool,
+    effect: io::Result<Effect>,
+    agent_windows: &mut Vec<std::process::Child>,
+) {
+    match effect {
+        Ok(Effect::None) => {}
+        Ok(Effect::Launch(plan, mode)) if mode == llamancer::agents::TerminalMode::NewWindow => {
+            runtime.app.notice = match plan.terminal_command(mode).and_then(|mut command| {
+                command
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .spawn()
+            }) {
+                Ok(child) => {
+                    agent_windows.push(child);
+                    "Starting agent in a separate window; Llamancer stays open".into()
+                }
+                Err(e) => format!("Agent window failed: {e}"),
+            };
+        }
+        Ok(Effect::Launch(plan, mode)) => {
+            runtime.app.notice = match plan
+                .terminal_command(mode)
+                .and_then(|command| run_child(terminal, command, stop))
+                .and(plan.finish())
+            {
+                Ok(()) => {
+                    if mode == llamancer::agents::TerminalMode::Current {
+                        "Agent session ended".into()
+                    } else {
+                        "Kitty launch accepted".into()
+                    }
+                }
+                Err(e) => {
+                    if mode == llamancer::agents::TerminalMode::Current {
+                        e.to_string()
+                    } else {
+                        format!("{e}; press A for current terminal")
+                    }
+                }
+            };
+        }
+        Ok(Effect::Monitor) => {
+            runtime.app.notice = match run_child(terminal, Command::new("btop"), stop) {
+                Ok(()) => "Monitor closed".into(),
+                Err(e) => e.to_string(),
+            };
+        }
+        Ok(Effect::Open(url)) => {
+            let result = Command::new("xdg-open")
+                .arg(url)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn();
+            runtime.app.notice = match result {
+                Ok(mut child) => {
+                    std::thread::spawn(move || {
+                        let _ = child.wait();
+                    });
+                    "Opening server Web UI".into()
+                }
+                Err(e) => e.to_string(),
+            };
+        }
+        Err(e) => {
+            runtime.input_failed();
+            runtime.app.notice = e.to_string();
+        }
+    }
+}
 fn backend_cli(mut args: impl Iterator<Item = std::ffi::OsString>) -> io::Result<()> {
     use llamancer::backends::{self, Kind};
     use std::sync::{
@@ -180,9 +255,33 @@ fn main() -> io::Result<()> {
     let mut terminal = ratatui::init();
     let result = (|| -> io::Result<()> {
         execute!(io::stdout(), EnableMouseCapture)?;
+        let mut agent_windows: Vec<std::process::Child> = Vec::new();
         let mut last_click: Option<(usize, usize, u16, u16, Instant)> = None;
         while !runtime.app.quit && !stop.load(Ordering::Acquire) {
             runtime.tick();
+            agent_windows.retain_mut(|child| match child.try_wait() {
+                Ok(None) => true,
+                Ok(Some(status)) => {
+                    runtime.app.notice = if status.success() {
+                        "Agent window closed".into()
+                    } else {
+                        "Agent window exited with an error; check Kitty/agent setup".into()
+                    };
+                    false
+                }
+                Err(e) => {
+                    runtime.app.notice = format!("Agent window status: {e}");
+                    false
+                }
+            });
+            let effect = runtime.poll_launch();
+            apply_effect(
+                &mut runtime,
+                &mut terminal,
+                &stop,
+                effect,
+                &mut agent_windows,
+            );
             if runtime.app.details && runtime.app.inspector_scroll > 0 {
                 let size = terminal.size()?;
                 ui::clamp_inspector_scroll(
@@ -214,59 +313,14 @@ fn main() -> io::Result<()> {
             match event::read()? {
                 Event::Key(key) if key.kind == KeyEventKind::Press => {
                     last_click = None;
-                    match runtime.handle_key(key) {
-                        Ok(Effect::None) => {}
-                        Ok(Effect::Launch(plan, mode)) => {
-                            runtime.app.notice = match plan
-                                .terminal_command(mode)
-                                .and_then(|command| run_child(&mut terminal, command, &stop))
-                                .and(plan.finish())
-                            {
-                                Ok(()) => {
-                                    if mode == llamancer::agents::TerminalMode::Current {
-                                        "Agent session ended".into()
-                                    } else {
-                                        "Kitty launch accepted".into()
-                                    }
-                                }
-                                Err(e) => {
-                                    if mode == llamancer::agents::TerminalMode::Current {
-                                        e.to_string()
-                                    } else {
-                                        format!("{e}; press A for current terminal")
-                                    }
-                                }
-                            };
-                        }
-                        Ok(Effect::Monitor) => {
-                            runtime.app.notice =
-                                match run_child(&mut terminal, Command::new("btop"), &stop) {
-                                    Ok(()) => "Monitor closed".into(),
-                                    Err(e) => e.to_string(),
-                                };
-                        }
-                        Ok(Effect::Open(url)) => {
-                            let result = Command::new("xdg-open")
-                                .arg(url)
-                                .stdin(Stdio::null())
-                                .stdout(Stdio::null())
-                                .stderr(Stdio::null())
-                                .spawn();
-                            runtime.app.notice = match result {
-                                Ok(mut child) => {
-                                    std::thread::spawn(move || {
-                                        let _ = child.wait();
-                                    });
-                                    "Opening server Web UI".into()
-                                }
-                                Err(e) => e.to_string(),
-                            };
-                        }
-                        Err(e) => {
-                            runtime.input_failed();
-                            runtime.app.notice = e.to_string();
-                        }
-                    }
+                    let effect = runtime.handle_key(key);
+                    apply_effect(
+                        &mut runtime,
+                        &mut terminal,
+                        &stop,
+                        effect,
+                        &mut agent_windows,
+                    );
                 }
                 Event::Mouse(mouse)
                     if !runtime.modal()
@@ -274,7 +328,8 @@ fn main() -> io::Result<()> {
                         || runtime.app.show_invalid
                         || runtime.app.projects.is_some()
                         || runtime.app.download_destination.is_some()
-                        || runtime.app.setup_open =>
+                        || runtime.app.setup_open
+                        || runtime.app.launch_menu.is_some() =>
                 {
                     let size = terminal.size()?;
                     let area = ratatui::layout::Rect::new(0, 0, size.width, size.height);
@@ -290,8 +345,9 @@ fn main() -> io::Result<()> {
                             {
                                 runtime.blur_search();
                                 let tab = runtime.app.tab;
-                                let eligible =
-                                    !runtime.modal() && tab == 1 && !runtime.app.discovery.busy();
+                                let menu = runtime.app.launch_menu.is_some();
+                                let eligible = !runtime.modal()
+                                    && (tab == 0 || (tab == 1 && !runtime.app.discovery.busy()));
                                 let now = Instant::now();
                                 let double = eligible
                                     && last_click.is_some_and(|(t, i, x, y, when)| {
@@ -308,13 +364,18 @@ fn main() -> io::Result<()> {
                                 } else {
                                     None
                                 };
-                                if double {
-                                    if let Err(e) = runtime.handle_key(event::KeyEvent::new(
+                                if double || menu {
+                                    let effect = runtime.handle_key(event::KeyEvent::new(
                                         event::KeyCode::Enter,
                                         event::KeyModifiers::NONE,
-                                    )) {
-                                        runtime.app.notice = e.to_string();
-                                    }
+                                    ));
+                                    apply_effect(
+                                        &mut runtime,
+                                        &mut terminal,
+                                        &stop,
+                                        effect,
+                                        &mut agent_windows,
+                                    );
                                 }
                             } else if !runtime.modal() {
                                 last_click = None;

@@ -47,6 +47,13 @@ impl Controller {
     pub fn owns_server(&self) -> bool {
         self.owned.is_some()
     }
+    pub fn is_single_model(&self, group: &Group) -> bool {
+        self.owns_server()
+            && self
+                .single
+                .as_ref()
+                .is_some_and(|g| identity(g) == identity(group))
+    }
     pub fn active(&self) -> bool {
         self.busy() || self.owns_server()
     }

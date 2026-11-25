@@ -2,7 +2,51 @@ use crate::app::{App, TABS};
 use ratatui::layout::Rect;
 
 pub fn content(app: &App, body: Rect) -> (&'static str, String) {
-    if app.setup_open {
+    if let Some(g) = &app.launch_menu {
+        let mut lines = vec![
+            format!(
+                "{} · {:.2} GiB",
+                super::safe(&g.name),
+                g.bytes() as f64 / 1073741824.0
+            ),
+            format!(
+                "Agent: {} · separate window",
+                super::safe(&app.config.default_agent)
+            ),
+            String::new(),
+        ];
+        for (i, label) in [
+            "Run model + open coding agent",
+            "Run model only",
+            "Inspect model details",
+        ]
+        .iter()
+        .enumerate()
+        {
+            lines.push(format!(
+                "{} {label}",
+                if i == app.launch_cursor { ">" } else { " " }
+            ));
+        }
+        lines.push(String::new());
+        if app.server.owns_server()
+            && app.server.snapshot.as_ref().is_some_and(|s| !s.router)
+            && !app.server.is_single_model(g)
+        {
+            lines.push(
+                "Starting another model replaces the current managed single-model server.".into(),
+            );
+        }
+        if app.config.api_key_file.is_some() {
+            lines.push("Authenticated agents: Run model only, then explicit A in Server.".into());
+        }
+        lines.push(if g.complete && !g.projector {
+            "Enter or click an action. Esc goes back.".into()
+        } else {
+            "Incomplete model or projector: inspection only.".into()
+        });
+        ("Launch model", lines.join("\n"))
+    } else if app.setup_open {
         let (offset, capacity) = super::viewport(app.setup_cursor, body.height, 4);
         let statuses = crate::setup::statuses(app);
         let mut lines =
@@ -218,7 +262,7 @@ pub fn content(app: &App, body: Rect) -> (&'static str, String) {
             ),
         )
     } else if app.help {
-        ("Help", "Tab / arrows / 1–5: navigate; click tab or row, scroll to select\nLibrary: r scan, x cancel, Up/Down select, Enter details (PgUp/PgDn scroll)\n/: search, s: sort, f: favorite, v: favorites only, p: inference profile, m: memory advisory, l: start single model, i: invalid files, h: hide model, t: quarantine\nDiscover: / search, Enter open, d queue, n next page\nDownloads: r resume, R run queue, x pause, t quarantine, T restore, z remove entry\nServer: r refresh, D detach, s router  R restart, i probe, x stop, l/u load/unload, a agent, A current terminal, g logs\nG guided setup (any view). Settings: Up/Down select, Enter edit; T next theme; I icon mode; B backend manager, P project picker (also Server)\n?: toggle help\nEsc: close help or quit\nq / Ctrl+C: quit".into())
+        ("Help", "Tab / arrows / 1–5: navigate; click tab or row, scroll to select\nLibrary: r scan, x cancel, Up/Down select, Enter launch menu, j details (PgUp/PgDn scroll)\n/: search, s: sort, f: favorite, v: favorites only, p: inference profile, m: memory advisory, l: start single model, i: invalid files, h: hide model, t: quarantine\nDiscover: / search, Enter open, d queue, n next page\nDownloads: r resume, R run queue, x pause, t quarantine, T restore, z remove entry\nServer: r refresh, D detach, s router  R restart, i probe, x stop, l/u load/unload, a agent, A current terminal, g logs\nG guided setup (any view). Settings: Up/Down select, Enter edit; T next theme; I icon mode; B backend manager, P project picker (also Server)\n?: toggle help\nEsc: close help or quit\nq / Ctrl+C: quit".into())
     } else {
         (
             TABS[app.tab],
@@ -377,7 +421,7 @@ pub fn content(app: &App, body: Rect) -> (&'static str, String) {
                     }
                     if !server.owns_server() && server.snapshot.is_none() {
                         lines.push(
-                            "To run a single model: Library (1) → select model → l Run model."
+                            "To run a single model: Library (1) → select model → Enter → Run model."
                                 .into(),
                         );
                         lines

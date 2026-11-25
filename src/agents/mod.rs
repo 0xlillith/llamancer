@@ -222,7 +222,14 @@ impl LaunchPlan {
                     "Temporary OMP profile requires current terminal (A)",
                 ));
             }
-            require_executable("kitten", &self.cwd)?;
+            require_executable(
+                if mode == TerminalMode::NewWindow {
+                    "kitty"
+                } else {
+                    "kitten"
+                },
+                &self.cwd,
+            )?;
             if self.env.iter().any(|(name, value)| {
                 name.ends_with("_API_KEY") || (name == "LLAMANCER_PI_KEY" && value != "local")
             }) {
@@ -263,8 +270,9 @@ impl LaunchPlan {
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum TerminalMode {
-    #[default]
     Current,
+    #[default]
+    NewWindow,
     KittyTab,
     KittyWindow,
 }
@@ -272,6 +280,7 @@ impl TerminalMode {
     pub fn label(self) -> &'static str {
         match self {
             Self::Current => "current",
+            Self::NewWindow => "new-window",
             Self::KittyTab => "kitty-tab",
             Self::KittyWindow => "kitty-window",
         }
@@ -282,10 +291,11 @@ impl std::str::FromStr for TerminalMode {
     fn from_str(s: &str) -> io::Result<Self> {
         match s {
             "current" => Ok(Self::Current),
+            "new-window" => Ok(Self::NewWindow),
             "kitty-tab" => Ok(Self::KittyTab),
             "kitty-window" => Ok(Self::KittyWindow),
             _ => Err(io::Error::other(
-                "Choose current, kitty-tab or kitty-window",
+                "Choose new-window, current, kitty-tab or kitty-window",
             )),
         }
     }
@@ -306,6 +316,21 @@ impl LaunchPlan {
             return Err(io::Error::other(
                 "Authenticated agent launch requires current terminal (A)",
             ));
+        }
+        if mode == TerminalMode::NewWindow {
+            // Independent OS window; no remote-control permission or shell.
+            let mut cmd = Command::new("kitty");
+            cmd.arg("--directory")
+                .arg(&self.cwd)
+                .args(["--title", "Llamancer agent", "--"])
+                .arg(&self.executable)
+                .args(&self.args);
+            for key in SESSION_KEYS {
+                cmd.env_remove(key);
+            }
+            cmd.envs(self.env.iter().map(|(k, v)| (k, v)))
+                .current_dir(&self.cwd);
+            return Ok(cmd);
         }
         let mut cmd = Command::new("kitten");
         cmd.args([
@@ -501,6 +526,30 @@ mod tests {
         assert!(plan.terminal_command(TerminalMode::KittyTab).is_err());
         assert!(plan.terminal_command(TerminalMode::KittyWindow).is_err());
         assert!(plan.terminal_command(TerminalMode::Current).is_ok());
+    }
+    #[test]
+    fn independent_window_preserves_agent_arguments_and_never_uses_remote_control() {
+        let mut plan = Native("omp")
+            .prepare("http://localhost:8080", "fixture", std::env::temp_dir())
+            .unwrap();
+        let command = plan.terminal_command(TerminalMode::NewWindow).unwrap();
+        assert_eq!(command.get_program(), "kitty");
+        let args: Vec<_> = command.get_args().collect();
+        assert!(!args.contains(&std::ffi::OsStr::new("@")));
+        assert!(args.ends_with(&[
+            std::ffi::OsStr::new("omp"),
+            std::ffi::OsStr::new("--model"),
+            std::ffi::OsStr::new("llama.cpp/fixture")
+        ]));
+        assert!(command.get_envs().any(|(k, v)| k == "LLAMA_CPP_BASE_URL"
+            && v == Some(std::ffi::OsStr::new("http://localhost:8080/"))));
+        for key in SESSION_KEYS {
+            assert!(command.get_envs().any(|(k, v)| k == key && v.is_none()));
+        }
+        plan.env
+            .push(("LLAMA_CPP_API_KEY".into(), "fixture".into()));
+        assert!(plan.terminal_command(TerminalMode::NewWindow).is_err());
+        assert_eq!(TerminalMode::default(), TerminalMode::NewWindow);
     }
     #[test]
     fn kitty_preserves_argv_without_shell() {

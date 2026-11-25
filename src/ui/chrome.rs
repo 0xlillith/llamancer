@@ -209,7 +209,12 @@ fn key_lines(hints: &str, p: &Palette, width: u16, max: usize) -> Vec<Line<'stat
     result
 }
 pub fn footer(frame: &mut Frame, area: Rect, hints: &str, app: &App, p: &Palette) {
-    let notice = if app.tab == 2 && app.downloads.as_ref().is_some_and(|d| d.busy()) {
+    let notice = if app.launching_agent {
+        format!(
+            "{} · waiting to open agent; Esc cancels",
+            safe(&app.server.status)
+        )
+    } else if app.tab == 2 && app.downloads.as_ref().is_some_and(|d| d.busy()) {
         app.downloads
             .as_ref()
             .map(|d| safe(&d.status))

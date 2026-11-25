@@ -126,3 +126,8 @@ The same hybrid qwen35 model ran on official b12726 Vulkan0 and ROCm0 with 4,096
 A real CPU Qwen3-4B server was constrained with prlimit to a 1 GiB process virtual address space, producing a genuine mmap allocation failure. The controller observed exit, discarded the session, released its port, accepted a startup cancellation, and recovered with a normal real CPU completion on the same port. No system-wide memory pressure or GPU OOM was induced. Dedicated GPU OOM, larger hybrid architectures and broader hardware remain outside the validated matrix.
 
 Reproduce with the ignored tests in tests/storage_live.rs and tests/memory_pressure_live.rs; run the existing desktop_live test with the downloaded hybrid fixture. No user model or configuration is modified.
+
+
+## Simplified Library launch acceptance
+
+On Andromeda, the isolated real Kitty test in tests/easy_launch_kitty_live.py verified two Enter presses from Library, readiness of an owned CPU llama-server, a real OMP process with the selected loopback endpoint and temporary project working directory, and navigation in Llamancer while the separate independent Kitty window remained open. Quitting Llamancer released the owned server port. The real public Hub download test exercised the new Run model only action after automatic indexing; no manual Library scan was required. Native tests retain the explicit current-terminal authenticated agent boundary.
