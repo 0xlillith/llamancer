@@ -57,17 +57,78 @@ pub fn draw_themed(frame: &mut Frame, app: &App, theme: &Theme) {
             rect,
         );
     }
-    let (title, content) = if app.help {
-        ("Help", "Tab / Right: next view\nShift+Tab / Left: previous view\n1–5: select view\n?: toggle help\nEsc: close help or quit\nq: quit")
+    let (title, content) = if let Some((field, draft)) = &app.edit {
+        (
+            "Edit settings",
+            format!(
+                "{}\n\n{}▏\n\nEnter: save   Esc: cancel",
+                field.label(),
+                draft
+            ),
+        )
+    } else if app.help {
+        ("Help", "Tab / arrows / 1–5: navigate\nLibrary: r scan, x cancel, Up/Down select\nSettings: Up/Down select, Enter edit\n?: toggle help\nEsc: close help or quit\nq / Ctrl+C: quit".into())
     } else {
         (
             TABS[app.tab],
             match app.tab {
-                0 => "Model library — indexing not implemented yet.",
-                1 => "Hugging Face discovery — planned.",
-                2 => "Download queue — planned.",
-                3 => "Server management — planned.",
-                _ => "Settings — configuration file supported; editor planned.",
+                0 => {
+                    let mut lines = vec![
+                        format!(
+                            "{} GGUF candidates | {} roots | {}",
+                            app.candidates.len(),
+                            app.config.model_roots.len(),
+                            if app.scanning { "Scanning" } else { "Idle" }
+                        ),
+                        "r: scan   x: cancel".into(),
+                    ];
+                    if app.candidates.is_empty() {
+                        lines.push("Add a model directory in Settings, then press r.".into());
+                    }
+                    let cursor = app.model_cursor.min(app.candidates.len().saturating_sub(1));
+                    let visible = usize::from(body.height.saturating_sub(5)).max(1);
+                    let offset = cursor.saturating_sub(visible.saturating_sub(1));
+                    for (index, candidate) in
+                        app.candidates.iter().enumerate().skip(offset).take(visible)
+                    {
+                        let name = candidate
+                            .path
+                            .file_name()
+                            .unwrap_or_default()
+                            .to_string_lossy();
+                        lines.push(format!(
+                            "{} {} | {} MiB | GGUF v{}",
+                            if index == cursor { ">" } else { " " },
+                            name,
+                            candidate.bytes / 1048576,
+                            candidate.version
+                        ));
+                    }
+                    lines.join("\n")
+                }
+                1 => "Hugging Face discovery — planned.".into(),
+                2 => "Download queue — planned.".into(),
+                3 => "Server management — planned.".into(),
+                _ => {
+                    let mut lines = Vec::new();
+                    for (i, field) in crate::settings::Field::ALL.into_iter().enumerate() {
+                        lines.push(format!(
+                            "{} {}: {}",
+                            if i == app.setting { ">" } else { " " },
+                            field.label(),
+                            field.initial(&app.config)
+                        ));
+                    }
+                    lines.push("Up/Down: select   Enter: edit".into());
+                    lines.push("Model roots:".into());
+                    lines.extend(
+                        app.config
+                            .model_roots
+                            .iter()
+                            .map(|p| format!("  {}", p.display())),
+                    );
+                    lines.join("\n")
+                }
             },
         )
     };
@@ -78,10 +139,12 @@ pub fn draw_themed(frame: &mut Frame, app: &App, theme: &Theme) {
             .block(Block::bordered().title(title)),
         body,
     );
-    frame.render_widget(
-        Paragraph::new("Tab / arrows / 1–5: navigate   ?: help   q: quit").style(base),
-        footer,
-    );
+    let footer_text = if app.notice.is_empty() {
+        "Tab / arrows / 1–5: navigate   ?: help   q: quit"
+    } else {
+        &app.notice
+    };
+    frame.render_widget(Paragraph::new(footer_text).style(base), footer);
 }
 
 #[cfg(test)]

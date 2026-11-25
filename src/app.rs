@@ -1,5 +1,5 @@
+use crate::{config::Config, models::Candidate, settings::Field};
 pub const TABS: [&str; 5] = ["Library", "Discover", "Downloads", "Server", "Settings"];
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Action {
     Next,
@@ -9,14 +9,19 @@ pub enum Action {
     Escape,
     Quit,
 }
-
 #[derive(Default)]
 pub struct App {
     pub tab: usize,
     pub help: bool,
     pub quit: bool,
+    pub config: Config,
+    pub setting: usize,
+    pub edit: Option<(Field, String)>,
+    pub notice: String,
+    pub scanning: bool,
+    pub candidates: Vec<Candidate>,
+    pub model_cursor: usize,
 }
-
 impl App {
     pub fn dispatch(&mut self, action: Action) {
         match action {
@@ -30,7 +35,6 @@ impl App {
         }
     }
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;

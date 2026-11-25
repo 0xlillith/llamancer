@@ -37,6 +37,10 @@ MIT licensed. Contributions welcome.
 
 ## Configuration (early development)
 
-On first launch, Llamancer creates `$XDG_CONFIG_HOME/llamancer/config.toml` (or `~/.config/llamancer/config.toml`). The file contains schema version 1, the theme, model roots, default agent and endpoint. Model roots, agent and endpoint are reserved for upcoming phases. Dracula is built in. Set `theme` to a custom name and place a matching TOML file under the configuration directory's `themes/` subdirectory; see `themes/dracula.toml` for an example. Use Tab, arrow keys, 1–5 or click a tab to navigate; press ? for help, q or Ctrl+C to exit.
+On first launch, Llamancer creates `$XDG_CONFIG_HOME/llamancer/config.toml` (or `~/.config/llamancer/config.toml`). The file contains schema version 1, the theme, model roots, default agent and endpoint. Model roots can be scanned from Library; the agent and endpoint settings are reserved for upcoming integrations. Dracula is built in. Set `theme` to a custom name and place a matching TOML file under the configuration directory's `themes/` subdirectory; see `themes/dracula.toml` for an example. Use Tab, arrow keys, 1–5 or click a tab to navigate; press ? for help, q or Ctrl+C to exit.
 
 Development checks: `cargo fmt --all -- --check`, `cargo test --locked`, `cargo clippy --locked --all-targets -- -D warnings`.
+
+## Local model discovery preview
+
+Open Settings (5), select Add model root, enter an existing absolute directory and save with Enter. Switch to Library (1) and press r to scan or x to cancel. The read-only scan checks the GGUF magic and version and reports candidate file names and sizes. It does not validate tensors, metadata, split completeness or model loadability yet. Nested symlinks are skipped. No model files are modified.
