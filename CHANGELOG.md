@@ -14,3 +14,5 @@
 - Added library search, size/name ordering, persistent favorites and readable quantization labels.
 
 - Added per-model inference profiles, Basic/Advanced editing, transactional persistence and parameter validation.
+
+- Implemented the initial inference, Hub download and coding-agent workflows; refactored runtime and UI, added original Hex branding and experimental Arch packaging.

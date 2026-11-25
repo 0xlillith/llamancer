@@ -1,0 +1,40 @@
+# Maintainer: Llamancer contributors
+pkgname=llamancer-git
+pkgver=0.1.0.r0
+pkgrel=1
+pkgdesc='Terminal-native local llama.cpp inference and coding agent control center'
+arch=('x86_64' 'aarch64')
+url='https://github.com/0xlillith/llamancer'
+license=('MIT')
+depends=('gcc-libs' 'glibc')
+makedepends=('git' 'rust' 'cargo')
+optdepends=('btop: resource monitoring' 'xdg-utils: open server Web UI')
+provides=('llamancer')
+conflicts=('llamancer')
+source=('llamancer::git+https://github.com/0xlillith/llamancer.git')
+sha256sums=('SKIP')
+
+pkgver() {
+  cd llamancer
+  local version
+  version=$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)
+  printf '%s.r%s.g%s' "$version" "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
+}
+
+build() {
+  cd llamancer
+  cargo build --locked --release
+}
+
+check() {
+  cd llamancer
+  cargo test --locked --all-targets
+}
+
+package() {
+  cd llamancer
+  install -Dm755 target/release/llamancer "$pkgdir/usr/bin/llamancer"
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
+  install -Dm644 assets/hex.svg "$pkgdir/usr/share/icons/hicolor/scalable/apps/llamancer.svg"
+}

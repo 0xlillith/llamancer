@@ -10,14 +10,20 @@ pub enum Field {
     Theme,
     Agent,
     Endpoint,
+    ServerBinary,
+    ProjectDir,
+    CustomAgent,
     AddRoot,
     RemoveRoot,
 }
 impl Field {
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 8] = [
         Self::Theme,
         Self::Agent,
         Self::Endpoint,
+        Self::ServerBinary,
+        Self::ProjectDir,
+        Self::CustomAgent,
         Self::AddRoot,
         Self::RemoveRoot,
     ];
@@ -26,6 +32,9 @@ impl Field {
             Self::Theme => "Theme",
             Self::Agent => "Default agent",
             Self::Endpoint => "Endpoint",
+            Self::ServerBinary => "llama-server executable",
+            Self::ProjectDir => "Agent project directory",
+            Self::CustomAgent => "Custom agent executable",
             Self::AddRoot => "Add model root",
             Self::RemoveRoot => "Remove model root (exact path)",
         }
@@ -35,6 +44,13 @@ impl Field {
             Self::Theme => config.theme.clone(),
             Self::Agent => config.default_agent.clone(),
             Self::Endpoint => config.endpoint.clone(),
+            Self::ServerBinary => config.server_binary.clone(),
+            Self::ProjectDir => config
+                .project_dir
+                .as_ref()
+                .map(|p| p.display().to_string())
+                .unwrap_or_default(),
+            Self::CustomAgent => config.custom_agent.clone(),
             _ => String::new(),
         }
     }
@@ -60,13 +76,16 @@ pub fn apply(
             draft.default_agent = value.into();
         }
         Field::Endpoint => {
-            if !(value.starts_with("http://") || value.starts_with("https://"))
-                || value.chars().any(char::is_whitespace)
-                || value.contains('@')
-            {
-                return Err(invalid("Enter an HTTP(S) endpoint without credentials"));
+            draft.endpoint = crate::llama::client::endpoint(value)?.to_string();
+        }
+        Field::ServerBinary => draft.server_binary = value.into(),
+        Field::CustomAgent => draft.custom_agent = value.into(),
+        Field::ProjectDir => {
+            let path = PathBuf::from(value);
+            if !path.is_absolute() || !path.is_dir() {
+                return Err(invalid("Enter an existing absolute project directory"));
             }
-            draft.endpoint = value.into();
+            draft.project_dir = Some(path.canonicalize()?);
         }
         Field::AddRoot => {
             let path = PathBuf::from(value);
