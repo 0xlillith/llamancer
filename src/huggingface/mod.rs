@@ -66,23 +66,41 @@ fn valid_token(value: &str) -> Option<String> {
     (!value.is_empty() && value.len() <= 4096 && value.bytes().all(|b| b.is_ascii_graphic()))
         .then(|| value.to_owned())
 }
-fn hub_token() -> Option<String> {
-    use std::os::unix::fs::OpenOptionsExt;
-    if let Ok(value) = std::env::var("HF_TOKEN") {
-        return valid_token(&value);
-    }
-    let path = token_path()?;
+fn cached_token(path: &std::path::Path) -> Option<String> {
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
     let file = std::fs::OpenOptions::new()
         .read(true)
-        .custom_flags(libc::O_NONBLOCK)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
         .open(path)
         .ok()?;
-    if !file.metadata().ok()?.is_file() {
+    let meta = file.metadata().ok()?;
+    if !meta.is_file()
+        || meta.nlink() != 1
+        || meta.uid() != unsafe { libc::geteuid() }
+        || meta.mode() & 0o077 != 0
+        || meta.len() > 4096
+    {
         return None;
     }
     let mut text = String::new();
     file.take(4097).read_to_string(&mut text).ok()?;
+    if text.len() > 4096 {
+        return None;
+    }
     valid_token(&text)
+}
+fn hub_token() -> Option<String> {
+    // HF_TOKEN is an explicit user-supplied credential. The implicit-token
+    // opt-out applies to credentials discovered in the local cache.
+    if let Ok(value) = std::env::var("HF_TOKEN") {
+        return valid_token(&value);
+    }
+    if std::env::var("HF_HUB_DISABLE_IMPLICIT_TOKEN")
+        .is_ok_and(|v| matches!(v.to_ascii_uppercase().as_str(), "1" | "ON" | "YES" | "TRUE"))
+    {
+        return None;
+    }
+    cached_token(&token_path()?)
 }
 fn hub_origin(url: &Url) -> bool {
     url.scheme() == "https"
@@ -363,6 +381,36 @@ mod tests {
             size: 100,
             sha256: None,
         }
+    }
+    #[test]
+    fn cached_token_requires_private_bounded_regular_file() {
+        use std::{
+            io::Write,
+            os::unix::fs::{symlink, PermissionsExt},
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let mut file = tempfile::NamedTempFile::new_in(dir.path()).unwrap();
+        writeln!(file, "hf_fixture_only").unwrap();
+        assert_eq!(
+            cached_token(file.path()).as_deref(),
+            Some("hf_fixture_only")
+        );
+        let alias = dir.path().join("alias");
+        symlink(file.path(), &alias).unwrap();
+        assert!(cached_token(&alias).is_none());
+        let hard = dir.path().join("hard");
+        std::fs::hard_link(file.path(), &hard).unwrap();
+        assert!(cached_token(file.path()).is_none());
+        std::fs::remove_file(hard).unwrap();
+        file.as_file()
+            .set_permissions(std::fs::Permissions::from_mode(0o644))
+            .unwrap();
+        assert!(cached_token(file.path()).is_none());
+        file.as_file()
+            .set_permissions(std::fs::Permissions::from_mode(0o600))
+            .unwrap();
+        file.as_file().set_len(4097).unwrap();
+        assert!(cached_token(file.path()).is_none());
     }
     #[test]
     fn filters_and_private_repo_addressing() {

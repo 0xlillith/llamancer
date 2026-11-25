@@ -995,6 +995,8 @@ mod tests {
         .unwrap_err()
         .to_string()
         .contains("in use"));
+        // Explicitly unlock: a concurrent fork in another test may briefly retain the fd.
+        FileExt::unlock(&lock).unwrap();
         drop(lock);
         assert!(transfer_from(
             &item,

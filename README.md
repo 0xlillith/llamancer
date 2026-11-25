@@ -108,6 +108,8 @@ Click a tab or a visible list row to select it; use the mouse wheel or Up/Down t
 
 In Discover, use a query such as `qwen license:apache-2.0 quant:Q4_K_M`, or `@owner/repository quant:Q4_K_M` to open an exact repository (including a private one). Quantization filtering is filename-based; projector candidates remain visible. For gated repositories, accept the license/access conditions on Hugging Face first. Llamancer reads HF_TOKEN or the standard local Hub token file (HF_TOKEN_PATH, HF_HOME, XDG_CACHE_HOME, or the default cache). Credentials are sent only to the exact HTTPS Hub origin, never to CDN redirects. If no authoritative SHA-256 is provided, a partial download restarts instead of trusting a previous prefix; a complete file can be checked only by its declared size. No credentials are stored in the download queue.
 
+Cached Hugging Face credentials must be a regular, owner-only file (mode 0600), not a symlink or hard link. If needed, use `chmod 600 ~/.cache/huggingface/token`. Explicit `HF_TOKEN` is supported; `HF_HUB_DISABLE_IMPLICIT_TOKEN=1` disables automatic cached-token discovery. Credentials are never added to the download queue or sent outside the Hub origin.
+
 ## Library and endpoint safety
 
 - Import a single GGUF by absolute path in Settings without copying weights; matching multipart siblings are indexed automatically. The Library inspector estimates weight and KV-cache sizes for conventional supported attention architectures. This is not a VRAM fit guarantee.
