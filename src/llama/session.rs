@@ -19,6 +19,7 @@ enum Outcome {
     Started(Owned, String),
     Snapshot(Snapshot),
     Changed,
+    Probed(String, String),
 }
 #[derive(Default)]
 pub struct Controller {
@@ -29,6 +30,7 @@ pub struct Controller {
     pub cursor: usize,
     pub status: String,
     pub version: String,
+    pub devices: String,
     pub logs: Vec<String>,
     pub show_logs: bool,
 }
@@ -86,6 +88,17 @@ impl Controller {
         self.status = "Checking server…".into();
         Ok(())
     }
+    pub fn probe(&mut self, config: &Config) -> io::Result<()> {
+        let binary = config.server_binary.clone();
+        self.submit(move |_| {
+            let version = process::command_output(&binary, &["--version"])?;
+            let devices = process::command_output(&binary, &["--list-devices"])
+                .unwrap_or_else(|_| "Device enumeration unavailable".into());
+            Ok(Outcome::Probed(version, devices))
+        })?;
+        self.status = "Probing installed backend…".into();
+        Ok(())
+    }
     pub fn start(
         &mut self,
         config: &Config,
@@ -118,7 +131,7 @@ impl Controller {
             let help = process::command_output(&config.server_binary, &["--help"])?;
             let version = process::command_output(&config.server_binary, &["--version"])
                 .unwrap_or_else(|_| "Version unavailable".into());
-            let (preset, args) = if let Some(group) = single {
+            let (preset, mut args) = if let Some(group) = single {
                 if !group.complete || group.projector {
                     return Err(io::Error::other("Select a complete model group"));
                 }
@@ -135,6 +148,14 @@ impl Controller {
                 let (file, args) = router::prepare(&groups, &config, &help)?;
                 (Some(file), args)
             };
+            if config.device != "auto" {
+                if !help.contains("--device") {
+                    return Err(io::Error::other(
+                        "Installed backend does not advertise --device",
+                    ));
+                }
+                args.extend(["--device".into(), config.device.clone().into()]);
+            }
             if cancel.load(Ordering::Acquire) {
                 return Err(io::Error::new(
                     io::ErrorKind::Interrupted,
@@ -211,6 +232,11 @@ impl Controller {
                         self.cursor = self.cursor.min(snapshot.models.len().saturating_sub(1));
                         self.snapshot = Some(snapshot);
                         self.status = "Connected".into();
+                    }
+                    Ok(Outcome::Probed(version, devices)) => {
+                        self.version = version.lines().take(2).collect::<Vec<_>>().join(" ");
+                        self.devices = devices.lines().take(20).collect::<Vec<_>>().join("\n");
+                        self.status = "Backend probe complete".into();
                     }
                     Ok(Outcome::Changed) => {
                         self.snapshot = None;

@@ -45,13 +45,7 @@ pub fn command_output(binary: &str, args: &[&str]) -> io::Result<String> {
         thread::sleep(Duration::from_millis(40));
     }
 }
-pub fn args(
-    path: &Path,
-    endpoint_value: &str,
-    profile: &Profile,
-    help: &str,
-) -> io::Result<Vec<OsString>> {
-    profile.validate()?;
+pub fn endpoint_args(endpoint_value: &str) -> io::Result<Vec<OsString>> {
     let url = endpoint(endpoint_value)?;
     if url.scheme() != "http"
         || !matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "[::1]"))
@@ -67,16 +61,28 @@ pub fn args(
     } else {
         "127.0.0.1"
     };
-    let mut a = vec![
-        "--model".into(),
-        path.as_os_str().to_owned(),
+    Ok(vec![
         "--host".into(),
         host.into(),
         "--port".into(),
         port.to_string().into(),
-        "--alias".into(),
-        "llamancer".into(),
-    ];
+    ])
+}
+pub fn args(
+    path: &Path,
+    endpoint_value: &str,
+    profile: &Profile,
+    help: &str,
+) -> io::Result<Vec<OsString>> {
+    let mut args = vec!["--model".into(), path.as_os_str().to_owned()];
+    args.extend(endpoint_args(endpoint_value)?);
+    args.extend(["--alias".into(), "llamancer".into()]);
+    args.extend(profile_args(profile, help)?);
+    Ok(args)
+}
+pub fn profile_args(profile: &Profile, help: &str) -> io::Result<Vec<OsString>> {
+    profile.validate()?;
+    let mut a = Vec::new();
     let e = &profile.engine;
     let g = &profile.generation;
     let mut add = |flag: &str, value: Option<String>| -> io::Result<()> {
@@ -117,6 +123,12 @@ pub fn args(
     )?;
     add("--cache-type-k", e.cache_type_k.clone())?;
     add("--cache-type-v", e.cache_type_v.clone())?;
+    if let Some(path) = &e.projector {
+        if !Path::new(path).is_file() {
+            return Err(io::Error::other("Configured projector file is unavailable"));
+        }
+    }
+    add("--mmproj", e.projector.clone())?;
     option!("--temp", g.temperature);
     option!("--top-p", g.top_p);
     option!("--top-k", g.top_k);

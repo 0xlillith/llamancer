@@ -11,17 +11,19 @@ pub enum Field {
     Agent,
     Endpoint,
     ServerBinary,
+    Device,
     ProjectDir,
     CustomAgent,
     AddRoot,
     RemoveRoot,
 }
 impl Field {
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::Theme,
         Self::Agent,
         Self::Endpoint,
         Self::ServerBinary,
+        Self::Device,
         Self::ProjectDir,
         Self::CustomAgent,
         Self::AddRoot,
@@ -33,6 +35,7 @@ impl Field {
             Self::Agent => "Default agent",
             Self::Endpoint => "Endpoint",
             Self::ServerBinary => "llama-server executable",
+            Self::Device => "GPU device (auto/none/device IDs)",
             Self::ProjectDir => "Agent project directory",
             Self::CustomAgent => "Custom agent executable",
             Self::AddRoot => "Add model root",
@@ -45,6 +48,7 @@ impl Field {
             Self::Agent => config.default_agent.clone(),
             Self::Endpoint => config.endpoint.clone(),
             Self::ServerBinary => config.server_binary.clone(),
+            Self::Device => config.device.clone(),
             Self::ProjectDir => config
                 .project_dir
                 .as_ref()
@@ -79,6 +83,15 @@ pub fn apply(
             draft.endpoint = crate::llama::client::endpoint(value)?.to_string();
         }
         Field::ServerBinary => draft.server_binary = value.into(),
+        Field::Device => {
+            if !value
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b',' | b'.' | b':'))
+            {
+                return Err(invalid("Use auto, none or comma-separated device IDs"));
+            }
+            draft.device = value.into();
+        }
         Field::CustomAgent => draft.custom_agent = value.into(),
         Field::ProjectDir => {
             let path = PathBuf::from(value);

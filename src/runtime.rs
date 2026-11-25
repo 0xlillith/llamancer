@@ -164,7 +164,7 @@ impl Runtime {
                     editor.input = None;
                     self.app.notice = "Draft updated; press s to save".into();
                 }
-                _ => edit_text(input, key, 128),
+                _ => edit_text(input, key, 4096),
             }
             return Ok(());
         }
@@ -205,7 +205,8 @@ impl Runtime {
             KeyCode::Enter => {
                 let (next, theme) = settings::apply(&self.app.config, *field, input, &self.root)?;
                 let endpoint_changed = next.endpoint != self.app.config.endpoint
-                    || next.server_binary != self.app.config.server_binary;
+                    || next.server_binary != self.app.config.server_binary
+                    || next.device != self.app.config.device;
                 if self.app.server.active() && endpoint_changed {
                     return Err(io::Error::other(
                         "Stop server before changing endpoint or binary",
@@ -379,6 +380,7 @@ impl Runtime {
             KeyCode::Up => d.cursor = d.cursor.saturating_sub(1),
             KeyCode::Down => d.cursor = (d.cursor + 1).min(d.queue.items.len().saturating_sub(1)),
             KeyCode::Char('r') => d.start()?,
+            KeyCode::Char('R') => d.start_queue()?,
             KeyCode::Char('x') => d.pause(),
             KeyCode::Char('z') => d.remove_selected()?,
             _ => {}
@@ -392,6 +394,7 @@ impl Runtime {
             KeyCode::Up => s.move_cursor(false),
             KeyCode::Down => s.move_cursor(true),
             KeyCode::Char('r') => s.refresh(c)?,
+            KeyCode::Char('i') => s.probe(c)?,
             KeyCode::Char('s') => s.start(c, self.app.candidates.clone(), None)?,
             KeyCode::Char('x') => s.stop()?,
             KeyCode::Char('l' | 'u') => s.set_loaded(c, key == KeyCode::Char('l'))?,

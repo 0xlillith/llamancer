@@ -3,8 +3,10 @@ use crate::{
     huggingface::{self, File},
     jobs::Job,
 };
+use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::{
     fs,
     io::{self, Read, Seek, SeekFrom, Write},
@@ -94,7 +96,10 @@ fn verify(path: &Path, item: &Item, cancel: &AtomicBool) -> io::Result<()> {
         return Err(io::Error::other("Downloaded size mismatch"));
     }
     if let Some(expected) = &item.file.sha256 {
-        let mut file = fs::File::open(path)?;
+        let mut file = fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(path)?;
         let mut hash = Sha256::new();
         let mut buffer = [0u8; 65536];
         loop {
@@ -137,6 +142,8 @@ fn transfer(item: &Item, cancel: &AtomicBool, progress: &AtomicU64) -> io::Resul
         .read(true)
         .write(true)
         .create_new(true)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW)
         .open(&partial)
     {
         Ok(f) => f,
@@ -147,15 +154,27 @@ fn transfer(item: &Item, cancel: &AtomicBool, progress: &AtomicU64) -> io::Resul
             fs::OpenOptions::new()
                 .read(true)
                 .write(true)
+                .custom_flags(libc::O_NOFOLLOW)
                 .open(&partial)?
         }
         Err(e) => return Err(e),
     };
+    FileExt::try_lock_exclusive(&file)
+        .map_err(|_| io::Error::other("Partial file is in use by another downloader"))?;
+    if !file.metadata()?.is_file() || file.metadata()?.nlink() != 1 {
+        return Err(io::Error::other("Unsafe partial file link count"));
+    }
     let mut offset = file.metadata()?.len();
     if offset > item.file.size {
         return Err(io::Error::other("Partial file exceeds expected size"));
     }
     progress.store(offset, Ordering::Relaxed);
+    let parent = dest
+        .parent()
+        .ok_or_else(|| io::Error::other("Missing destination parent"))?;
+    if fs2::available_space(parent)? < item.file.size - offset {
+        return Err(io::Error::other("Insufficient free disk space"));
+    }
     if offset < item.file.size {
         let mut url = huggingface::resolve(&item.file)?;
         let http = huggingface::agent();
@@ -218,12 +237,12 @@ fn transfer(item: &Item, cancel: &AtomicBool, progress: &AtomicU64) -> io::Resul
         }
     }
     file.sync_all()?;
-    drop(file);
     verify(&partial, item, cancel)?;
     cancelled(cancel)?;
     // Atomic publication without overwriting an existing model.
     fs::hard_link(&partial, &dest)?;
     fs::remove_file(&partial)?;
+    drop(file);
     if let Some(parent) = dest.parent() {
         fs::File::open(parent)?.sync_all()?;
     }
@@ -235,6 +254,7 @@ pub struct Controller {
     pub status: String,
     pub path: PathBuf,
     active: Option<(usize, Job<()>, Arc<AtomicU64>)>,
+    run_queue: bool,
 }
 impl Controller {
     pub fn new(path: PathBuf) -> io::Result<Self> {
@@ -244,6 +264,7 @@ impl Controller {
             status: String::new(),
             path,
             active: None,
+            run_queue: false,
         })
     }
     pub fn busy(&self) -> bool {
@@ -256,9 +277,11 @@ impl Controller {
             .map(|(_, _, p)| p.load(Ordering::Relaxed))
     }
     pub fn add(&mut self, files: Vec<File>, root: PathBuf) -> io::Result<()> {
+        for file in &files {
+            huggingface::validate(file)?;
+        }
         let old = self.queue.items.len();
         for file in files {
-            huggingface::validate(&file)?;
             if !self
                 .queue
                 .items
@@ -299,6 +322,22 @@ impl Controller {
         self.status = "Downloading…".into();
         Ok(())
     }
+    pub fn start_queue(&mut self) -> io::Result<()> {
+        if self.busy() {
+            return Err(io::Error::other("A download is already active"));
+        }
+        self.cursor = self
+            .queue
+            .items
+            .iter()
+            .position(|i| i.state == State::Queued)
+            .ok_or_else(|| {
+                io::Error::other("No queued files; resume paused/failed items individually")
+            })?;
+        self.start()?;
+        self.run_queue = true;
+        Ok(())
+    }
     pub fn remove_selected(&mut self) -> io::Result<()> {
         if self.busy() {
             return Err(io::Error::other(
@@ -318,6 +357,7 @@ impl Controller {
         Ok(())
     }
     pub fn pause(&mut self) {
+        self.run_queue = false;
         if let Some((_, job, _)) = &self.active {
             job.cancel();
             self.status = "Pausing…".into();
@@ -337,10 +377,20 @@ impl Controller {
                     }
                     Err(e) => (State::Failed, e.to_string()),
                 };
+                let completed = state == State::Complete;
                 self.queue.items[index].state = state;
                 self.status = status;
                 if self.queue.save(&self.path).is_err() {
                     self.status.push_str("; queue save failed");
+                    self.run_queue = false;
+                }
+                if self.run_queue && completed {
+                    if self.start_queue().is_err() {
+                        self.run_queue = false;
+                        self.status = "Queue complete; rescan Library".into();
+                    }
+                } else {
+                    self.run_queue = false;
                 }
             }
         }
@@ -354,5 +404,31 @@ mod tests {
         assert!(content_range("bytes 20-99/100", 20, 100));
         assert!(!content_range("bytes 0-99/100", 20, 100));
         assert!(!content_range("bytes 20-99/200", 20, 100));
+    }
+    #[test]
+    fn queue_roundtrip_and_non_destructive_removal() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("queue.toml");
+        let file = File {
+            repo: "owner/repo".into(),
+            revision: "a".repeat(40),
+            name: "model.gguf".into(),
+            size: 3,
+            sha256: None,
+        };
+        let mut controller = Controller::new(path.clone()).unwrap();
+        controller
+            .add(vec![file.clone()], temp.path().into())
+            .unwrap();
+        let dest = destination(&controller.queue.items[0]).unwrap();
+        fs::write(&dest, b"abc").unwrap();
+        assert_eq!(Queue::load(&path).unwrap().items.len(), 1);
+        controller.remove_selected().unwrap();
+        assert!(dest.exists());
+        assert!(Queue::load(&path).unwrap().items.is_empty());
+        let mut bad = file.clone();
+        bad.name = "../escape.gguf".into();
+        assert!(controller.add(vec![file, bad], temp.path().into()).is_err());
+        assert!(controller.queue.items.is_empty());
     }
 }

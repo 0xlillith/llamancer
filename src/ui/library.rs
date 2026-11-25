@@ -39,7 +39,15 @@ pub fn details(group: &Group) -> String {
             "Incomplete or inconsistent shards".into()
         },
         String::new(),
-        "Metadata only; loadability not verified.".into(),
+        if group
+            .files
+            .iter()
+            .all(|f| f.metadata.payload_bounds_checked)
+        {
+            "Known tensor extents verified; loadability untested.".into()
+        } else {
+            "Metadata read; some tensor extents unverified.".into()
+        },
         "p profile | l load | Enter / Esc close".into(),
         String::new(),
     ];

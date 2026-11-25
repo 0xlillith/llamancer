@@ -59,7 +59,7 @@ pub fn content(app: &App, body: Rect) -> (&'static str, String) {
             ),
         )
     } else if app.help {
-        ("Help", "Tab / arrows / 1–5: navigate\nLibrary: r scan, x cancel, Up/Down select, Enter details\n/: search, s: sort, f: favorite, v: favorites only, p: inference profile, l: start single model\nDiscover: / search, Enter open, d queue\nDownloads: r resume, x pause\nServer: r refresh, s router, x stop, l/u load/unload, a agent, g logs\nSettings: Up/Down select, Enter edit\n?: toggle help\nEsc: close help or quit\nq / Ctrl+C: quit".into())
+        ("Help", "Tab / arrows / 1–5: navigate\nLibrary: r scan, x cancel, Up/Down select, Enter details\n/: search, s: sort, f: favorite, v: favorites only, p: inference profile, l: start single model\nDiscover: / search, Enter open, d queue\nDownloads: r resume, R run queue, x pause, z remove entry\nServer: r refresh, s router, i probe, x stop, l/u load/unload, a agent, g logs\nSettings: Up/Down select, Enter edit\n?: toggle help\nEsc: close help or quit\nq / Ctrl+C: quit".into())
     } else {
         (
             TABS[app.tab],
@@ -119,7 +119,7 @@ pub fn content(app: &App, body: Rect) -> (&'static str, String) {
                         };
                         let mut lines = vec![
                             safe(&d.status),
-                            "r start/resume selected | x pause | Up/Down select".into(),
+                            "r resume | R run queue | x pause | z remove entry".into(),
                         ];
                         let capacity = usize::from(body.height.saturating_sub(5)).max(1);
                         let offset = d.cursor.saturating_sub(capacity.saturating_sub(1));
@@ -160,7 +160,7 @@ pub fn content(app: &App, body: Rect) -> (&'static str, String) {
                             .collect::<String>()
                     };
                     let mut lines=vec![format!("Endpoint: {}",safe(&app.config.endpoint)),format!("{} | {}",if server.owns_server(){"Managed session"}else{"External / stopped"},safe(&server.status)),
-                    "r refresh | s start router | x stop owned | l load | u unload | a agent | g logs".into()];
+                    "r refresh | s router | i probe | x stop | l/u load/unload | a agent | g logs".into()];
                     if server.show_logs {
                         lines.extend(
                             server
@@ -196,6 +196,13 @@ pub fn content(app: &App, body: Rect) -> (&'static str, String) {
                                 safe(model.state())
                             ));
                         }
+                    }
+                    if !server.version.is_empty() {
+                        lines.push(format!("Build: {}", safe(&server.version)));
+                    }
+                    if !server.devices.is_empty() {
+                        lines.push(format!("Device preference: {}", safe(&app.config.device)));
+                        lines.extend(server.devices.lines().map(safe));
                     }
                     lines.join("\n")
                 }

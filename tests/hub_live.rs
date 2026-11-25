@@ -41,4 +41,31 @@ fn download_and_index_real_gguf() {
         scan.candidates[0].metadata.architecture.as_deref(),
         Some("llama")
     );
+    let model = &scan.candidates[0].path;
+    let partial = model.with_file_name(format!(
+        "{}.part",
+        model.file_name().unwrap().to_string_lossy()
+    ));
+    std::fs::rename(model, &partial).unwrap();
+    let f = std::fs::OpenOptions::new()
+        .write(true)
+        .open(&partial)
+        .unwrap();
+    f.set_len(scan.candidates[0].bytes / 2).unwrap();
+    drop(f);
+    downloads.queue.items[0].state = State::Paused;
+    downloads.start().unwrap();
+    let deadline = Instant::now() + Duration::from_secs(100);
+    while downloads.busy() {
+        downloads.tick();
+        assert!(Instant::now() < deadline, "Resume timed out");
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    assert_eq!(
+        downloads.queue.items[0].state,
+        State::Complete,
+        "{}",
+        downloads.status
+    );
+    assert!(model.exists() && !partial.exists());
 }

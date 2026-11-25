@@ -19,6 +19,7 @@ pub struct Engine {
     pub flash_attention: Option<bool>,
     pub cache_type_k: Option<String>,
     pub cache_type_v: Option<String>,
+    pub projector: Option<String>,
 }
 #[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -54,6 +55,16 @@ impl Profile {
                 return Err(invalid("Micro-batch must not exceed batch size"));
             }
         }
+        if let Some(path) = &e.projector {
+            let path = std::path::Path::new(path);
+            if !path.is_absolute()
+                || !path
+                    .extension()
+                    .is_some_and(|s| s.eq_ignore_ascii_case("gguf"))
+            {
+                return Err(invalid("Projector must be an absolute GGUF path"));
+            }
+        }
         for cache in [&e.cache_type_k, &e.cache_type_v].into_iter().flatten() {
             if !CACHE_TYPES.contains(&cache.as_str()) {
                 return Err(invalid("Unsupported cache type preference"));
@@ -82,6 +93,7 @@ pub enum Field {
     Flash,
     CacheK,
     CacheV,
+    Projector,
     Temperature,
     TopP,
     TopK,
@@ -90,7 +102,7 @@ pub enum Field {
     Seed,
 }
 impl Field {
-    pub const ALL: [Self; 14] = [
+    pub const ALL: [Self; 15] = [
         Self::Context,
         Self::GpuLayers,
         Self::Threads,
@@ -99,6 +111,7 @@ impl Field {
         Self::Flash,
         Self::CacheK,
         Self::CacheV,
+        Self::Projector,
         Self::Temperature,
         Self::TopP,
         Self::TopK,
@@ -123,6 +136,7 @@ impl Field {
             Self::Flash => "Engine / Flash attention",
             Self::CacheK => "Engine / KV cache K",
             Self::CacheV => "Engine / KV cache V",
+            Self::Projector => "Engine / Multimodal projector",
             Self::Temperature => "Generation / Temperature",
             Self::TopP => "Generation / Top-p",
             Self::TopK => "Generation / Top-k",
@@ -134,6 +148,7 @@ impl Field {
     pub fn hint(self) -> &'static str {
         match self {
             Self::Flash => "auto, true or false",
+            Self::Projector => "auto or absolute path to a projector GGUF",
             Self::CacheK | Self::CacheV => {
                 "auto or f16, bf16, q8_0, q4_0, q4_1, q5_0, q5_1, iq4_nl, f32"
             }
@@ -159,6 +174,7 @@ impl Field {
             Self::Flash => display(e.flash_attention),
             Self::CacheK => display(e.cache_type_k.as_deref()),
             Self::CacheV => display(e.cache_type_v.as_deref()),
+            Self::Projector => display(e.projector.as_deref()),
             Self::Temperature => display(g.temperature),
             Self::TopP => display(g.top_p),
             Self::TopK => display(g.top_k),
@@ -190,6 +206,7 @@ impl Field {
             Self::Flash => e.flash_attention = parse(value)?,
             Self::CacheK => e.cache_type_k = parse(value)?,
             Self::CacheV => e.cache_type_v = parse(value)?,
+            Self::Projector => e.projector = parse(value)?,
             Self::Temperature => g.temperature = parse(value)?,
             Self::TopP => g.top_p = parse(value)?,
             Self::TopK => g.top_k = parse(value)?,

@@ -15,15 +15,15 @@ Llamancer brings local GGUF model discovery, inference preferences, server contr
 
 ## Status
 
-Early development. The core workflows are implemented but are not yet a stable release. Synthetic fixtures and native Linux CI are the current validation baseline. Real llama.cpp, OMP and Pi compatibility is still being verified.
+Early development. The core workflows are implemented but are not yet a stable release. Synthetic fixtures, native Linux CI, and a live Hugging Face GGUF download and checksum test are the current validation baseline. Real llama.cpp, OMP and Pi compatibility is still being verified.
 
 | Workspace | Current functionality |
 | --- | --- |
 | Library | Read-only GGUF indexing, shard grouping, search, ordering, favorites, inspector and per-model profiles |
 | Discover | Explicit Hugging Face search, pinned revision/file listing, quantization/shard selection |
-| Downloads | Persistent queue, one resumable transfer at a time, size and available SHA-256 validation |
+| Downloads | Persistent queue, sequential resumable transfers, free-space checks, file locking, size and available SHA-256 validation |
 | Server | External attach, managed session, router presets, load/unload, logs, Web UI and btop |
-| Settings | XDG TOML preferences, Dracula/custom themes, model roots, agent, server executable, project directory |
+| Settings | XDG TOML preferences, Dracula/custom themes, model roots, agent, server executable, device selection, project directory |
 
 ## Quick start
 
@@ -50,8 +50,8 @@ For Pi, use router mode. OMP uses the documented LLAMA_CPP_BASE_URL runtime over
 | Global | 1–5 or Tab / Shift+Tab, mouse tabs, ? help, q / Ctrl+C quit |
 | Library | r scan, x cancel, / search, s sort, f favorite, v favorites only, Enter details, p profile, l load |
 | Discover | / search, Enter submit/open repo, Backspace back, d queue file or shard bundle |
-| Downloads | r resume, x pause, z remove queue entry (keeps files) |
-| Server | r refresh, s router, x stop owned, l/u load/unload, a agent, g logs, w Web UI, b btop |
+| Downloads | r resume, R run queue, x pause, z remove queue entry (keeps files) |
+| Server | r refresh, i probe backend, s router, x stop owned, l/u load/unload, a agent, g logs, w Web UI, b btop |
 | Profile | Up/Down, Enter edit, a advanced/basic, s save, Esc discard, Ctrl+U clear input |
 
 ## Local-first by design
@@ -61,7 +61,7 @@ For Pi, use router mode. OMP uses the documented LLAMA_CPP_BASE_URL runtime over
 - Configuration and downloads use versioned or typed TOML beneath the XDG config directory. Custom themes live in its themes subdirectory.
 - Managed servers bind to loopback and are session-scoped. They stop when Llamancer exits. External servers remain independent.
 - Downloaded files are stored under the first model root, by repository and pinned revision. Partial files use a .part suffix and are not indexed. Set HF_TOKEN in the environment if a repository requires authentication. Llamancer never sends that token to redirect hosts outside huggingface.co.
-- Profiles separate engine options from generation defaults. Auto inherits backend defaults; unsupported CLI flags are rejected during launch.
+- Profiles separate engine options from generation defaults. Auto inherits backend defaults; unsupported CLI flags are rejected during launch. Advanced profiles accept an explicit multimodal projector path; Settings accepts a supported device identifier or automatic selection.
 
 ## Development
 

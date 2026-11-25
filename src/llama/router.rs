@@ -9,7 +9,6 @@ use std::{
     ffi::OsString,
     io::{self, Write},
     os::unix::ffi::OsStrExt,
-    path::Path,
 };
 use tempfile::NamedTempFile;
 pub fn id(group: &Group) -> String {
@@ -65,14 +64,14 @@ pub fn prepare(
             .get(&identity(group))
             .cloned()
             .unwrap_or_default();
-        let args = process::args(path, &config.endpoint, &profile, help)?;
+        let args = process::profile_args(&profile, help)?;
         writeln!(
             file,
             "\n[{}]\nmodel = {}",
             id(group),
             ini_value(path.as_os_str())?
         )?;
-        let mut iter = args[8..].iter();
+        let mut iter = args.iter();
         while let Some(flag) = iter.next() {
             let flag = flag
                 .to_str()
@@ -97,13 +96,7 @@ pub fn prepare(
         ));
     }
     file.as_file().sync_all()?;
-    let base = process::args(
-        Path::new("unused"),
-        &config.endpoint,
-        &Default::default(),
-        help,
-    )?;
-    let mut args = base[2..6].to_vec();
+    let mut args = process::endpoint_args(&config.endpoint)?;
     args.extend([
         "--models-preset".into(),
         file.path().as_os_str().to_owned(),
@@ -112,4 +105,41 @@ pub fn prepare(
         "--no-models-autoload".into(),
     ]);
     Ok((file, args))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::{gguf::Metadata, profile::Profile, Candidate};
+    fn sample(path: &str) -> Group {
+        Group {
+            name: "Test model".into(),
+            files: vec![Candidate {
+                path: path.into(),
+                bytes: 32,
+                version: 3,
+                metadata: Metadata::default(),
+            }],
+            expected: 1,
+            complete: true,
+            projector: false,
+        }
+    }
+    #[test]
+    fn presets_keep_model_paths_and_profiles_separate() {
+        let group = sample("/models/test model.gguf");
+        let mut config = Config::default();
+        let mut profile = Profile::default();
+        profile.engine.context_size = Some(4096);
+        config.profiles.insert(identity(&group), profile);
+        let help = "--models-preset --models-max --no-models-autoload --ctx-size --jinja";
+        let (preset, args) = prepare(std::slice::from_ref(&group), &config, help).unwrap();
+        let text = std::fs::read_to_string(preset.path()).unwrap();
+        assert!(text.contains("model = /models/test model.gguf"));
+        assert!(text.contains("ctx-size = 4096"));
+        assert!(text.contains(&format!("[{}]", id(&group))));
+        assert!(!args.iter().any(|a| a == "--model"));
+        assert!(prepare(&[sample("/models/bad;path.gguf")], &config, help).is_err());
+        assert!(prepare(&[group], &config, "").is_err());
+    }
 }

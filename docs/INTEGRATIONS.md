@@ -8,7 +8,7 @@ Reference: https://github.com/ggml-org/llama.cpp/tree/master/tools/server
 
 Managed single-model sessions translate typed profiles into CLI arguments after probing --help. Managed routers generate an isolated temporary INI with stable model aliases, explicit model paths and per-model settings. Router starts with one active model maximum and explicit loading. External endpoints are inspected via health, props and models endpoints. Load and unload are explicit operations through the router API. Llamancer does not call internal Web UI tool endpoints.
 
-Choose the installed backend build using the server executable setting. Managed sessions require local HTTP and stop on TUI exit. Existing servers can be attached to but are never signalled by the application. Restart an owned router after scanning new files or editing profiles. Backend device selection, authentication and long-lived service supervision are follow-up items.
+Choose the installed backend build using the server executable setting. Managed sessions require local HTTP and stop on TUI exit. Existing servers can be attached to but are never signalled by the application. Restart an owned router after scanning new files or editing profiles. The server view can probe the version and available devices. The device setting and an explicit projector in the advanced profile are passed only when supported by the executable. Authentication and long-lived service supervision are follow-up items.
 
 ## Oh My Pi
 

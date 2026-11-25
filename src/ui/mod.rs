@@ -113,8 +113,8 @@ pub fn draw_themed(frame: &mut Frame, app: &App, theme: &Theme) {
         match app.tab {
             0 => "r scan  / search  f favorite  s sort  p profile  l load  ? help",
             1 => "/ search  Enter open  d queue  Backspace back  ? help",
-            2 => "r resume  x pause  z remove entry  ? help",
-            3 => "r refresh  s router  x stop  l/u load/unload  a agent  w web  b btop  g logs",
+            2 => "r resume  R run queue  x pause  z remove entry  ? help",
+            3 => "r refresh  s router  i probe  x stop  l/u load/unload  a agent  w web  b btop  g logs",
             _ => "↑↓ select  Enter edit  ? help  q quit",
         }
     } else {
@@ -159,7 +159,13 @@ mod tests {
     fn renders_small_terminal() {
         for (w, h) in [(1, 1), (20, 5), (80, 24)] {
             let mut terminal = Terminal::new(TestBackend::new(w, h)).unwrap();
-            terminal.draw(|frame| draw(frame, &App::default())).unwrap();
+            for tab in 0..TABS.len() {
+                let app = App {
+                    tab,
+                    ..App::default()
+                };
+                terminal.draw(|frame| draw(frame, &app)).unwrap();
+            }
         }
     }
 }
