@@ -24,13 +24,40 @@ pub enum State {
     Paused,
     Complete,
     Failed,
+    Quarantined,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Item {
     pub file: File,
     pub root: PathBuf,
     pub state: State,
+    #[serde(default)]
+    pub receipt: Option<Receipt>,
 }
+/// Ownership evidence is recorded only after publishing a newly downloaded file.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Receipt {
+    device: String,
+    inode: String,
+    bytes: u64,
+    mtime: i64,
+    mtime_nsec: i64,
+}
+impl Receipt {
+    fn from_metadata(m: &fs::Metadata) -> Self {
+        Self {
+            device: format!("{:x}", m.dev()),
+            inode: format!("{:x}", m.ino()),
+            bytes: m.len(),
+            mtime: m.mtime(),
+            mtime_nsec: m.mtime_nsec(),
+        }
+    }
+    fn matches(&self, m: &fs::Metadata) -> bool {
+        m.is_file() && m.nlink() == 1 && *self == Self::from_metadata(m)
+    }
+}
+mod quarantine;
 #[derive(Default, Serialize, Deserialize)]
 pub struct Queue {
     pub items: Vec<Item>,
@@ -39,12 +66,13 @@ impl Queue {
     pub fn load(path: &Path) -> io::Result<Self> {
         match fs::read_to_string(path) {
             Ok(s) => {
-                let queue: Self = toml::from_str(&s).map_err(io::Error::other)?;
-                for item in &queue.items {
+                let mut queue: Self = toml::from_str(&s).map_err(io::Error::other)?;
+                for item in &mut queue.items {
                     huggingface::validate(&item.file)?;
                     if !item.root.is_absolute() {
                         return Err(io::Error::other("Queue root must be absolute"));
                     }
+                    quarantine::reconcile(item);
                 }
                 Ok(queue)
             }
@@ -232,7 +260,7 @@ fn content_range(value: &str, offset: u64, total: u64) -> bool {
         && length.parse::<u64>().ok() == Some(total)
         && end.parse::<u64>().ok() == total.checked_sub(1)
 }
-fn transfer(item: &Item, cancel: &AtomicBool, progress: &AtomicU64) -> io::Result<()> {
+fn transfer(item: &Item, cancel: &AtomicBool, progress: &AtomicU64) -> io::Result<Option<Receipt>> {
     transfer_from(
         item,
         cancel,
@@ -247,7 +275,7 @@ fn transfer_from(
     progress: &AtomicU64,
     source: url::Url,
     available_space: impl Fn(&Path) -> io::Result<u64>,
-) -> io::Result<()> {
+) -> io::Result<Option<Receipt>> {
     cancelled(cancel)?;
 
     let destination = Destination::open(item)?;
@@ -255,7 +283,8 @@ fn transfer_from(
     match fs::symlink_metadata(&dest) {
         Ok(_) => {
             verify(&dest, item, cancel)?;
-            return destination.check_visible();
+            destination.check_visible()?;
+            return Ok(None);
         }
         Err(e) if e.kind() == io::ErrorKind::NotFound => {}
         Err(e) => return Err(e),
@@ -411,7 +440,12 @@ fn transfer_from(
     }
     verify_file(&mut file, item, cancel)?;
     cancelled(cancel)?;
-    destination.publish(&file)
+    destination.publish(&file)?;
+    Ok(if item.file.sha256.is_some() {
+        Some(Receipt::from_metadata(&file.metadata()?))
+    } else {
+        None
+    })
 }
 fn retryable(error: &io::Error) -> bool {
     matches!(
@@ -424,18 +458,22 @@ fn retryable(error: &io::Error) -> bool {
             | io::ErrorKind::WouldBlock
     )
 }
-fn transfer_with_retry(item: &Item, cancel: &AtomicBool, progress: &AtomicU64) -> io::Result<()> {
+fn transfer_with_retry(
+    item: &Item,
+    cancel: &AtomicBool,
+    progress: &AtomicU64,
+) -> io::Result<Option<Receipt>> {
     retry(
         cancel,
         || transfer(item, cancel, progress),
         Duration::from_millis(100),
     )
 }
-fn retry(
+fn retry<T>(
     cancel: &AtomicBool,
-    mut operation: impl FnMut() -> io::Result<()>,
+    mut operation: impl FnMut() -> io::Result<T>,
     delay: Duration,
-) -> io::Result<()> {
+) -> io::Result<T> {
     for attempt in 0..3 {
         cancelled(cancel)?;
         match operation() {
@@ -482,7 +520,8 @@ pub struct Controller {
     pub cursor: usize,
     pub status: String,
     pub path: PathBuf,
-    active: Option<(usize, Job<()>, Arc<AtomicU64>)>,
+    active: Option<(usize, Job<Option<Receipt>>, Arc<AtomicU64>)>,
+    mutation: Option<Job<()>>,
     run_queue: bool,
     rate: Rate,
 }
@@ -494,12 +533,16 @@ impl Controller {
             status: String::new(),
             path,
             active: None,
+            mutation: None,
             run_queue: false,
             rate: Rate::default(),
         })
     }
     pub fn busy(&self) -> bool {
-        self.active.is_some()
+        self.active.is_some() || self.mutation.is_some()
+    }
+    pub fn mutating(&self) -> bool {
+        self.mutation.is_some()
     }
     pub fn progress(&self, index: usize) -> Option<u64> {
         self.active
@@ -530,6 +573,7 @@ impl Controller {
                     file,
                     root: root.clone(),
                     state: State::Queued,
+                    receipt: None,
                 });
             }
         }
@@ -550,8 +594,15 @@ impl Controller {
             .get(index)
             .ok_or_else(|| io::Error::other("Select a queued file"))?
             .clone();
-        if item.state == State::Complete {
-            return Err(io::Error::other("File already complete"));
+        if matches!(item.state, State::Complete | State::Quarantined) {
+            return Err(io::Error::other(
+                "File is complete or quarantined; restore it instead",
+            ));
+        }
+        if item.receipt.is_some() {
+            return Err(io::Error::other(
+                "Managed file requires quarantine recovery; do not redownload over it",
+            ));
         }
         let progress = Arc::new(AtomicU64::new(u64::MAX));
         let p = Arc::clone(&progress);
@@ -586,6 +637,11 @@ impl Controller {
         if self.cursor >= self.queue.items.len() {
             return Err(io::Error::other("Select a queue entry"));
         }
+        if self.queue.items[self.cursor].receipt.is_some() {
+            return Err(io::Error::other(
+                "Keep ownership receipts for recoverable model removal",
+            ));
+        }
         let item = self.queue.items.remove(self.cursor);
         if let Err(e) = self.queue.save(&self.path) {
             self.queue.items.insert(self.cursor, item);
@@ -595,8 +651,124 @@ impl Controller {
         self.status = "Queue entry removed; files retained".into();
         Ok(())
     }
+    fn reconcile_mutation(&mut self) -> io::Result<()> {
+        for item in &mut self.queue.items {
+            quarantine::reconcile(item);
+        }
+        self.queue.save(&self.path)
+    }
+    pub fn quarantine_targets(&self) -> io::Result<Vec<usize>> {
+        let selected = self
+            .queue
+            .items
+            .get(self.cursor)
+            .ok_or_else(|| io::Error::other("Select a downloaded model"))?;
+        let same: Vec<_> = self
+            .queue
+            .items
+            .iter()
+            .enumerate()
+            .filter(|(_, item)| {
+                item.root == selected.root
+                    && item.file.repo == selected.file.repo
+                    && item.file.revision == selected.file.revision
+            })
+            .collect();
+        let files: Vec<_> = same.iter().map(|(_, item)| item.file.clone()).collect();
+        let index = same
+            .iter()
+            .position(|(i, _)| *i == self.cursor)
+            .ok_or_else(|| io::Error::other("Missing queue entry"))?;
+        let bundle = huggingface::bundle(&files, index);
+        if bundle.is_empty() {
+            return Err(io::Error::other(
+                "All model shards must be present in the queue",
+            ));
+        }
+        let targets: Vec<_> = same
+            .into_iter()
+            .filter(|(_, item)| bundle.contains(&item.file))
+            .map(|(i, _)| i)
+            .collect();
+        if targets.len() != bundle.len()
+            || targets.iter().any(|&i| {
+                self.queue.items[i].receipt.is_none() || self.queue.items[i].file.sha256.is_none()
+            })
+        {
+            return Err(io::Error::other(
+                "Quarantine requires a verified Llamancer ownership receipt for every shard",
+            ));
+        }
+        Ok(targets)
+    }
+    pub fn select_managed_group(&mut self, group: &crate::models::group::Group) -> io::Result<()> {
+        if !group.complete || group.files.is_empty() {
+            return Err(io::Error::other("Select a complete managed model"));
+        }
+        let paths: std::collections::BTreeSet<_> =
+            group.files.iter().map(|f| f.path.clone()).collect();
+        let selected = self
+            .queue
+            .items
+            .iter()
+            .position(|item| {
+                item.receipt.is_some()
+                    && quarantine::expected(item)
+                        .ok()
+                        .and_then(|p| p.canonicalize().ok())
+                        .is_some_and(|p| paths.contains(&p))
+            })
+            .ok_or_else(|| {
+                io::Error::other(
+                    "Imported or legacy models have no ownership receipt; use hide instead",
+                )
+            })?;
+        let old = self.cursor;
+        self.cursor = selected;
+        let result = self.quarantine_targets().and_then(|indices| {
+            let expected: std::collections::BTreeSet<_> = indices
+                .iter()
+                .map(|&i| quarantine::expected(&self.queue.items[i])?.canonicalize())
+                .collect::<io::Result<_>>()?;
+            if expected != paths {
+                return Err(io::Error::other(
+                    "Queue receipt bundle does not match the indexed model",
+                ));
+            }
+            Ok(())
+        });
+        if result.is_err() {
+            self.cursor = old;
+        }
+        result
+    }
+    pub fn quarantine(&mut self, restore: bool, endpoint: &str) -> io::Result<()> {
+        if self.busy() {
+            return Err(io::Error::other("Wait for the active download or mutation"));
+        }
+        let items = self
+            .quarantine_targets()?
+            .into_iter()
+            .map(|i| self.queue.items[i].clone())
+            .collect();
+        let endpoint = endpoint.to_owned();
+        self.mutation = Some(Job::start(move |cancel| {
+            quarantine::move_items(items, restore, &endpoint, &cancel)
+        })?);
+        self.status = if restore {
+            "Restoring verified files…"
+        } else {
+            "Verifying and quarantining owned files…"
+        }
+        .into();
+        self.run_queue = false;
+        Ok(())
+    }
     pub fn pause(&mut self) {
         self.run_queue = false;
+        if let Some(job) = &self.mutation {
+            job.cancel();
+        }
         if let Some((_, job, _)) = &self.active {
             job.cancel();
             self.status = "Pausing…".into();
@@ -604,9 +776,16 @@ impl Controller {
     }
     pub fn shutdown(&mut self) -> io::Result<()> {
         self.pause();
+        if let Some(job) = self.mutation.take() {
+            job.finish();
+            self.reconcile_mutation()?;
+        }
         if let Some((index, job, _)) = self.active.take() {
             self.queue.items[index].state = match job.finish_result() {
-                Ok(()) => State::Complete,
+                Ok(receipt) => {
+                    self.queue.items[index].receipt = receipt;
+                    State::Complete
+                }
                 Err(e) if e.kind() == io::ErrorKind::Interrupted => State::Paused,
                 Err(_) => State::Failed,
             };
@@ -615,6 +794,21 @@ impl Controller {
         Ok(())
     }
     pub fn tick(&mut self) {
+        if let Some(job) = self.mutation.as_mut() {
+            if let Some(result) = job.poll() {
+                if let Some(job) = self.mutation.take() {
+                    job.finish();
+                }
+                self.status = match result {
+                    Ok(()) => "Quarantine operation complete; rescan Library".into(),
+                    Err(e) => format!("Quarantine: {e}; inspect queue before retrying"),
+                };
+                if self.reconcile_mutation().is_err() {
+                    self.status.push_str("; queue save failed");
+                }
+            }
+            return;
+        }
         let Some((_, job, progress)) = &mut self.active else {
             return;
         };
@@ -626,7 +820,10 @@ impl Controller {
             if let Some((index, job, _)) = self.active.take() {
                 job.finish();
                 let (state, status) = match result {
-                    Ok(()) => (State::Complete, "Download complete; rescan Library".into()),
+                    Ok(receipt) => {
+                        self.queue.items[index].receipt = receipt;
+                        (State::Complete, "Download complete; rescan Library".into())
+                    }
                     Err(e) if e.kind() == io::ErrorKind::Interrupted => {
                         (State::Paused, "Download paused".into())
                     }
@@ -665,6 +862,7 @@ mod tests {
             },
             root: root.into(),
             state: State::Queued,
+            receipt: None,
         }
     }
     // A finite local HTTP server drives the actual ureq transfer path. The public
@@ -960,7 +1158,7 @@ mod tests {
             &cancel,
             || {
                 attempts += 1;
-                Err(io::ErrorKind::TimedOut.into())
+                Err::<(), _>(io::ErrorKind::TimedOut.into())
             },
             Duration::ZERO
         )
@@ -973,7 +1171,7 @@ mod tests {
                 || {
                     attempts += 1;
                     cancel.store(true, Ordering::Release);
-                    Err(io::ErrorKind::TimedOut.into())
+                    Err::<(), _>(io::ErrorKind::TimedOut.into())
                 },
                 Duration::ZERO
             )
@@ -1017,6 +1215,7 @@ mod tests {
             },
             root: temp.path().into(),
             state: State::Queued,
+            receipt: None,
         };
         let dest = destination(&item).unwrap();
         fs::write(&dest, b"bad").unwrap();

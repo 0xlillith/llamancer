@@ -20,7 +20,7 @@ fn download_and_index_real_gguf() {
     assert!(file.sha256.is_some());
     let mut downloads = Controller::new(temp.path().join("queue.toml")).unwrap();
     downloads
-        .add(vec![file], temp.path().to_path_buf())
+        .add(vec![file.clone()], temp.path().to_path_buf())
         .unwrap();
     downloads.start().unwrap();
     let deadline = Instant::now() + Duration::from_secs(100);
@@ -42,18 +42,63 @@ fn download_and_index_real_gguf() {
         Some("llama")
     );
     let model = &scan.candidates[0].path;
-    let partial = model.with_file_name(format!(
-        "{}.part",
-        model.file_name().unwrap().to_string_lossy()
-    ));
-    std::fs::rename(model, &partial).unwrap();
+    assert!(downloads.queue.items[0].receipt.is_some());
+    let port = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let endpoint = format!("http://127.0.0.1:{port}");
+    downloads.quarantine(false, &endpoint).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while downloads.busy() {
+        downloads.tick();
+        assert!(Instant::now() < deadline, "Quarantine timed out");
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    assert_eq!(
+        downloads.queue.items[0].state,
+        State::Quarantined,
+        "{}",
+        downloads.status
+    );
+    assert!(!model.exists());
+    let mut downloads = Controller::new(temp.path().join("queue.toml")).unwrap();
+    assert_eq!(downloads.queue.items[0].state, State::Quarantined);
+    downloads.quarantine(true, &endpoint).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while downloads.busy() {
+        downloads.tick();
+        assert!(Instant::now() < deadline, "Restore timed out");
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    assert_eq!(
+        downloads.queue.items[0].state,
+        State::Complete,
+        "{}",
+        downloads.status
+    );
+    assert!(model.exists());
+
+    // Seed an interrupted transfer in a fresh isolated root, never mutate an
+    // already published managed model to simulate a network failure.
+    let resumed = tempfile::tempdir().unwrap();
+    let dest = resumed
+        .path()
+        .join(&file.repo)
+        .join(&file.revision)
+        .join(&file.name);
+    std::fs::create_dir_all(dest.parent().unwrap()).unwrap();
+    let partial = dest.with_file_name(format!("{}.part", file.name));
+    std::fs::copy(model, &partial).unwrap();
     let f = std::fs::OpenOptions::new()
         .write(true)
         .open(&partial)
         .unwrap();
-    f.set_len(scan.candidates[0].bytes / 2).unwrap();
+    f.set_len(file.size / 2).unwrap();
     drop(f);
-    downloads.queue.items[0].state = State::Paused;
+    let mut downloads = Controller::new(resumed.path().join("queue.toml")).unwrap();
+    downloads.add(vec![file], resumed.path().into()).unwrap();
     downloads.start().unwrap();
     let deadline = Instant::now() + Duration::from_secs(100);
     while downloads.busy() {
@@ -67,5 +112,6 @@ fn download_and_index_real_gguf() {
         "{}",
         downloads.status
     );
-    assert!(model.exists() && !partial.exists());
+    assert!(downloads.queue.items[0].receipt.is_some());
+    assert!(dest.exists() && !partial.exists());
 }

@@ -2,7 +2,17 @@ use crate::app::{App, TABS};
 use ratatui::layout::Rect;
 
 pub fn content(app: &App, body: Rect) -> (&'static str, String) {
-    if let Some(editor) = &app.profile_editor {
+    if let Some(restore) = app.quarantine_confirmation {
+        let mut lines=vec![if restore{"Restore all selected managed shards?"}else{"Quarantine all selected managed shards?"}.into(),"Stop all external inference first. Files are renamed, never deleted; disk space is retained.".into(),"y confirm | n/Esc cancel".into()];
+        if let Some(d) = &app.downloads {
+            if let Ok(indices) = d.quarantine_targets() {
+                for index in indices {
+                    lines.push(super::safe(&d.queue.items[index].file.name));
+                }
+            }
+        }
+        ("Confirm model movement", lines.join("\n"))
+    } else if let Some(editor) = &app.profile_editor {
         let selected = editor.selected();
         let filename = editor
             .id
@@ -59,7 +69,7 @@ pub fn content(app: &App, body: Rect) -> (&'static str, String) {
             ),
         )
     } else if app.help {
-        ("Help", "Tab / arrows / 1–5: navigate; click tab or row, scroll to select\nLibrary: r scan, x cancel, Up/Down select, Enter details\n/: search, s: sort, f: favorite, v: favorites only, p: inference profile, l: start single model, i: invalid files, h: hide model\nDiscover: / search, Enter open, d queue, n next page\nDownloads: r resume, R run queue, x pause, z remove entry\nServer: r refresh, D detach, s router  R restart, i probe, x stop, l/u load/unload, a agent, A current terminal, g logs\nSettings: Up/Down select, Enter edit\n?: toggle help\nEsc: close help or quit\nq / Ctrl+C: quit".into())
+        ("Help", "Tab / arrows / 1–5: navigate; click tab or row, scroll to select\nLibrary: r scan, x cancel, Up/Down select, Enter details\n/: search, s: sort, f: favorite, v: favorites only, p: inference profile, l: start single model, i: invalid files, h: hide model, t: quarantine\nDiscover: / search, Enter open, d queue, n next page\nDownloads: r resume, R run queue, x pause, t quarantine, T restore, z remove entry\nServer: r refresh, D detach, s router  R restart, i probe, x stop, l/u load/unload, a agent, A current terminal, g logs\nSettings: Up/Down select, Enter edit\n?: toggle help\nEsc: close help or quit\nq / Ctrl+C: quit".into())
     } else {
         (
             TABS[app.tab],
@@ -119,7 +129,7 @@ pub fn content(app: &App, body: Rect) -> (&'static str, String) {
                         };
                         let mut lines = vec![
                             safe(&d.status),
-                            "r resume | R run queue | x pause | z remove entry".into(),
+                            "r resume | R run queue | x pause | t quarantine | T restore | z remove entry".into(),
                         ];
                         let (offset, capacity) = super::viewport(d.cursor, body.height, 5);
                         for (i, item) in
