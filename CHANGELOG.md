@@ -29,3 +29,4 @@
 - Validated real systemd user-service start/restart/stop, isolated Arch x86_64 package installation, installed OMP/Pi authenticated streaming and read-tool round trips, and real single-model/router CPU image inference on both native architectures.
 
 - Added checksum-pinned official CPU, Vulkan and ROCm backend installation, device probing, selection, removal and bounded small-model benchmarks in the TUI. Added CLI installation/probe commands and actual managed CPU installation in live CI. GPU runtime requirements remain external.
+- Added side-by-side pinned b12721/b12726 upgrades and rollback with explicit version selection and a shared execution/exclusive mutation lock.

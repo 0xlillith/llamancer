@@ -1,6 +1,6 @@
 # Backend Manager
 
-The b12721 catalog pins the exact official release filenames, sizes and SHA-256 digests returned by the GitHub release API for ggml-org/llama.cpp. Archive contents are verified before extraction; traversal, unsupported entry types, duplicate entries, non-sibling symlinks and oversized expanded archives are rejected. Symlinks are created only after extracting regular files, and must resolve to regular files inside staging. No download credentials are used. Staging requires the archive size plus 8 GiB free; cancellation discards temporary files.
+The b12721/b12726 catalog pins the exact official release filenames, sizes and SHA-256 digests returned by the GitHub release API for ggml-org/llama.cpp. Archive contents are verified before extraction; traversal, unsupported entry types, duplicate entries, non-sibling symlinks and oversized expanded archives are rejected. Symlinks are created only after extracting regular files, and must resolve to regular files inside staging. No download credentials are used. Staging requires the archive size plus 8 GiB free; cancellation discards temporary files.
 
 Installation is explicit and never replaces an existing version directory. A SHA-256 receipt identifies the verified source archive; it does not continuously rehash every extracted file. Treat managed storage as private and trusted. The selected version is saved as an absolute executable path. Select another backend before removal; Llamancer-owned server processes hold a shared storage lock, while install/remove requires the exclusive lock. Visible process executable checks provide additional protection. Do not run unmanaged executables from these directories, use concurrent alternate XDG roots pointing at the same binaries, or rely on procfs visibility across namespaces. Stop all inference before removal.
 
@@ -14,4 +14,6 @@ The real PTY test exercised CPU and Vulkan selection and benchmarks, selected-ba
 python3 tests/backend_ui_live.py target/release/llamancer /path/to/small.gguf
 ```
 
-The initial manager deliberately ships a reviewed, pinned catalog, not an auto-updater. Multiple release selection, upstream release discovery and reproducible source builds are follow-up work. No automatic driver changes, system services, PATH modification or model downloads.
+The initial manager deliberately ships a reviewed, pinned catalog, not an auto-updater. Multiple pinned release selection and rollback are supported with v/u or an optional CLI version argument. Live upstream release discovery and reproducible source builds are follow-up work. No automatic driver changes, system services, PATH modification or model downloads.
+
+Version management regression: fresh isolated b12721 and b12726 CPU installs, TUI switching and rollback, rejection of removal while a separately configured supervisor was running, and removal after stopping the supervisor passed on Andromeda. Run `python3 tests/backend_versions_live.py target/release/llamancer /path/to/small.gguf`. Both b12726 CPU and Vulkan archives also installed in the desktop managed store; Vulkan device discovery passed.

@@ -223,7 +223,18 @@ impl Runtime {
         if key.code == KeyCode::Char('B') && matches!(self.app.tab, 3 | 4) && !self.modal() {
             self.app.notice.clear();
             self.app.backend_open = true;
-            self.app.backend_root = Some(backends::root()?);
+            let root = backends::root()?;
+            for (i, release) in backends::RELEASES.iter().enumerate() {
+                for (j, kind) in Kind::ALL.into_iter().enumerate() {
+                    if backends::catalog_version(kind, release).is_some_and(|asset| {
+                        asset.binary(&root).to_string_lossy() == self.app.config.server_binary
+                    }) {
+                        self.app.backend_version = i;
+                        self.app.backend_cursor = j;
+                    }
+                }
+            }
+            self.app.backend_root = Some(root);
             self.app.backend_hardware = backends::hardware();
             self.app.backend_status =
                 "Select a backend, install or probe it. No system packages are changed.".into();
@@ -356,13 +367,24 @@ impl Runtime {
                     self.app.backend_confirmation = Some(action);
                     return Ok(());
                 }
+                KeyCode::Char('v' | 'u') => {
+                    self.app.backend_version =
+                        (self.app.backend_version + 1) % backends::RELEASES.len();
+                    self.app.backend_status =
+                        "Version selected for browsing; install and explicitly use it to switch."
+                            .into();
+                    return Ok(());
+                }
                 KeyCode::Char('p') => 'p',
                 KeyCode::Enter => 's',
                 _ => return Ok(()),
             }
         };
-        let asset = backends::catalog(Kind::ALL[self.app.backend_cursor])
-            .ok_or_else(|| io::Error::other("No official asset for this architecture"))?;
+        let asset = backends::catalog_version(
+            Kind::ALL[self.app.backend_cursor],
+            backends::RELEASES[self.app.backend_version],
+        )
+        .ok_or_else(|| io::Error::other("No official asset for this architecture"))?;
         let root = self
             .app
             .backend_root

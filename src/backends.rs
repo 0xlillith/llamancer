@@ -12,6 +12,7 @@ use std::{
 use url::Url;
 
 pub const RELEASE: &str = "b12721";
+pub const RELEASES: [&str; 2] = [RELEASE, "b12726"];
 const MAX_EXPANDED: u64 = 8 * 1024 * 1024 * 1024;
 const MAX_ENTRIES: usize = 8192;
 
@@ -40,26 +41,28 @@ impl Kind {
 #[derive(Debug, Clone, Copy)]
 pub struct Asset {
     pub kind: Kind,
+    pub release: &'static str,
     pub suffix: &'static str,
     pub size: u64,
     pub sha256: &'static str,
 }
 impl Asset {
     pub fn filename(self) -> String {
-        format!("llama-{RELEASE}-bin-ubuntu-{}.tar.gz", self.suffix)
+        format!("llama-{}-bin-ubuntu-{}.tar.gz", self.release, self.suffix)
     }
     pub fn url(self) -> String {
         format!(
-            "https://github.com/ggml-org/llama.cpp/releases/download/{RELEASE}/{}",
+            "https://github.com/ggml-org/llama.cpp/releases/download/{}/{}",
+            self.release,
             self.filename()
         )
     }
     pub fn directory(self, root: &Path) -> PathBuf {
-        root.join(format!("{RELEASE}-{}", self.suffix))
+        root.join(format!("{}-{}", self.release, self.suffix))
     }
     pub fn binary(self, root: &Path) -> PathBuf {
         self.directory(root)
-            .join(format!("llama-{RELEASE}/llama-server"))
+            .join(format!("llama-{}/llama-server", self.release))
     }
     pub fn installed(self, root: &Path) -> bool {
         let dir = self.directory(root);
@@ -70,36 +73,66 @@ impl Asset {
     }
 }
 pub fn catalog(kind: Kind) -> Option<Asset> {
-    let (suffix, size, sha256) = match (std::env::consts::ARCH, kind) {
-        ("x86_64", Kind::Cpu) => (
+    catalog_version(kind, RELEASE)
+}
+pub fn catalog_version(kind: Kind, tag: &str) -> Option<Asset> {
+    let release = *RELEASES.iter().find(|&&r| r == tag)?;
+    let (suffix, size, sha256) = match (release, std::env::consts::ARCH, kind) {
+        (RELEASE, "x86_64", Kind::Cpu) => (
             "x64",
             23388595,
             "ab56524ce899526e51c04e77f089a5792c59282b49736b239900970d3947be47",
         ),
-        ("x86_64", Kind::Vulkan) => (
+        (RELEASE, "x86_64", Kind::Vulkan) => (
             "vulkan-x64",
             37095907,
             "ba2a338af1aa1d82d74d23f7e50e19ca5cb4da064d54bd86f6c01c80f77e7bda",
         ),
-        ("x86_64", Kind::Rocm) => (
+        (RELEASE, "x86_64", Kind::Rocm) => (
             "rocm-10.0-x64",
             277131895,
             "bfe159abce6a526ec6b5cc8ba44a9e91600d3c7632b78c3d48733efe224937bb",
         ),
-        ("aarch64", Kind::Cpu) => (
+        (RELEASE, "aarch64", Kind::Cpu) => (
             "arm64",
             18944130,
             "2c615cee75536574a30002ead85a3a259eac2ed3519d5e22546e61a5a9430c40",
         ),
-        ("aarch64", Kind::Vulkan) => (
+        (RELEASE, "aarch64", Kind::Vulkan) => (
             "vulkan-arm64",
             30074713,
             "d5c0356952fa73344ed2baab6a7a2aceff4a4f23005341e053eb7d5d222b553e",
+        ),
+        ("b12726", "x86_64", Kind::Cpu) => (
+            "x64",
+            23396793,
+            "cbfac3a6328b62f33239698f6b4daca58597a7be9f2e67b53ac1d28877908f71",
+        ),
+        ("b12726", "x86_64", Kind::Vulkan) => (
+            "vulkan-x64",
+            37107018,
+            "71c65dc9e8b24f3042d5b1709e2abc0ae1c098ddaffa029d85bcec319b24bc8a",
+        ),
+        ("b12726", "x86_64", Kind::Rocm) => (
+            "rocm-10.0-x64",
+            277168959,
+            "786f13e7802971684be7b9cb67c6cc8c2c4eea95d11faac20f2d78141db116d0",
+        ),
+        ("b12726", "aarch64", Kind::Cpu) => (
+            "arm64",
+            18946594,
+            "db9f2796bc7365e8d9b8eff41497ab5d817e39e1117c48e5ea02cd6712cf9f54",
+        ),
+        ("b12726", "aarch64", Kind::Vulkan) => (
+            "vulkan-arm64",
+            30074722,
+            "74d5fd4ca137330d07f089ee4b0b1c44ba20b80b18906fb15a32213d3fed9ef2",
         ),
         _ => return None,
     };
     Some(Asset {
         kind,
+        release,
         suffix,
         size,
         sha256,
@@ -207,12 +240,12 @@ fn download(
 fn normal(path: &Path) -> bool {
     !path.as_os_str().is_empty() && path.components().all(|c| matches!(c, Component::Normal(_)))
 }
-fn unpack(reader: impl Read, dir: &Path, flag: &AtomicBool) -> io::Result<()> {
+fn unpack(reader: impl Read, dir: &Path, release: &str, flag: &AtomicBool) -> io::Result<()> {
     let mut archive = tar::Archive::new(flate2::read::GzDecoder::new(reader));
     let mut seen = BTreeSet::new();
     let mut links = Vec::new();
     let mut total = 0u64;
-    let prefix = format!("llama-{RELEASE}");
+    let prefix = format!("llama-{release}");
     for entry in archive.entries()? {
         cancel(flag)?;
         let mut entry = entry?;
@@ -296,6 +329,32 @@ fn private_root(root: &Path) -> io::Result<()> {
     }
     Ok(())
 }
+fn storage_lock(root: &Path, exclusive: bool) -> io::Result<File> {
+    private_root(root)?;
+    let file = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(root.join("tui.lock"))?;
+    let meta = file.metadata()?;
+    if !meta.is_file() || meta.nlink() != 1 || meta.uid() != unsafe { libc::geteuid() } {
+        return Err(io::Error::other("Unsafe backend lock"));
+    }
+    if exclusive {
+        fs2::FileExt::try_lock_exclusive(&file)
+    } else {
+        fs2::FileExt::try_lock_shared(&file)
+    }
+    .map_err(|_| {
+        io::Error::other(
+            "Backend storage is in use; stop inference or wait for the current operation",
+        )
+    })?;
+    Ok(file)
+}
 pub fn install(
     root: &Path,
     asset: Asset,
@@ -303,7 +362,7 @@ pub fn install(
     progress: &AtomicU64,
 ) -> io::Result<PathBuf> {
     private_root(root)?;
-    let _lock = crate::diagnostics::SessionLock::acquire(root)?;
+    let _lock = storage_lock(root, true)?;
     let dest = asset.directory(root);
     if asset.installed(root) {
         return Ok(asset.binary(root));
@@ -323,8 +382,10 @@ pub fn install(
     download(asset, &mut archive, flag, progress)?;
     use std::io::{Seek, SeekFrom};
     archive.seek(SeekFrom::Start(0))?;
-    unpack(archive, staging.path(), flag)?;
-    let binary = staging.path().join(format!("llama-{RELEASE}/llama-server"));
+    unpack(archive, staging.path(), asset.release, flag)?;
+    let binary = staging
+        .path()
+        .join(format!("llama-{}/llama-server", asset.release));
     if !fs::symlink_metadata(&binary)?.is_file() {
         return Err(io::Error::other("Missing regular llama-server"));
     }
@@ -335,7 +396,7 @@ pub fn install(
             .ok_or_else(|| io::Error::other("Non-UTF8 backend path"))?,
         &["--version"],
     )?;
-    if !version.contains(RELEASE.trim_start_matches('b')) {
+    if !version.contains(asset.release.trim_start_matches('b')) {
         return Err(io::Error::other("Unexpected backend version"));
     }
     fs::write(staging.path().join("sha256"), asset.sha256)?;
@@ -369,21 +430,7 @@ pub fn execution_lock(binary: &Path) -> io::Result<Option<File>> {
     if !lexical.starts_with(&root) && !canonical.starts_with(&canonical_root) {
         return Ok(None);
     }
-    private_root(&root)?;
-    let file = OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .read(true)
-        .write(true)
-        .mode(0o600)
-        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
-        .open(root.join("tui.lock"))?;
-    let meta = file.metadata()?;
-    if !meta.is_file() || meta.nlink() != 1 || meta.uid() != unsafe { libc::geteuid() } {
-        return Err(io::Error::other("Unsafe backend lock"));
-    }
-    fs2::FileExt::try_lock_shared(&file)
-        .map_err(|_| io::Error::other("Backend storage is being changed"))?;
+    let file = storage_lock(&root, false)?;
     if !binary.is_file() {
         return Err(io::Error::other("Managed backend no longer installed"));
     }
@@ -505,7 +552,7 @@ pub fn benchmark(root: &Path, asset: Asset, model: &Path, flag: &AtomicBool) -> 
 /// Runtime and service selection are separate; callers must stop inference first.
 pub fn remove(root: &Path, asset: Asset, selected: &str) -> io::Result<()> {
     private_root(root)?;
-    let _lock = crate::diagnostics::SessionLock::acquire(root)?;
+    let _lock = storage_lock(root, true)?;
     if !asset.installed(root) {
         return Err(io::Error::other("No verified installation to remove"));
     }
@@ -576,6 +623,29 @@ pub fn hardware() -> String {
 mod tests {
     use super::*;
     #[test]
+    fn active_storage_readers_refuse_mutation() {
+        let root = tempfile::tempdir().unwrap();
+        let a = storage_lock(root.path(), false).unwrap();
+        let b = storage_lock(root.path(), false).unwrap();
+        assert!(storage_lock(root.path(), true).is_err());
+        drop(a);
+        drop(b);
+        let writer = storage_lock(root.path(), true).unwrap();
+        assert!(storage_lock(root.path(), false).is_err());
+        drop(writer);
+        assert!(storage_lock(root.path(), true).is_ok());
+    }
+    #[test]
+    fn versions_are_distinct_and_only_pinned_tags_are_accepted() {
+        let root = Path::new("/tmp/backend-fixture");
+        let a = catalog_version(Kind::Cpu, RELEASES[0]).unwrap();
+        let b = catalog_version(Kind::Cpu, RELEASES[1]).unwrap();
+        assert_ne!(a.binary(root), b.binary(root));
+        assert_ne!(a.sha256, b.sha256);
+        assert!(b.url().contains("/b12726/llama-b12726-"));
+        assert!(catalog_version(Kind::Cpu, "../bad").is_none());
+    }
+    #[test]
     fn requires_real_gpu_device() {
         assert_eq!(
             detected_device(Kind::Cpu, "Available devices:\n  (none)").unwrap(),
@@ -632,6 +702,7 @@ mod tests {
                 unpack(
                     fixture(ty, link).as_slice(),
                     root.path(),
+                    RELEASE,
                     &AtomicBool::new(false)
                 )
                 .is_ok(),
