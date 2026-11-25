@@ -28,6 +28,7 @@ pub struct Config {
     pub workspace_root: Option<PathBuf>,
     pub favorites: BTreeSet<PathBuf>,
     pub benchmarks: Vec<crate::benchmark::Record>,
+    pub default_context: Option<u32>,
     pub profiles: BTreeMap<PathBuf, crate::models::profile::Profile>,
 }
 
@@ -53,6 +54,7 @@ impl Default for Config {
             workspace_root: None,
             favorites: BTreeSet::new(),
             benchmarks: Vec::new(),
+            default_context: None,
             profiles: BTreeMap::new(),
         }
     }
@@ -114,6 +116,27 @@ pub(crate) fn check_state_size(contents: &str) -> io::Result<()> {
 }
 
 impl Config {
+    pub fn effective_profile(
+        &self,
+        g: &crate::models::group::Group,
+    ) -> crate::models::profile::Profile {
+        let mut p = self
+            .profiles
+            .get(&crate::models::library::identity(g))
+            .cloned()
+            .unwrap_or_default();
+        p.engine.context_size = p.engine.context_size.or(self.default_context);
+        p
+    }
+    fn validate_context(&self) -> io::Result<()> {
+        if self
+            .default_context
+            .is_some_and(|n| n == 0 || n > i32::MAX as u32)
+        {
+            return Err(io::Error::other("Invalid default context"));
+        }
+        Ok(())
+    }
     pub fn scan_roots(&self) -> Vec<PathBuf> {
         self.model_roots
             .iter()
@@ -149,6 +172,7 @@ impl Config {
                 "Unsupported configuration schema",
             ));
         }
+        config.validate_context()?;
         crate::llama::client::endpoint(&config.endpoint)?;
         for profile in config.profiles.values() {
             profile.validate()?;
@@ -159,6 +183,7 @@ impl Config {
 
     pub fn save(&self, path: &Path) -> io::Result<()> {
         use std::io::Write;
+        self.validate_context()?;
         crate::benchmark::validate(&self.benchmarks)?;
         for profile in self.profiles.values() {
             profile.validate()?;

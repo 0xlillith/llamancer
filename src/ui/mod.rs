@@ -193,11 +193,87 @@ pub fn search_at(area: Rect, app: &App, column: u16, row: u16) -> bool {
         && column > body.x
         && column < body.right().saturating_sub(1)
 }
+pub fn server_actions(app: &App) -> String {
+    let server = &app.server;
+    let active = server.owns_server() || server.snapshot.is_some();
+    let router = server.snapshot.as_ref().is_some_and(|s| s.router);
+    let first = if server.owns_server() {
+        "[ Stop server ]"
+    } else if active {
+        "[ Disconnect ]"
+    } else {
+        "[ Connect ]"
+    };
+    let second = if router {
+        "[ Unload model ]"
+    } else if active {
+        "[ Library ]"
+    } else {
+        "[ Start router ]"
+    };
+    let third = if active {
+        "[ Open agent ]"
+    } else {
+        "[ Backends ]"
+    };
+    let fourth = if active { "[ Web UI ]" } else { "[ Setup ]" };
+    format!("{first:<16}{second:<17}{third:<15}{fourth}")
+}
+pub fn server_action_at(
+    area: Rect,
+    app: &App,
+    column: u16,
+    row: u16,
+) -> Option<crossterm::event::KeyCode> {
+    if app.tab != 3
+        || app.server.show_logs
+        || app.backend_open
+        || app.setup_open
+        || app.projects.is_some()
+        || app.help
+        || app.edit.is_some()
+    {
+        return None;
+    }
+    let (body, _) = content_regions(regions(area)[2], app);
+    if row != body.y + 3 || column <= body.x || column >= body.right().saturating_sub(1) {
+        return None;
+    }
+    use crossterm::event::KeyCode::Char;
+    let x = column - body.x - 1;
+    let active = app.server.owns_server() || app.server.snapshot.is_some();
+    match x {
+        0..=14 => Some(Char(if app.server.owns_server() {
+            'x'
+        } else if active {
+            'D'
+        } else {
+            'r'
+        })),
+        16..=31 => Some(Char(
+            if app.server.snapshot.as_ref().is_some_and(|s| s.router) {
+                'u'
+            } else if active {
+                '1'
+            } else {
+                's'
+            },
+        )),
+        33..=46 => Some(if active {
+            crossterm::event::KeyCode::Enter
+        } else {
+            Char('B')
+        }),
+        48..=59 => Some(Char(if active { 'w' } else { 'G' })),
+        _ => None,
+    }
+}
 pub fn row_at(area: Rect, app: &App, column: u16, row: u16) -> Option<usize> {
     let (body, _) = content_regions(regions(area)[2], app);
     if app.launch_menu.is_some() {
         let index = usize::from(row.checked_sub(body.y.checked_add(4)?)?);
-        return (index < 3
+        return (index < 5
+            && app.context_input.is_none()
             && row < body.bottom().saturating_sub(1)
             && column > body.x
             && column < body.right().saturating_sub(1))
@@ -425,7 +501,7 @@ pub fn draw_themed(frame: &mut Frame, app: &App, theme: &Theme) {
         chrome::aside(frame, side, app, &palette);
     }
     let footer_text = if app.launch_menu.is_some() {
-        "Enter launch  ↑↓ choose  Esc back"
+        "Enter action  ↑↓ choose  ←→ context presets  c custom context  Esc back"
     } else if app.launching_agent {
         "Starting inference → agent window  Esc cancel agent launch"
     } else if app.setup_open {

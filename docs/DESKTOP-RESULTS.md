@@ -131,3 +131,7 @@ Reproduce with the ignored tests in tests/storage_live.rs and tests/memory_press
 ## Simplified Library launch acceptance
 
 On Andromeda, the isolated real Kitty test in tests/easy_launch_kitty_live.py verified two Enter presses from Library, readiness of an owned CPU llama-server, a real OMP process with the selected loopback endpoint and temporary project working directory, and navigation in Llamancer while the separate independent Kitty window remained open. Quitting Llamancer released the owned server port. The real public Hub download test exercised the new Run model only action after automatic indexing; no manual Library scan was required. Native tests retain the explicit current-terminal authenticated agent boundary.
+
+## Agent-window lifecycle and context
+
+The isolated real Kitty/OMP test saved a 4096-token global default and a 2048-token model override; the model and agent launched successfully, and closing OMP released the owned single-model listener while Llamancer remained open. An independently started single-model server survived a subsequent agent close and was stopped explicitly. Router automatic release uses the exact owned server generation and model ID; real router close still requires separate acceptance.

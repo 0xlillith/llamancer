@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Release inference owned by independent agent windows when the last window closes; retain independently started sessions.
+- Expose clickable server stop, unload and disconnect actions.
+- Persistent global and per-model context settings directly in the launch menu; apply changed single-model context on relaunch.
+
 ## 0.1.0-beta.3 — 2026-11-25
 
 - Two-step model launch from Library with Enter or double click, explicit Run model only and Inspect choices.

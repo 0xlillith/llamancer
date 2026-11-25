@@ -30,6 +30,11 @@ pub enum Effect {
     Open(String),
     Monitor,
 }
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct AgentScope {
+    generation: u64,
+    model: Option<String>,
+}
 pub struct Runtime {
     pub app: App,
     pub theme: Theme,
@@ -37,7 +42,9 @@ pub struct Runtime {
     path: PathBuf,
     scan: Option<Job<Scan>>,
     rescan_pending: bool,
-    pending_agent: Option<(Option<String>, std::time::Instant)>,
+    pending_agent: Option<(Option<String>, std::time::Instant, bool)>,
+    auto_release: std::collections::HashSet<AgentScope>,
+    release_pending: std::collections::HashSet<AgentScope>,
     backend: Option<(Job<BackendResult>, Arc<AtomicU64>, u64)>,
     _lock: crate::diagnostics::SessionLock,
     diagnostics: crate::diagnostics::Diagnostics,
@@ -68,6 +75,8 @@ impl Runtime {
             scan: None,
             rescan_pending: false,
             pending_agent: None,
+            auto_release: Default::default(),
+            release_pending: Default::default(),
             backend: None,
             _lock: lock,
             diagnostics,
@@ -120,6 +129,7 @@ impl Runtime {
         }
 
         self.app.server.tick(&self.app.config);
+        self.release_finished();
         self.app.discovery.tick();
         if let Some(d) = self.app.downloads.as_mut() {
             let before = d.bundles().iter().filter(|g| g.state == "Complete").count();
@@ -196,16 +206,24 @@ impl Runtime {
     }
     /// Only the explicit launch confirmation can arm this continuation.
     pub fn poll_launch(&mut self) -> io::Result<Effect> {
-        let Some((target, deadline)) = self.pending_agent.as_ref() else {
+        let Some((target, deadline, exclusive)) = self.pending_agent.as_ref() else {
             return Ok(Effect::None);
         };
         let server = &self.app.server;
         if std::time::Instant::now() >= *deadline || !server.active() {
+            let scope = AgentScope {
+                generation: self.app.server.generation,
+                model: target.clone(),
+            };
+            let exclusive = *exclusive;
             self.pending_agent = None;
             self.app.launching_agent = false;
+            let status = server.status.clone();
+            if exclusive {
+                self.window_closed(Some(scope));
+            }
             return Err(io::Error::other(format!(
-                "Agent launch cancelled: {}",
-                server.status
+                "Agent launch cancelled: {status}"
             )));
         }
         if server.busy() || !server.owns_server() {
@@ -227,14 +245,19 @@ impl Runtime {
         if !ready {
             return Ok(Effect::None);
         }
-        let (target, _) = self.pending_agent.take().unwrap();
+        let (target, _, exclusive) = self.pending_agent.take().unwrap();
         self.app.launching_agent = false;
         if let Some(id) = target {
             self.app.server.select_id(&id)?;
         } else {
             self.app.server.cursor = 0;
         }
-        self.launch_agent(crate::agents::TerminalMode::NewWindow)
+        let scope = self.agent_scope();
+        let result = self.launch_agent(crate::agents::TerminalMode::NewWindow);
+        if result.is_err() && exclusive {
+            self.window_closed(scope);
+        }
+        result
     }
     fn open_launch(&mut self) -> io::Result<()> {
         let group = self
@@ -328,9 +351,17 @@ impl Runtime {
                 )));
             }
         }
+        let mut exclusive = false;
         let target = if self.app.server.owns_server()
             && self.app.server.snapshot.as_ref().is_some_and(|s| s.router)
         {
+            if !self
+                .app
+                .server
+                .router_context_matches(&group, &self.app.config)
+            {
+                return Err(io::Error::other("Saved context differs from the running router. Stop server in Server, then launch this model again (or restart router)."));
+            }
             let id = crate::llama::router::id(&group);
             self.app.server.select_id(&id)?;
             if self
@@ -339,10 +370,23 @@ impl Runtime {
                 .selected()
                 .is_none_or(|m| m.state() != "loaded")
             {
+                exclusive = self
+                    .app
+                    .server
+                    .selected()
+                    .is_some_and(|m| m.state() == "unloaded");
                 self.app.server.set_loaded(&self.app.config, true)?;
             }
             Some(id)
-        } else if self.app.server.is_single_model(&group) {
+        } else if self.app.server.is_single_model(&group)
+            && self.app.server.active_context
+                == self
+                    .app
+                    .config
+                    .effective_profile(&group)
+                    .engine
+                    .context_size
+        {
             None
         } else {
             if !crate::doctor::executable(
@@ -366,13 +410,26 @@ impl Runtime {
             self.app
                 .server
                 .start(&self.app.config, Vec::new(), Some(group))?;
+            exclusive = true;
             None
         };
         self.app.tab = 3;
+        let scope = AgentScope {
+            generation: self.app.server.generation,
+            model: target.clone(),
+        };
+        self.release_pending.remove(&scope);
+        if !agent {
+            self.auto_release.remove(&scope);
+        }
         if agent {
+            if exclusive {
+                self.auto_release.insert(scope);
+            }
             self.pending_agent = Some((
                 target,
                 std::time::Instant::now() + std::time::Duration::from_secs(120),
+                exclusive,
             ));
             self.app.launching_agent = true;
             self.app.notice =
@@ -381,6 +438,85 @@ impl Runtime {
             return self.poll_launch();
         }
         Ok(Effect::None)
+    }
+    pub fn agent_scope(&self) -> Option<AgentScope> {
+        let s = &self.app.server;
+        if !s.owns_server() {
+            return None;
+        }
+        let snap = s.snapshot.as_ref()?;
+        let model = if snap.router {
+            Some(s.selected()?.id.clone())
+        } else {
+            None
+        };
+        Some(AgentScope {
+            generation: s.generation,
+            model,
+        })
+    }
+    pub fn window_closed(&mut self, scope: Option<AgentScope>) {
+        if let Some(scope) = scope {
+            if self.auto_release.remove(&scope) {
+                self.release_pending.insert(scope);
+            }
+        }
+    }
+    fn release_finished(&mut self) {
+        let generation = self.app.server.generation;
+        self.auto_release
+            .retain(|s| s.generation == generation && self.app.server.active());
+        self.release_pending
+            .retain(|s| s.generation == generation && self.app.server.active());
+        if self.app.server.busy() {
+            return;
+        }
+        let Some(scope) = self.release_pending.iter().next().cloned() else {
+            return;
+        };
+        let result = if let Some(id) = &scope.model {
+            if self.app.server.snapshot.is_none() {
+                return;
+            }
+            self.app
+                .server
+                .select_id(id)
+                .and_then(|()| self.app.server.set_loaded(&self.app.config, false))
+        } else {
+            self.app.server.stop()
+        };
+        self.release_pending.remove(&scope);
+        self.app.notice = match result {
+            Ok(()) => "Agent closed; releasing its inference resources".into(),
+            Err(e) => format!("Agent cleanup: {e}"),
+        };
+    }
+    fn save_context(&mut self, value: &str, global: bool) -> io::Result<()> {
+        let mut next = self.app.config.clone();
+        let mut profile = crate::models::profile::Profile::default();
+        crate::models::profile::Field::Context.set(&mut profile, value)?;
+        if global {
+            next.default_context = profile.engine.context_size;
+        } else {
+            let id = models::library::identity(
+                self.app
+                    .launch_menu
+                    .as_ref()
+                    .ok_or_else(|| io::Error::other("Select a model"))?,
+            );
+            next.profiles.entry(id).or_default().engine.context_size = profile.engine.context_size;
+        }
+        self.persist(next)?;
+        self.app.notice =
+            "Context saved for future launches; running models require restart".into();
+        Ok(())
+    }
+    pub fn release_session(&mut self) -> io::Result<Effect> {
+        self.server_key(if self.app.server.owns_server() {
+            KeyCode::Char('x')
+        } else {
+            KeyCode::Char('D')
+        })
     }
     pub fn input_failed(&self) {
         let _ = self
@@ -440,7 +576,10 @@ impl Runtime {
     }
     pub fn select_row(&mut self, index: usize) {
         if self.app.launch_menu.is_some() {
-            if index < 3 {
+            if self.app.context_input.is_some() {
+                return;
+            }
+            if index < 5 {
                 self.app.launch_cursor = index;
             }
             return;
@@ -518,7 +657,14 @@ impl Runtime {
         }
         if self.app.launching_agent {
             if matches!(key.code, KeyCode::Esc | KeyCode::Char('x')) {
-                self.pending_agent = None;
+                if let Some((target, _, exclusive)) = self.pending_agent.take() {
+                    if exclusive {
+                        self.auto_release.remove(&AgentScope {
+                            generation: self.app.server.generation,
+                            model: target,
+                        });
+                    }
+                }
                 self.app.launching_agent = false;
                 self.app.notice =
                     "Automatic agent launch cancelled; inference remains available.".into();
@@ -526,10 +672,63 @@ impl Runtime {
             return Ok(Effect::None);
         }
         if self.app.launch_menu.is_some() {
+            if let Some(mut input) = self.app.context_input.take() {
+                match key.code {
+                    KeyCode::Esc => {}
+                    KeyCode::Enter => {
+                        if let Err(e) = self.save_context(&input, self.app.launch_cursor == 4) {
+                            self.app.context_input = Some(input);
+                            return Err(e);
+                        }
+                    }
+                    _ => {
+                        edit_text(&mut input, key, 16);
+                        self.app.context_input = Some(input);
+                    }
+                }
+                return Ok(Effect::None);
+            }
             match key.code {
                 KeyCode::Esc => self.app.launch_menu = None,
                 KeyCode::Up => self.app.launch_cursor = self.app.launch_cursor.saturating_sub(1),
-                KeyCode::Down => self.app.launch_cursor = (self.app.launch_cursor + 1).min(2),
+                KeyCode::Down => self.app.launch_cursor = (self.app.launch_cursor + 1).min(4),
+                KeyCode::Char('c') => {
+                    self.app.launch_cursor = 3;
+                    self.app.context_input = Some(String::new());
+                }
+                KeyCode::Left | KeyCode::Right if self.app.launch_cursor >= 3 => {
+                    let current = if self.app.launch_cursor == 4 {
+                        self.app.config.default_context
+                    } else {
+                        self.app
+                            .config
+                            .effective_profile(self.app.launch_menu.as_ref().unwrap())
+                            .engine
+                            .context_size
+                    };
+                    let choices = [
+                        None,
+                        Some(8192),
+                        Some(16384),
+                        Some(32768),
+                        Some(65536),
+                        Some(131072),
+                        Some(262144),
+                    ];
+                    let i = choices.iter().position(|n| *n == current).unwrap_or(0);
+                    let n = choices[if key.code == KeyCode::Right {
+                        (i + 1) % choices.len()
+                    } else {
+                        (i + choices.len() - 1) % choices.len()
+                    }];
+                    self.save_context(
+                        &n.map(|v| v.to_string()).unwrap_or_else(|| "auto".into()),
+                        self.app.launch_cursor == 4,
+                    )?;
+                }
+                KeyCode::Enter if self.app.launch_cursor >= 3 => {
+                    self.app.context_input = Some(String::new());
+                }
                 KeyCode::Enter => {
                     let selected = self.app.launch_menu.clone();
                     let result = self.confirm_launch();
@@ -1198,13 +1397,7 @@ impl Runtime {
                     .app
                     .selected()
                     .ok_or_else(|| io::Error::other("Select a model first"))?;
-                let profile = self
-                    .app
-                    .config
-                    .profiles
-                    .get(&models::library::identity(group))
-                    .cloned()
-                    .unwrap_or_default();
+                let profile = self.app.config.effective_profile(group);
                 self.app.fit_report = Some(models::fit::report(
                     group,
                     &profile,
@@ -1319,6 +1512,12 @@ impl Runtime {
                     {
                         let id = crate::llama::router::id(&group);
                         self.app.server.select_id(&id)?;
+                        let scope = AgentScope {
+                            generation: self.app.server.generation,
+                            model: Some(id),
+                        };
+                        self.auto_release.remove(&scope);
+                        self.release_pending.remove(&scope);
                         self.app.server.set_loaded(&self.app.config, true)?;
                     } else {
                         self.app
@@ -1436,6 +1635,15 @@ impl Runtime {
     fn server_key(&mut self, key: KeyCode) -> io::Result<Effect> {
         if self.mutation_active() {
             return Err(io::Error::other("Wait for model quarantine to finish"));
+        }
+        if matches!(key, KeyCode::Char('l' | 'u' | 'A'))
+            || (key == KeyCode::Char('a')
+                && self.app.config.agent_terminal != crate::agents::TerminalMode::NewWindow)
+        {
+            if let Some(scope) = self.agent_scope() {
+                self.auto_release.remove(&scope);
+                self.release_pending.remove(&scope);
+            }
         }
         let c = &self.app.config;
         let s = &mut self.app.server;

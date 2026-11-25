@@ -57,11 +57,12 @@ fn apply_effect(
     terminal: &mut ratatui::DefaultTerminal,
     stop: &AtomicBool,
     effect: io::Result<Effect>,
-    agent_windows: &mut Vec<std::process::Child>,
+    agent_windows: &mut Vec<(std::process::Child, Option<llamancer::runtime::AgentScope>)>,
 ) {
     match effect {
         Ok(Effect::None) => {}
         Ok(Effect::Launch(plan, mode)) if mode == llamancer::agents::TerminalMode::NewWindow => {
+            let scope = runtime.agent_scope();
             runtime.app.notice = match plan.terminal_command(mode).and_then(|mut command| {
                 command
                     .stdin(Stdio::null())
@@ -70,10 +71,15 @@ fn apply_effect(
                     .spawn()
             }) {
                 Ok(child) => {
-                    agent_windows.push(child);
+                    agent_windows.push((child, scope));
                     "Starting agent in a separate window; Llamancer stays open".into()
                 }
-                Err(e) => format!("Agent window failed: {e}"),
+                Err(e) => {
+                    if !agent_windows.iter().any(|(_, s)| *s == scope) {
+                        runtime.window_closed(scope);
+                    }
+                    format!("Agent window failed: {e}")
+                }
             };
         }
         Ok(Effect::Launch(plan, mode)) => {
@@ -255,13 +261,16 @@ fn main() -> io::Result<()> {
     let mut terminal = ratatui::init();
     let result = (|| -> io::Result<()> {
         execute!(io::stdout(), EnableMouseCapture)?;
-        let mut agent_windows: Vec<std::process::Child> = Vec::new();
+        let mut agent_windows: Vec<(std::process::Child, Option<llamancer::runtime::AgentScope>)> =
+            Vec::new();
         let mut last_click: Option<(usize, usize, u16, u16, Instant)> = None;
         while !runtime.app.quit && !stop.load(Ordering::Acquire) {
             runtime.tick();
-            agent_windows.retain_mut(|child| match child.try_wait() {
+            let mut closed = Vec::new();
+            agent_windows.retain_mut(|(child, scope)| match child.try_wait() {
                 Ok(None) => true,
                 Ok(Some(status)) => {
+                    closed.push(scope.clone());
                     runtime.app.notice = if status.success() {
                         "Agent window closed".into()
                     } else {
@@ -274,6 +283,11 @@ fn main() -> io::Result<()> {
                     false
                 }
             });
+            for scope in closed {
+                if !agent_windows.iter().any(|(_, s)| *s == scope) {
+                    runtime.window_closed(scope);
+                }
+            }
             let effect = runtime.poll_launch();
             apply_effect(
                 &mut runtime,
@@ -335,7 +349,23 @@ fn main() -> io::Result<()> {
                     let area = ratatui::layout::Rect::new(0, 0, size.width, size.height);
                     match mouse.kind {
                         MouseEventKind::Down(MouseButton::Left) => {
-                            if ui::search_at(area, &runtime.app, mouse.column, mouse.row)
+                            if let Some(code) =
+                                ui::server_action_at(area, &runtime.app, mouse.column, mouse.row)
+                                    .filter(|_| !runtime.modal())
+                            {
+                                let effect = runtime.handle_key(event::KeyEvent::new(
+                                    code,
+                                    event::KeyModifiers::NONE,
+                                ));
+                                apply_effect(
+                                    &mut runtime,
+                                    &mut terminal,
+                                    &stop,
+                                    effect,
+                                    &mut agent_windows,
+                                );
+                                last_click = None;
+                            } else if ui::search_at(area, &runtime.app, mouse.column, mouse.row)
                                 && !runtime.modal()
                             {
                                 runtime.focus_search();

@@ -31,6 +31,9 @@ pub struct Controller {
     failures: u32,
     selected_id: Option<String>,
     single: Option<Group>,
+    pub generation: u64,
+    pub active_context: Option<u32>,
+    router_contexts: std::collections::BTreeMap<String, Option<u32>>,
     discard_pending: bool,
     pub snapshot: Option<Snapshot>,
     pub cursor: usize,
@@ -53,6 +56,11 @@ impl Controller {
                 .single
                 .as_ref()
                 .is_some_and(|g| identity(g) == identity(group))
+    }
+    pub fn router_context_matches(&self, g: &Group, config: &Config) -> bool {
+        self.router_contexts
+            .get(&router::id(g))
+            .is_some_and(|c| *c == config.effective_profile(g).engine.context_size)
     }
     pub fn active(&self) -> bool {
         self.busy() || self.owns_server()
@@ -157,7 +165,24 @@ impl Controller {
                 client_url.port_or_known_default().unwrap_or(80)
             )
         };
+        let router_contexts = if single.is_none() {
+            groups
+                .iter()
+                .filter(|g| g.complete && !g.projector)
+                .map(|g| {
+                    (
+                        router::id(g),
+                        config.effective_profile(g).engine.context_size,
+                    )
+                })
+                .collect()
+        } else {
+            Default::default()
+        };
         let launch_mode = single.clone();
+        let requested_context = single
+            .as_ref()
+            .and_then(|g| config.effective_profile(g).engine.context_size);
         self.submit(move |cancel| {
             let listener = TcpListener::bind(address).map_err(|_| {
                 io::Error::other("Endpoint already occupied; attach instead or choose another port")
@@ -169,11 +194,7 @@ impl Controller {
                 if !group.complete || group.projector {
                     return Err(io::Error::other("Select a complete model group"));
                 }
-                let profile = config
-                    .profiles
-                    .get(&identity(&group))
-                    .cloned()
-                    .unwrap_or_default();
+                let profile = config.effective_profile(&group);
                 (
                     None,
                     process::args(&group.files[0].path, &config.endpoint, &profile, &help)?,
@@ -224,6 +245,9 @@ impl Controller {
             Ok(Outcome::Started(server, version))
         })?;
         self.startup_deadline = Some(Instant::now() + Duration::from_secs(90));
+        self.active_context = requested_context;
+        self.router_contexts = router_contexts;
+        self.generation = self.generation.wrapping_add(1);
         self.single = launch_mode;
         self.selected_id = None;
         self.attached = false;
