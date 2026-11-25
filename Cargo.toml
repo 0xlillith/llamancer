@@ -1,0 +1,14 @@
+[package]
+name = "llamancer"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "A lightweight Rust TUI for llama.cpp model and inference management"
+repository = "https://github.com/0xlillith/llamancer"
+keywords = ["tui", "llama-cpp", "llm", "inference", "oh-my-pi"]
+categories = ["command-line-utilities"]
+
+[dependencies]
+ratatui = "0.29"
+crossterm = "0.28"
+
