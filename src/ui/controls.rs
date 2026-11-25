@@ -7,6 +7,8 @@ use ratatui::{layout::Rect, style::Modifier, text::Span, widgets::Paragraph, Fra
 pub enum Command {
     Key(KeyCode),
     SubmitSearch,
+    Pick(super::choices::Kind),
+    SelectSetting(usize),
 }
 #[derive(Clone, Debug)]
 struct Button {
@@ -16,7 +18,8 @@ struct Button {
     primary: bool,
 }
 fn visible(app: &App) -> bool {
-    !app.help
+    app.picker.is_none()
+        && !app.help
         && !app.backend_open
         && !app.setup_open
         && !app.benchmark_open
@@ -30,10 +33,9 @@ fn visible(app: &App) -> bool {
         && app.quarantine_confirmation.is_none()
         && app.hide_confirmation.is_none()
         && !app.show_invalid
-        && !(app.tab == 3 && app.server.show_logs)
 }
 fn buttons(area: Rect, app: &App) -> Vec<Button> {
-    use Command::{Key, SubmitSearch};
+    use Command::{Key, Pick, SubmitSearch};
     use KeyCode::{Backspace, Char, Enter};
     if !visible(app) {
         return vec![];
@@ -55,7 +57,15 @@ fn buttons(area: Rect, app: &App) -> Vec<Button> {
                 ("Profile".into(), Key(Char('p'))),
                 ("Refresh".into(), Key(Char('r'))),
                 (format!("Sort: {}", app.sort.label()), Key(Char('s'))),
-                ("Favorites".into(), Key(Char('v'))),
+                (
+                    if app.only_favorites {
+                        "Show all".into()
+                    } else {
+                        "Favorites".into()
+                    },
+                    Key(Char('v')),
+                ),
+                ("★".into(), Key(Char('f'))),
             ],
         ),
         0 => (
@@ -71,9 +81,10 @@ fn buttons(area: Rect, app: &App) -> Vec<Button> {
             3,
             vec![
                 ("Download model".into(), Key(Enter)),
+                ("Filter".into(), Pick(super::choices::Kind::Filters)),
                 (
                     format!("Sort: {}", app.discovery.variant_sort.label()),
-                    Key(Char('s')),
+                    Pick(super::choices::Kind::Sort),
                 ),
                 ("Back".into(), Key(Backspace)),
             ],
@@ -83,9 +94,10 @@ fn buttons(area: Rect, app: &App) -> Vec<Button> {
             vec![
                 ("Search".into(), SubmitSearch),
                 ("Open".into(), Key(Enter)),
+                ("Filters".into(), Pick(super::choices::Kind::Filters)),
                 (
                     format!("Sort: {}", app.discovery.ranking.label()),
-                    Key(Char('s')),
+                    Pick(super::choices::Kind::Sort),
                 ),
                 ("Next page".into(), Key(Char('n'))),
             ],
@@ -97,8 +109,10 @@ fn buttons(area: Rect, app: &App) -> Vec<Button> {
                 ("Pause".into(), Key(Char('x'))),
                 ("Run queue".into(), Key(Char('R'))),
                 ("Discover".into(), Key(Char('2'))),
+                ("Remove job".into(), Key(Char('z'))),
             ],
         ),
+        3 if app.server.show_logs => (3, vec![("Back to server".into(), Key(Char('g')))]),
         3 => {
             let s = &app.server;
             let active = s.owns_server() || s.snapshot.is_some();
@@ -112,12 +126,23 @@ fn buttons(area: Rect, app: &App) -> Vec<Button> {
                     Key(Char(if s.owns_server() { 'x' } else { 'D' })),
                 )];
                 if s.snapshot.as_ref().is_some_and(|x| x.router) {
-                    v.push(("Unload model".into(), Key(Char('u'))));
+                    let loaded = s
+                        .selected()
+                        .is_some_and(|m| matches!(m.state(), "loaded" | "sleeping"));
+                    v.push((
+                        if loaded {
+                            "Unload model".into()
+                        } else {
+                            "Load model".into()
+                        },
+                        Key(Char(if loaded { 'u' } else { 'l' })),
+                    ));
                 }
                 v.extend([
                     ("Open agent".into(), Key(Enter)),
                     ("Web UI".into(), Key(Char('w'))),
-                    ("Library".into(), Key(Char('1'))),
+                    ("Project".into(), Key(Char('P'))),
+                    ("Logs".into(), Key(Char('g'))),
                 ]);
                 (3, v)
             } else {
@@ -132,6 +157,19 @@ fn buttons(area: Rect, app: &App) -> Vec<Button> {
                 )
             }
         }
+        4 => (
+            1,
+            ["Storage", "Inference", "Agent", "Workspace", "Appearance"]
+                .iter()
+                .map(|category| {
+                    let i = crate::settings::Field::ALL
+                        .iter()
+                        .position(|f| f.category() == *category)
+                        .unwrap_or(0);
+                    ((*category).to_string(), Command::SelectSetting(i))
+                })
+                .collect(),
+        ),
         _ => return vec![],
     };
     let y = body.y.saturating_add(dy);
@@ -141,7 +179,23 @@ fn buttons(area: Rect, app: &App) -> Vec<Button> {
     let mut x = body.x + 1;
     let end = body.right().saturating_sub(1);
     let mut out = vec![];
-    for (i, (label, command)) in items.into_iter().enumerate() {
+    for (i, (mut label, command)) in items.into_iter().enumerate() {
+        if body.width < 75 {
+            label = match label.as_str() {
+                "Download model" => "Download".into(),
+                "Resume model" => "Resume".into(),
+                "Start router" => "Router".into(),
+                "Stop server" => "Stop".into(),
+                "Disconnect" => "Detach".into(),
+                "Open agent" => "Agent".into(),
+                "Unload model" => "Unload".into(),
+                "Load model" => "Load".into(),
+                "Back to models" => "Back".into(),
+                "Next page" => "Next".into(),
+                _ if label.starts_with("Sort:") => "Sort".into(),
+                _ => label,
+            };
+        }
         let width = Span::raw(&label)
             .width()
             .saturating_add(4)
@@ -153,7 +207,12 @@ fn buttons(area: Rect, app: &App) -> Vec<Button> {
             rect: Rect::new(x, y, width, 1),
             label,
             command,
-            primary: i == 0,
+            primary: if let Command::SelectSetting(n) = command {
+                crate::settings::Field::ALL[n].category()
+                    == crate::settings::Field::ALL[app.setting].category()
+            } else {
+                i == 0
+            },
         });
         x = x.saturating_add(width + 1);
     }

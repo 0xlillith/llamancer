@@ -45,25 +45,45 @@ impl Field {
         Self::Theme,
         Self::Icons,
     ];
+    pub fn choices(self) -> &'static [&'static str] {
+        match self {
+            Self::Theme => &[
+                "dracula",
+                "andromeda",
+                "catppuccin-mocha",
+                "tokyo-night",
+                "nord",
+                "rose-pine",
+                "gruvbox-dark",
+                "high-contrast",
+                "Custom value…",
+            ],
+            Self::Icons => &["auto", "nerd", "plain"],
+            Self::Agent => &["omp", "pi", "pi-native", "custom"],
+            Self::AgentTerminal => &["new-window", "current", "kitty-tab", "kitty-window"],
+            Self::Device => &["auto", "none", "Custom value…"],
+            _ => &[],
+        }
+    }
     pub fn label(self) -> &'static str {
         match self {
-            Self::Theme => "Theme (T to cycle built-ins)",
-            Self::Icons => "Icons (auto/nerd/plain; I to cycle)",
+            Self::Theme => "Theme",
+            Self::Icons => "Icons",
             Self::Agent => "Default agent",
-            Self::AgentTerminal => "Agent terminal (new-window/current/kitty-tab/kitty-window)",
+            Self::AgentTerminal => "Agent terminal",
             Self::Endpoint => "Endpoint",
-            Self::ApiKeyFile => "API key file (absolute private path or none)",
+            Self::ApiKeyFile => "API key file",
             Self::ServerBinary => "llama-server executable",
-            Self::Device => "GPU device (auto/none/device IDs)",
-            Self::ProjectDir => "Active project (agent working folder)",
-            Self::WorkspaceRoot => "Workspace root (parent of all projects)",
+            Self::Device => "GPU device",
+            Self::ProjectDir => "Active project",
+            Self::WorkspaceRoot => "Workspace root",
             Self::CustomAgent => "Custom agent executable",
             Self::AddRoot => "Add model root",
-            Self::DownloadRoot => "Default download root (or none)",
-            Self::RemoveRoot => "Remove model root (exact path)",
-            Self::ImportModel => "Import GGUF by reference (absolute path)",
-            Self::RestoreModel => "Restore hidden model (exact identity path)",
-            Self::RemoveImport => "Remove imported model reference (exact path)",
+            Self::DownloadRoot => "Default download root",
+            Self::RemoveRoot => "Remove model root",
+            Self::ImportModel => "Import GGUF reference",
+            Self::RestoreModel => "Restore hidden model",
+            Self::RemoveImport => "Remove import reference",
         }
     }
     pub fn hint(self) -> &'static str {

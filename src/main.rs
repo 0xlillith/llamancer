@@ -343,13 +343,28 @@ fn main() -> io::Result<()> {
                         || runtime.app.projects.is_some()
                         || runtime.app.download_destination.is_some()
                         || runtime.app.setup_open
-                        || runtime.app.launch_menu.is_some() =>
+                        || runtime.app.launch_menu.is_some()
+                        || runtime.app.picker.is_some() =>
                 {
                     let size = terminal.size()?;
                     let area = ratatui::layout::Rect::new(0, 0, size.width, size.height);
                     match mouse.kind {
                         MouseEventKind::Down(MouseButton::Left) => {
-                            if let Some((index, code)) =
+                            if runtime.app.picker.is_some() {
+                                if let Some(index) =
+                                    ui::choices::hit(area, &runtime.app, mouse.column, mouse.row)
+                                {
+                                    let effect = runtime.select_picker(index);
+                                    apply_effect(
+                                        &mut runtime,
+                                        &mut terminal,
+                                        &stop,
+                                        effect,
+                                        &mut agent_windows,
+                                    );
+                                }
+                                last_click = None;
+                            } else if let Some((index, code)) =
                                 ui::launch_hit(area, &runtime.app, mouse.column, mouse.row)
                             {
                                 if let Some(i) = index {
@@ -372,17 +387,26 @@ fn main() -> io::Result<()> {
                                     .filter(|_| !runtime.modal())
                             {
                                 runtime.blur_search();
-                                let code = match command {
-                                    ui::controls::Command::Key(key) => key,
+                                let effect = match command {
+                                    ui::controls::Command::Key(key) => runtime.handle_key(
+                                        event::KeyEvent::new(key, event::KeyModifiers::NONE),
+                                    ),
                                     ui::controls::Command::SubmitSearch => {
                                         runtime.focus_search();
-                                        event::KeyCode::Enter
+                                        runtime.handle_key(event::KeyEvent::new(
+                                            event::KeyCode::Enter,
+                                            event::KeyModifiers::NONE,
+                                        ))
+                                    }
+                                    ui::controls::Command::Pick(kind) => {
+                                        runtime.open_picker(kind);
+                                        Ok(Effect::None)
+                                    }
+                                    ui::controls::Command::SelectSetting(index) => {
+                                        runtime.select_row(index);
+                                        Ok(Effect::None)
                                     }
                                 };
-                                let effect = runtime.handle_key(event::KeyEvent::new(
-                                    code,
-                                    event::KeyModifiers::NONE,
-                                ));
                                 apply_effect(
                                     &mut runtime,
                                     &mut terminal,

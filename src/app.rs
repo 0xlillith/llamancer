@@ -37,6 +37,7 @@ pub struct App {
     pub quit: bool,
     pub config: Config,
     pub setting: usize,
+    pub picker: Option<crate::ui::choices::Picker>,
     pub projects: Option<Vec<std::path::PathBuf>>,
     pub download_destination: Option<crate::downloads::DestinationChoice>,
     pub project_cursor: usize,
@@ -54,6 +55,7 @@ pub struct App {
     pub details: bool,
     pub launch_menu: Option<Group>,
     pub launch_cursor: usize,
+    pub launch_advanced: bool,
     pub context_input: Option<String>,
     pub launching_agent: bool,
     pub probe_warning: Option<String>,
@@ -69,6 +71,14 @@ pub struct App {
     pub downloads: Option<crate::downloads::Controller>,
 }
 impl App {
+    pub fn launch_order(&self) -> &'static [usize] {
+        if self.launch_advanced {
+            &[0, 1, 2, 3, 4, 8, 5, 6, 7]
+        } else {
+            &[0, 1, 2, 3, 4, 8]
+        }
+    }
+
     pub fn nerd_icons(&self) -> bool {
         self.config.icon_mode.enabled(self.nerd_available)
     }

@@ -222,3 +222,8 @@ The reviewed preset is offered only for the managed DavidAU/Qwen3.8-Flash-Next-T
 
 ### Visual controls
 The Library, Discover, Downloads and Server views expose clickable action bars; keyboard shortcuts remain available in Help. Library's Run model opens the responsive launch panel, with clickable context and thinking steppers and an explicit custom-value editor. The selected control remains visible in shorter terminals; larger terminals also show a guidance panel. The same layout computes drawing and pointer hit regions, so empty space is not treated as a button. Settings rows can be double-clicked to edit.
+
+
+### Beta.4 interaction changes
+
+Use the visible action bars rather than memorizing shortcuts. Discover exposes a ranked sort picker and publisher, license and quantization presets (quantization is applied to the variants inside a repository; custom terms remain available in the query). The Launch panel keeps context controls in the main view; expand Advanced settings for reasoning, model-card sampling and optional tool-call checks. Select Presets to pick a token count, click the arrows to step through choices, or use Enter for a custom count. Requested context is not necessarily effective context: the backend may cap the per-slot context, including at the declared training context. Server reports the actual context when the backend supplies it. Settings categories lead to the relevant fields; enumerated values use a selection dialog. The Downloads list shows model names before aggregate progress and the selected job's measured speed and estimated remaining time. Memory displayed in Server is available system RAM and last-probe device capacity, not measured per-model VRAM.

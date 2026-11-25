@@ -173,16 +173,15 @@ impl Discovery {
         }
         let spec = SearchSpec::parse(&self.query)?;
         if let Some(repo) = spec.repo.clone() {
-            let query_spec = spec.clone();
             let selected = repo.clone();
             self.job = Some(Job::start(move |_| {
-                super::files(&repo).map(|files| ResultSet::Files(query_spec.filter_files(files)))
+                super::files(&repo).map(ResultSet::Files)
             })?);
             self.repo = Some(selected);
             self.files.clear();
             self.all_variants.clear();
             self.variants.clear();
-            self.variant_filter.clear();
+            self.variant_filter = spec.quant.clone().unwrap_or_default();
             self.repos.clear();
             self.next = None;
             self.cursor = 0;
@@ -223,15 +222,14 @@ impl Discovery {
             .id
             .clone();
         let selected = repo.clone();
-        let spec = self.spec.clone();
         self.job = Some(Job::start(move |_| {
-            super::files(&repo).map(|files| ResultSet::Files(spec.filter_files(files)))
+            super::files(&repo).map(ResultSet::Files)
         })?);
         self.repo = Some(selected);
         self.files.clear();
         self.all_variants.clear();
         self.variants.clear();
-        self.variant_filter.clear();
+        self.variant_filter = self.spec.quant.clone().unwrap_or_default();
         self.cursor = 0;
         self.status = "Fetching revision and files (access may require a read token)…".into();
         Ok(())

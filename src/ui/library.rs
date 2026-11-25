@@ -171,9 +171,9 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App, p: &Palette) {
     };
     if indices.is_empty() {
         let message = if app.candidates.is_empty() {
-            "        /\\\n       /  \\\n      / *  \\\n     /______\\\n    /________\\\n     LLAMANCER\n\nNo models indexed.\n\n1. G  Guided setup (model folder and backend)\n2. 2  Discover and download a GGUF\n3. 1  Select a complete model; Enter twice to launch\n4. 4  Server: w opens Web UI; a launches agent"
+            "        /\\\n       /  \\\n      / *  \\\n     /______\\\n    /________\\\n     LLAMANCER\n\nNo models indexed.\n\nStart with Setup or Discover above.\n\nDownload a complete variant, then run it from Library.\nModels appear here automatically after verification."
         } else {
-            "No matching models. Edit search with / or toggle favorites with v."
+            "No matching models. Click Search to change the filter, or show all models."
         };
         frame.render_widget(
             Paragraph::new(message)
@@ -198,6 +198,17 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App, p: &Palette) {
                     "Projector"
                 } else if !group.complete {
                     "Incomplete"
+                } else if app.server.is_single_model(group) && app.server.snapshot.is_some()
+                    || app.server.owns_server()
+                        && app.server.snapshot.as_ref().is_some_and(|snap| {
+                            snap.router
+                                && snap.models.iter().any(|m| {
+                                    m.id == crate::llama::router::id(group)
+                                        && matches!(m.state(), "loaded" | "sleeping")
+                                })
+                        })
+                {
+                    "Running"
                 } else {
                     "Indexed"
                 };
