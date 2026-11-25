@@ -269,6 +269,33 @@ fn transfer(item: &Item, cancel: &AtomicBool, progress: &AtomicU64) -> io::Resul
         |path| fs2::available_space(path),
     )
 }
+// A lock must end with the transfer even if a concurrent fork briefly
+// inherits its open-file description before exec closes the descriptor.
+struct LockedPartial(fs::File);
+impl LockedPartial {
+    fn new(file: fs::File) -> io::Result<Self> {
+        FileExt::try_lock_exclusive(&file)
+            .map_err(|_| io::Error::other("Partial file is in use by another downloader"))?;
+        Ok(Self(file))
+    }
+}
+impl std::ops::Deref for LockedPartial {
+    type Target = fs::File;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for LockedPartial {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+impl Drop for LockedPartial {
+    fn drop(&mut self) {
+        // The transfer is finished; no further file operations follow.
+        let _ = FileExt::unlock(&self.0);
+    }
+}
 fn transfer_from(
     item: &Item,
     cancel: &AtomicBool,
@@ -290,7 +317,7 @@ fn transfer_from(
         Err(e) => return Err(e),
     }
     let partial = destination.partial();
-    let mut file = match fs::OpenOptions::new()
+    let file = match fs::OpenOptions::new()
         .read(true)
         .write(true)
         .create_new(true)
@@ -311,8 +338,7 @@ fn transfer_from(
         }
         Err(e) => return Err(e),
     };
-    FileExt::try_lock_exclusive(&file)
-        .map_err(|_| io::Error::other("Partial file is in use by another downloader"))?;
+    let mut file = LockedPartial::new(file)?;
     if !file.metadata()?.is_file() || file.metadata()?.nlink() != 1 {
         return Err(io::Error::other("Unsafe partial file link count"));
     }
@@ -957,6 +983,28 @@ mod tests {
             assert!(transfer_from(&item,&AtomicBool::new(false),&AtomicU64::new(0),url,|_|Ok(100)).is_err());
             worker.join().unwrap();assert!(!dest.exists());assert!(partial.exists());
         }
+    }
+    #[test]
+    fn transfer_lock_releases_even_with_inherited_description() {
+        let temp = tempfile::NamedTempFile::new().unwrap();
+        let file = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(temp.path())
+            .unwrap();
+        let locked = LockedPartial::new(file).unwrap();
+        let inherited = locked.try_clone().unwrap();
+        let other = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(temp.path())
+            .unwrap();
+        assert!(FileExt::try_lock_exclusive(&other).is_err());
+        drop(locked);
+        // The duplicate remains alive but the transfer has released its lock.
+        FileExt::try_lock_exclusive(&other).unwrap();
+        FileExt::unlock(&other).unwrap();
+        drop(inherited);
     }
     #[test]
     fn interrupted_response_can_resume_and_lock_prevents_concurrent_writer() {
