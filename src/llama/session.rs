@@ -29,6 +29,8 @@ pub struct Controller {
     attached: bool,
     failures: u32,
     selected_id: Option<String>,
+    single: Option<Group>,
+    discard_pending: bool,
     pub snapshot: Option<Snapshot>,
     pub cursor: usize,
     pub status: String,
@@ -97,6 +99,7 @@ impl Controller {
             return Err(io::Error::other("Server operation in progress"));
         }
         self.pending = Some(Job::start(task)?);
+        self.discard_pending = false;
         Ok(())
     }
     pub fn refresh(&mut self, config: &Config) -> io::Result<()> {
@@ -143,6 +146,7 @@ impl Controller {
                 client_url.port_or_known_default().unwrap_or(80)
             )
         };
+        let launch_mode = single.clone();
         self.submit(move |cancel| {
             let listener = TcpListener::bind(address).map_err(|_| {
                 io::Error::other("Endpoint already occupied; attach instead or choose another port")
@@ -208,10 +212,29 @@ impl Controller {
             }
             Ok(Outcome::Started(server, version))
         })?;
+        self.single = launch_mode;
+        self.selected_id = None;
         self.attached = false;
         self.failures = 0;
         self.snapshot = None;
         self.status = "Probing llama-server and starting…".into();
+        Ok(())
+    }
+    /// Restart only a process owned by this controller, preserving single/router mode.
+    /// Router presets use the latest indexed groups and current configuration.
+    pub fn restart(&mut self, config: &Config, groups: Vec<Group>) -> io::Result<()> {
+        if self.busy() || !self.owns_server() {
+            return Err(io::Error::other("Restart requires an idle owned server"));
+        }
+        let single = self.single.clone();
+        if single.is_none() && !groups.iter().any(|g| g.complete && !g.projector) {
+            return Err(io::Error::other(
+                "Scan at least one complete model before restarting",
+            ));
+        }
+        self.stop()?;
+        self.start(config, groups, single)?;
+        self.status = "Restarting managed server…".into();
         Ok(())
     }
     pub fn set_loaded(&mut self, config: &Config, load: bool) -> io::Result<()> {
@@ -251,6 +274,7 @@ impl Controller {
             self.logs = server.logs();
             self.attached = false;
             self.snapshot = None;
+            self.selected_id = None;
             self.status = "Managed server stopped".into();
             Ok(())
         } else {
@@ -271,10 +295,31 @@ impl Controller {
         Ok(())
     }
     pub fn tick(&mut self, config: &Config) {
+        // Check the owned child before applying results from its endpoint. A stale
+        // successful response must not turn an exited owned process into an attachment.
+        if let Some(server) = self.owned.as_mut() {
+            self.logs = server.logs();
+            if !server.running().unwrap_or(false) {
+                self.owned = None;
+                self.attached = false;
+                self.snapshot = None;
+                self.selected_id = None;
+                self.status = "Managed server exited; inspect logs".into();
+                if let Some(job) = &self.pending {
+                    job.cancel();
+                    self.discard_pending = true;
+                }
+            }
+        }
+
         if let Some(job) = self.pending.as_mut() {
             if let Some(outcome) = job.poll() {
                 if let Some(job) = self.pending.take() {
                     job.finish();
+                }
+                if self.discard_pending {
+                    self.discard_pending = false;
+                    return;
                 }
                 match outcome {
                     Ok(Outcome::Started(server, version)) => {
@@ -284,10 +329,8 @@ impl Controller {
                         self.last_refresh = None;
                     }
                     Ok(Outcome::Snapshot(snapshot)) => {
-                        let selected = self
-                            .selected()
-                            .map(|m| m.id.clone())
-                            .or_else(|| self.selected_id.take());
+                        let previous = self.selected_id.take();
+                        let selected = self.selected().map(|m| m.id.clone()).or(previous);
                         self.cursor = selected
                             .and_then(|id| snapshot.models.iter().position(|m| m.id == id))
                             .unwrap_or_else(|| {
@@ -310,19 +353,14 @@ impl Controller {
                     }
                     Err(error) => {
                         self.failures = self.failures.saturating_add(1);
+                        self.selected_id = self
+                            .selected()
+                            .map(|m| m.id.clone())
+                            .or(self.selected_id.take());
                         self.snapshot = None;
                         self.status = error.to_string();
                     }
                 }
-            }
-        }
-        if let Some(server) = self.owned.as_mut() {
-            self.logs = server.logs();
-            if !server.running().unwrap_or(false) {
-                self.owned = None;
-                self.attached = false;
-                self.snapshot = None;
-                self.status = "Managed server exited; inspect logs".into();
             }
         }
         if (self.owned.is_some() || self.attached)

@@ -41,6 +41,20 @@ fn real_cpu_router_lifecycle() {
     assert_eq!(groups.len(), 1);
     assert!(groups[0].bytes() < 10_000_000);
     let id = llamancer::llama::router::id(&groups[0]);
+    let second_root = tempfile::tempdir().unwrap();
+    std::fs::copy(
+        &groups[0].files[0].path,
+        second_root.path().join("second.gguf"),
+    )
+    .unwrap();
+    let second = models::group::group(
+        models::scan(vec![second_root.path().into()], &AtomicBool::new(false))
+            .unwrap()
+            .candidates,
+    )
+    .remove(0);
+    let second_id = llamancer::llama::router::id(&second);
+    let catalog = vec![groups[0].clone(), second];
     let port = TcpListener::bind("127.0.0.1:0")
         .unwrap()
         .local_addr()
@@ -60,7 +74,7 @@ fn real_cpu_router_lifecycle() {
         ..config
     };
     let mut controller = Controller::default();
-    controller.start(&config, groups.clone(), None).unwrap();
+    controller.start(&config, catalog.clone(), None).unwrap();
     wait(&mut controller, &config, |c| {
         !c.busy()
             && c.snapshot
@@ -91,12 +105,27 @@ fn real_cpu_router_lifecycle() {
         !c.busy() && c.snapshot.is_some()
     });
     assert!(external.stop().is_err());
+    assert!(external.restart(&config, catalog.clone()).is_err());
     assert!(Client::from_config(&config).unwrap().snapshot().is_ok());
     external.disconnect().unwrap();
     assert!(!external.polling());
     controller.set_loaded(&config, false).unwrap();
     wait(&mut controller, &config, |c| {
         !c.busy() && c.selected().is_some_and(|m| m.state() == "unloaded")
+    });
+    controller.select_id(&second_id).unwrap();
+    controller.set_loaded(&config, true).unwrap();
+    wait(&mut controller, &config, |c| {
+        !c.busy()
+            && c.selected()
+                .is_some_and(|m| m.id == second_id && m.state() == "loaded")
+    });
+    controller.restart(&config, catalog.clone()).unwrap();
+    wait(&mut controller, &config, |c| {
+        !c.busy()
+            && c.snapshot.as_ref().is_some_and(|s| {
+                s.router && s.models.len() == 2 && s.models.iter().all(|m| m.state() == "unloaded")
+            })
     });
     controller.stop().unwrap();
     assert!(!controller.owns_server()); // Reuse the same endpoint for a directly managed single model.
@@ -117,6 +146,13 @@ fn real_cpu_router_lifecycle() {
         .into_json()
         .unwrap();
     assert!(response["content"].as_str().is_some_and(|s| !s.is_empty()));
+    controller.restart(&config, Vec::new()).unwrap();
+    wait(&mut controller, &config, |c| {
+        !c.busy()
+            && c.snapshot
+                .as_ref()
+                .is_some_and(|s| !s.router && !s.models.is_empty())
+    });
     controller.shutdown().unwrap();
     // Verify the foreground service supervisor independently of systemd.
     let root = groups[0].files[0].path.parent().unwrap().to_path_buf();
