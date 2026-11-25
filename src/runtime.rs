@@ -132,6 +132,35 @@ impl Runtime {
             || self.app.help
             || self.app.hide_confirmation.is_some()
     }
+    pub fn select_row(&mut self, index: usize) {
+        if self.modal() {
+            return;
+        }
+        match self.app.tab {
+            0 if index < self.app.visible().len() => self.app.model_cursor = index,
+            1 if index < self.app.discovery.len() => self.app.discovery.cursor = index,
+            2 => {
+                if let Some(d) = self.app.downloads.as_mut() {
+                    if index < d.queue.items.len() {
+                        d.cursor = index;
+                    }
+                }
+            }
+            3 => {
+                if self
+                    .app
+                    .server
+                    .snapshot
+                    .as_ref()
+                    .is_some_and(|s| index < s.models.len())
+                {
+                    self.app.server.cursor = index;
+                }
+            }
+            4 if index < Field::ALL.len() => self.app.setting = index,
+            _ => {}
+        }
+    }
     pub fn handle_key(&mut self, key: KeyEvent) -> io::Result<Effect> {
         if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
             self.app.dispatch(Action::Quit);

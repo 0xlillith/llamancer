@@ -105,3 +105,7 @@ Meet [Hex](assets/hex-mascot.webp), our llama sorcerer and project mascot. The d
 ## License
 
 MIT. Llamancer is an independent project and is not affiliated with llama.cpp, Oh My Pi, Pi or Hugging Face.
+
+### Terminal accessibility
+
+Click a tab or a visible list row to select it; use the mouse wheel or Up/Down to move the selection. Actions retain their contextual keyboard shortcuts. Selected entries have a textual marker as well as a color highlight. Choose the built-in `high-contrast` theme in Settings for increased contrast.
