@@ -73,7 +73,8 @@ pub(super) fn viewport(cursor: usize, height: u16, reserved: u16) -> (usize, usi
 }
 pub fn row_at(area: Rect, app: &App, column: u16, row: u16) -> Option<usize> {
     let body = regions(area)[2];
-    if app.help
+    if app.backend_open
+        || app.help
         || app.show_invalid
         || app.hide_confirmation.is_some()
         || app.quarantine_confirmation.is_some()
@@ -162,7 +163,12 @@ pub fn draw_themed(frame: &mut Frame, app: &App, theme: &Theme) {
             rect,
         );
     }
-    if app.tab == 0 && !app.help && app.edit.is_none() && app.profile_editor.is_none() {
+    if app.tab == 0
+        && !app.backend_open
+        && !app.help
+        && app.edit.is_none()
+        && app.profile_editor.is_none()
+    {
         library::draw(frame, body, app, &palette);
     } else {
         let (title, content) = views::content(app, body);
@@ -174,6 +180,7 @@ pub fn draw_themed(frame: &mut Frame, app: &App, theme: &Theme) {
             || app.profile_editor.is_some()
             || app.edit.is_some()
             || app.quarantine_confirmation.is_some()
+            || app.backend_open
         {
             paragraph.wrap(Wrap { trim: false })
         } else {
@@ -181,13 +188,15 @@ pub fn draw_themed(frame: &mut Frame, app: &App, theme: &Theme) {
         };
         frame.render_widget(paragraph, body);
     }
-    let footer_text = if app.notice.is_empty() {
+    let footer_text = if app.backend_open && app.notice.is_empty() {
+        "↑↓ select  i install  Enter use  p probe  b benchmark  d remove  x cancel  Esc back"
+    } else if app.notice.is_empty() {
         match app.tab {
             0 => "r scan  / search  f favorite  s sort  p profile  l load  i invalid  h hide  t quarantine  ? help",
             1 => "/ search  Enter open  d queue  n next page  Backspace back  ? help",
             2 => "r resume  R run queue  x pause  t quarantine  T restore  z remove entry  ? help",
-            3 => "r refresh  D detach  s router  R restart  i probe  x stop  l/u load/unload  a agent  A current  w web  b btop  g logs",
-            _ => "↑↓ select  Enter edit  ? help  q quit",
+            3 => "r refresh  D detach  s router  R restart  i probe  x stop  l/u load/unload  a agent  A current  w web  b btop  g logs  B backends",
+            _ => "↑↓ select  Enter edit  B backends  ? help  q quit",
         }
     } else {
         &app.notice

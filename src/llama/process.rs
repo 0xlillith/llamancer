@@ -142,6 +142,7 @@ pub fn profile_args(profile: &Profile, help: &str) -> io::Result<Vec<OsString>> 
 }
 pub struct Owned {
     child: Child,
+    _backend_lock: Option<std::fs::File>,
     reaped: bool,
     preset: Option<tempfile::NamedTempFile>,
     key_file: Option<tempfile::NamedTempFile>,
@@ -149,6 +150,7 @@ pub struct Owned {
 }
 impl Owned {
     pub fn start(binary: &str, args: &[OsString]) -> io::Result<Self> {
+        let backend_lock = crate::backends::execution_lock(Path::new(binary))?;
         let mut cmd = Command::new(binary);
         use std::os::unix::process::CommandExt;
         cmd.process_group(0);
@@ -197,6 +199,7 @@ impl Owned {
         }
         Ok(Self {
             child,
+            _backend_lock: backend_lock,
             reaped: false,
             logs,
             preset: None,

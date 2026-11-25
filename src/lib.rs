@@ -14,3 +14,5 @@ pub mod settings;
 pub mod service;
 
 pub mod diagnostics;
+
+pub mod backends;

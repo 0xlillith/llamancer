@@ -19,6 +19,14 @@ pub enum Action {
 #[derive(Default)]
 pub struct App {
     pub tab: usize,
+    pub backend_open: bool,
+    pub backend_cursor: usize,
+    pub backend_confirmation: Option<char>,
+    pub backend_busy: bool,
+    pub backend_hardware: String,
+    pub backend_status: String,
+    pub backend_progress: Option<(u64, u64)>,
+    pub backend_root: Option<std::path::PathBuf>,
     pub help: bool,
     pub quit: bool,
     pub config: Config,

@@ -27,3 +27,7 @@ fs2 = "0.4"
 libc = "0.2"
 
 signal-hook = "0.3"
+
+# Verified, bounded upstream backend archive extraction.
+flate2 = "1"
+tar = "0.4"
