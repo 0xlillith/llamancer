@@ -63,32 +63,120 @@ impl Queue {
         fs::File::open(parent)?.sync_all()
     }
 }
+/// Hold directory descriptors across transfer, so a symlink or rename cannot redirect
+/// writes to another tree. The Linux /proc/self/fd paths address the opened directory.
+struct Destination {
+    parent: fs::File,
+    visible: PathBuf,
+    leaf: String,
+}
+impl Destination {
+    fn open(item: &Item) -> io::Result<Self> {
+        huggingface::validate(&item.file)?;
+        let mut visible = item.root.canonicalize()?;
+        let mut parent = Self::open_directory(&visible)?;
+        let mut parts: Vec<_> = item.file.repo.split('/').collect();
+        parts.push(&item.file.revision);
+        let mut name: Vec<_> = item.file.name.split('/').collect();
+        let leaf = name
+            .pop()
+            .ok_or_else(|| io::Error::other("Missing filename"))?
+            .to_owned();
+        parts.extend(name);
+        for part in parts {
+            let next = Self::fd_path(&parent).join(part);
+            match fs::create_dir(&next) {
+                Ok(()) => {}
+                Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {}
+                Err(e) => return Err(e),
+            }
+            parent = Self::open_directory(&next)?;
+            visible.push(part);
+        }
+        let result = Self {
+            parent,
+            visible,
+            leaf,
+        };
+        result.check_visible()?;
+        Ok(result)
+    }
+    fn fd_path(file: &fs::File) -> PathBuf {
+        use std::os::fd::AsRawFd;
+        PathBuf::from(format!("/proc/self/fd/{}", file.as_raw_fd()))
+    }
+    fn open_directory(path: &Path) -> io::Result<fs::File> {
+        fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_NONBLOCK)
+            .open(path)
+    }
+    fn check_visible(&self) -> io::Result<()> {
+        let current = fs::symlink_metadata(&self.visible)?;
+        let opened = self.parent.metadata()?;
+        if !current.is_dir()
+            || !same_inode(&current, &opened)
+            || self.visible.canonicalize()? != self.visible
+        {
+            return Err(io::Error::other("Download destination moved or replaced"));
+        }
+        Ok(())
+    }
+    fn path(&self) -> PathBuf {
+        Self::fd_path(&self.parent).join(&self.leaf)
+    }
+    fn partial(&self) -> PathBuf {
+        Self::fd_path(&self.parent).join(format!("{}.part", self.leaf))
+    }
+    fn publish(&self, file: &fs::File) -> io::Result<()> {
+        use std::{
+            ffi::CString,
+            os::{fd::AsRawFd, unix::ffi::OsStrExt},
+        };
+        self.check_visible()?;
+        let partial = self.partial();
+        let current = fs::symlink_metadata(&partial)?;
+        let opened = file.metadata()?;
+        if !current.is_file() || !same_inode(&current, &opened) || opened.nlink() != 1 {
+            return Err(io::Error::other("Partial file changed during transfer"));
+        }
+        // Link the verified open inode, not a possibly replaced staging pathname.
+        let from =
+            CString::new(Self::fd_path(file).as_os_str().as_bytes()).map_err(io::Error::other)?;
+        let to = CString::new(self.leaf.as_bytes()).map_err(io::Error::other)?;
+        // SAFETY: both C strings live through the call; parent is an open directory.
+        let result = unsafe {
+            libc::linkat(
+                libc::AT_FDCWD,
+                from.as_ptr(),
+                self.parent.as_raw_fd(),
+                to.as_ptr(),
+                libc::AT_SYMLINK_FOLLOW,
+            )
+        };
+        if result != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        self.parent.sync_all()?;
+        // A competing writer's replacement is never deliberately unlinked.
+        if same_inode(&fs::symlink_metadata(&partial)?, &opened) {
+            fs::remove_file(&partial)?;
+            self.parent.sync_all()?;
+        } else {
+            return Err(io::Error::other(
+                "Verified model published; staging path changed",
+            ));
+        }
+        self.check_visible()
+    }
+}
+fn same_inode(a: &fs::Metadata, b: &fs::Metadata) -> bool {
+    a.ino() == b.ino() && a.dev() == b.dev()
+}
+#[cfg(test)]
 fn destination(item: &Item) -> io::Result<PathBuf> {
-    huggingface::validate(&item.file)?;
-    let mut dir = item.root.canonicalize()?;
-    if !dir.is_dir() {
-        return Err(io::Error::other("Download root is not a directory"));
-    }
-    let mut parts: Vec<_> = item.file.repo.split('/').collect();
-    parts.push(&item.file.revision);
-    let mut name: Vec<_> = item.file.name.split('/').collect();
-    let leaf = name
-        .pop()
-        .ok_or_else(|| io::Error::other("Missing filename"))?;
-    parts.extend(name);
-    for part in parts {
-        dir.push(part);
-        match fs::create_dir(&dir) {
-            Ok(()) => {}
-            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {}
-            Err(e) => return Err(e),
-        }
-        let m = fs::symlink_metadata(&dir)?;
-        if !m.is_dir() || m.file_type().is_symlink() {
-            return Err(io::Error::other("Unsafe destination directory"));
-        }
-    }
-    Ok(dir.join(leaf))
+    let destination = Destination::open(item)?;
+    Ok(destination.visible.join(destination.leaf))
 }
 fn cancelled(cancel: &AtomicBool) -> io::Result<()> {
     if cancel.load(Ordering::Acquire) {
@@ -162,14 +250,17 @@ fn transfer_from(
 ) -> io::Result<()> {
     cancelled(cancel)?;
 
-    let dest = destination(item)?;
-    if dest.exists() {
-        return verify(&dest, item, cancel);
+    let destination = Destination::open(item)?;
+    let dest = destination.path();
+    match fs::symlink_metadata(&dest) {
+        Ok(_) => {
+            verify(&dest, item, cancel)?;
+            return destination.check_visible();
+        }
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+        Err(e) => return Err(e),
     }
-    let partial = dest.with_file_name(format!(
-        "{}.part",
-        dest.file_name().unwrap_or_default().to_string_lossy()
-    ));
+    let partial = destination.partial();
     let mut file = match fs::OpenOptions::new()
         .read(true)
         .write(true)
@@ -218,9 +309,8 @@ fn transfer_from(
         return Err(io::Error::other("Partial file exceeds expected size"));
     }
     progress.store(offset, Ordering::Relaxed);
-    let parent = dest
-        .parent()
-        .ok_or_else(|| io::Error::other("Missing destination parent"))?;
+    let parent_path = Destination::fd_path(&destination.parent);
+    let parent = parent_path.as_path();
     if available_space(parent)? < item.file.size - offset {
         return Err(io::Error::other("Insufficient free disk space"));
     }
@@ -320,20 +410,8 @@ fn transfer_from(
         ));
     }
     verify_file(&mut file, item, cancel)?;
-    let current = fs::symlink_metadata(&partial)?;
-    let opened = file.metadata()?;
-    if !current.is_file() || current.ino() != opened.ino() || current.dev() != opened.dev() {
-        return Err(io::Error::other("Partial file changed during transfer"));
-    }
     cancelled(cancel)?;
-    // Atomic publication without overwriting an existing model.
-    fs::hard_link(&partial, &dest)?;
-    fs::remove_file(&partial)?;
-    drop(file);
-    if let Some(parent) = dest.parent() {
-        fs::File::open(parent)?.sync_all()?;
-    }
-    Ok(())
+    destination.publish(&file)
 }
 fn retryable(error: &io::Error) -> bool {
     matches!(
@@ -741,6 +819,138 @@ mod tests {
         .unwrap();
         worker.join().unwrap();
         assert_eq!(fs::read(dest).unwrap(), b"abcdef");
+    }
+    #[test]
+    fn changed_directory_never_redirects_publication() {
+        use std::os::unix::fs::symlink;
+        let root = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let item = fixture(root.path());
+        let dest = destination(&item).unwrap();
+        let parent = dest.parent().unwrap();
+        let moved = parent.with_extension("moved");
+        let changed = AtomicBool::new(false);
+        let (url, worker) = server(vec![(
+            "",
+            "HTTP/1.1 200 OK\r\nContent-Length: 6\r\nConnection: close\r\n\r\nabcdef",
+        )]);
+        let result = transfer_from(
+            &item,
+            &AtomicBool::new(false),
+            &AtomicU64::new(0),
+            url,
+            |_| {
+                if !changed.swap(true, Ordering::AcqRel) {
+                    fs::rename(parent, &moved).unwrap();
+                    symlink(outside.path(), parent).unwrap();
+                }
+                Ok(100)
+            },
+        );
+        worker.join().unwrap();
+        assert!(result.is_err());
+        assert!(!outside.path().join("model.gguf").exists());
+        assert_eq!(fs::read(moved.join("model.gguf.part")).unwrap(), b"abcdef");
+    }
+    #[test]
+    fn changed_partial_is_not_published_or_removed() {
+        let root = tempfile::tempdir().unwrap();
+        let item = fixture(root.path());
+        let dest = destination(&item).unwrap();
+        let partial = dest.with_file_name("model.gguf.part");
+        let saved = dest.with_file_name("original.part");
+        let changed = AtomicBool::new(false);
+        let (url, worker) = server(vec![(
+            "",
+            "HTTP/1.1 200 OK\r\nContent-Length: 6\r\nConnection: close\r\n\r\nabcdef",
+        )]);
+        let result = transfer_from(
+            &item,
+            &AtomicBool::new(false),
+            &AtomicU64::new(0),
+            url,
+            |_| {
+                if !changed.swap(true, Ordering::AcqRel) {
+                    fs::rename(&partial, &saved).unwrap();
+                    fs::write(&partial, b"external").unwrap();
+                }
+                Ok(100)
+            },
+        );
+        worker.join().unwrap();
+        assert!(result.is_err());
+        assert!(!dest.exists());
+        assert_eq!(fs::read(partial).unwrap(), b"external");
+        assert_eq!(fs::read(saved).unwrap(), b"abcdef");
+    }
+    #[test]
+    fn multipart_download_is_indexed_only_when_all_shards_exist() {
+        // Minimal, structurally valid GGUF headers with split metadata; no weights.
+        fn shard(index: u32) -> Vec<u8> {
+            let mut b = b"GGUF".to_vec();
+            b.extend(3u32.to_le_bytes());
+            b.extend(0u64.to_le_bytes());
+            b.extend(2u64.to_le_bytes());
+            for (key, value) in [("split.no", index), ("split.count", 2)] {
+                b.extend((key.len() as u64).to_le_bytes());
+                b.extend(key.as_bytes());
+                b.extend(4u32.to_le_bytes());
+                b.extend(value.to_le_bytes());
+            }
+            b.resize((b.len() + 31) & !31, 0);
+            b
+        }
+        let root = tempfile::tempdir().unwrap();
+        for index in 0..2 {
+            let payload = shard(index);
+            let mut item = fixture(root.path());
+            item.file.name = format!("model-{:05}-of-00002.gguf", index + 1);
+            item.file.size = payload.len() as u64;
+            item.file.sha256 = Some(format!("{:x}", Sha256::digest(&payload)));
+            // The fixture server accepts text only; serve the binary GGUF from a one-shot socket.
+            use std::net::TcpListener;
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let url = url::Url::parse(&format!("http://{}/shard", listener.local_addr().unwrap()))
+                .unwrap();
+            let worker = std::thread::spawn(move || {
+                use std::io::{BufRead, BufReader};
+                let (mut stream, _) = listener.accept().unwrap();
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(3)))
+                    .unwrap();
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                loop {
+                    let mut line = String::new();
+                    reader.read_line(&mut line).unwrap();
+                    if line == "\r\n" || line.is_empty() {
+                        break;
+                    }
+                }
+                write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    payload.len()
+                )
+                .unwrap();
+                stream.write_all(&payload).unwrap();
+            });
+            transfer_from(
+                &item,
+                &AtomicBool::new(false),
+                &AtomicU64::new(0),
+                url,
+                |_| Ok(1024),
+            )
+            .unwrap();
+            worker.join().unwrap();
+            let groups = crate::models::group::group(
+                crate::models::scan(vec![root.path().into()], &AtomicBool::new(false))
+                    .unwrap()
+                    .candidates,
+            );
+            assert_eq!(groups.len(), 1);
+            assert_eq!(groups[0].complete, index == 1);
+        }
     }
     #[test]
     fn bounded_retry_exhaustion_and_cancellation() {
