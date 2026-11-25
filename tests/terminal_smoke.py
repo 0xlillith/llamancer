@@ -4,6 +4,7 @@ import fcntl
 import os
 import pty
 import select
+import signal
 import struct
 import subprocess
 import sys
@@ -26,8 +27,7 @@ def read_until(master, process, marker, seconds=10):
     raise AssertionError(f"Missing terminal marker {marker!r}")
 
 
-def main():
-    binary = str(Path(sys.argv[1]).resolve())
+def check(binary, terminate=False):
     with tempfile.TemporaryDirectory(prefix="llamancer-terminal-") as root:
         master, slave = pty.openpty()
         process = None
@@ -46,11 +46,14 @@ def main():
                 if select.select([master], [], [], 0.5)[0]:
                     os.read(master, 65536)
                 assert process.poll() is None, "TUI exited during navigation"
-            os.write(master, b"q")
+            if terminate:
+                process.send_signal(signal.SIGTERM)
+            else:
+                os.write(master, b"q")
             read_until(master, process, b"\x1b[?1049l")
             assert process.wait(timeout=5) == 0
             assert termios.tcgetattr(slave) == original, "Terminal attributes not restored"
-            print("Terminal startup, navigation, quit and restoration passed.")
+            print("Terminal startup, navigation, " + ("SIGTERM" if terminate else "quit") + " and restoration passed.")
         finally:
             if process is not None and process.poll() is None:
                 process.terminate()
@@ -60,4 +63,6 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    binary = str(Path(sys.argv[1]).resolve())
+    check(binary)
+    check(binary, terminate=True)
