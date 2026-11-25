@@ -26,3 +26,27 @@ Independent verbose backend log checks confirmed actual GPU offload. Model, KV a
 ## Remaining checks
 
 Larger and additional architectures, GPU vision, multi-context memory measurements, independent real-model coding-tool selection, desktop Pi availability, ordinary interactive UI and agent sessions, authorized private/gated repository fixture, native package installation and final release review. No stable release implied.
+
+## Qwen architecture and memory validation
+
+2026-11-25, official managed llama.cpp b12726 Vulkan, RX 9070 XT, eight GPU layers and two CPU threads. Two checksum-pinned public fixtures were downloaded only into the ignored acceptance-test directory. All eight combinations of single-model/router and 2048/4096 context generated real output with authentication and clean shutdown.
+
+| Fixture | Context | Estimated total KV MiB | Actual CPU KV MiB | Actual GPU KV MiB | GPU model MiB | GPU compute MiB |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Qwen2.5-0.5B-Instruct Q4_K_M | 2048 | 24 | 17 | 7 | 205.04 | 41 |
+| Qwen2.5-0.5B-Instruct Q4_K_M | 4096 | 48 | 34 | 14 | 205.04 | 43 |
+| Qwen3-0.6B Q4_K_M | 2048 | 224 | 168 | 56 | 186.00 | 32 |
+| Qwen3-0.6B Q4_K_M | 4096 | 448 | 336 | 112 | 186.00 | 36 |
+
+Independent verbose backend logs reported 8/25 layers offloaded for Qwen2.5 and 8/29 for Qwen3. Generation throughput ranged approximately 133–139 tok/s on these partial-offload, short-prompt tests. Total KV matches the estimator at both contexts; this does not mean disk weight size predicts VRAM or actual model buffer sizes. CPU-mapped model buffers, driver overhead, compute buffers and other applications remain outside that estimate. Qwen3 model buffers exceeded the disk size in this configuration. The estimate is not a capacity guarantee.
+
+Fixtures:
+
+- Qwen/Qwen2.5-0.5B-Instruct-GGUF, revision 9217f5db79a29953eb74d5343926648285ec7e67, qwen2.5-0.5b-instruct-q4_k_m.gguf, 491400032 bytes, SHA-256 74a4da8c9fdbcd15bd1f6d01d621410d31c6fc00986f5eb687824e7b93d7a9db.
+- unsloth/Qwen3-0.6B-GGUF, revision 50968a4468ef4233ed78cd7c3de230dd1d61a56b, Qwen3-0.6B-Q4_K_M.gguf, 396705472 bytes, SHA-256 ac2d97712095a558e31573f62f466a3f9d93990898b0ec79d7c974c1780d524a.
+
+To reproduce, verify the pinned files and use the existing desktop_live harness with each file, Vulkan0, eight GPU layers and each context. Separately inspect verbose llama-server startup logs for the actual per-device model, KV and compute buffers. These fixture downloads and logs are not bundled in releases.
+
+## Current backend status
+
+Managed official b12721 CPU and Vulkan and b12726 Vulkan passed real single/router inference. Official ROCm installation passes archive verification, but device discovery is blocked by missing compatible HIP/hipBLAS/rocBLAS libraries; historical Unsloth ROCm results above are not a current official-runtime pass. Do not certify ROCm until that test succeeds. The graphical custom-agent launch was verified before the user removed the old agents; interactive OMP/Pi and real tool use remain separate acceptance tests.
