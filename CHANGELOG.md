@@ -1,6 +1,14 @@
 # Changelog
 
-## Unreleased
+## 0.1.0-beta.2 — 2026-11-25
+
+- Directly editable search fields with automatic Discover focus, click-to-filter and keyboard navigation.
+- Real Hub repository ranking, author/license/quantization filters and sortable grouped model variants.
+- One download action per model variant, unified multipart queue rows, aggregate progress and model-level resume.
+- Automatic download start and Library refresh; per-part verification, transfer history and persistent errors.
+- Clearer grouped settings, explicit default model storage, active project label, ASCII welcome art and simplified model execution.
+- Preserve full checksum-invalid partials rather than silently redownloading; original large-file checksum discrepancy remains under investigation (#80).
+- CUDA remains experimental pending NVIDIA hardware validation (#66).
 
 - Preserve complete checksum-invalid downloads on resume and retain per-entry diagnostic details.
 
