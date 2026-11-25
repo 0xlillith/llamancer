@@ -50,7 +50,9 @@ fn safe_origin(url: &Url) -> bool {
         )
 }
 fn download(
-    asset: Asset,
+    archive: &catalog::Archive,
+    release: &str,
+    offset: u64,
     out: &mut File,
     flag: &AtomicBool,
     progress: &AtomicU64,
@@ -61,7 +63,7 @@ fn download(
         .timeout_connect(Duration::from_secs(10))
         .timeout_read(Duration::from_secs(15))
         .build();
-    let mut url = Url::parse(&asset.url()).map_err(io::Error::other)?;
+    let mut url = Url::parse(&archive.url(release)).map_err(io::Error::other)?;
     let mut response = None;
     for _ in 0..5 {
         cancel(flag)?;
@@ -90,7 +92,7 @@ fn download(
     if response
         .header("Content-Length")
         .and_then(|s| s.parse::<u64>().ok())
-        .is_some_and(|n| n != asset.size)
+        .is_some_and(|n| n != archive.size)
     {
         return Err(io::Error::other("Release size mismatch"));
     }
@@ -105,14 +107,14 @@ fn download(
             break;
         }
         count += n as u64;
-        if count > asset.size {
+        if count > archive.size {
             return Err(io::Error::other("Release exceeds pinned size"));
         }
         hash.update(&buf[..n]);
         out.write_all(&buf[..n])?;
-        progress.store(count, Ordering::Release);
+        progress.store(offset + count, Ordering::Release);
     }
-    if count != asset.size || format!("{:x}", hash.finalize()) != asset.sha256 {
+    if count != archive.size || format!("{:x}", hash.finalize()) != archive.sha256 {
         return Err(io::Error::other("Release checksum or size mismatch"));
     }
     out.sync_all()
@@ -121,17 +123,19 @@ fn normal(path: &Path) -> bool {
     !path.as_os_str().is_empty() && path.components().all(|c| matches!(c, Component::Normal(_)))
 }
 fn unpack(reader: impl Read, dir: &Path, release: &str, flag: &AtomicBool) -> io::Result<()> {
+    unpack_prefix(reader, dir, &format!("llama-{release}"), flag)
+}
+fn unpack_prefix(reader: impl Read, dir: &Path, prefix: &str, flag: &AtomicBool) -> io::Result<()> {
     let mut archive = tar::Archive::new(flate2::read::GzDecoder::new(reader));
     let mut seen = BTreeSet::new();
     let mut links = Vec::new();
     let mut total = 0u64;
-    let prefix = format!("llama-{release}");
     for entry in archive.entries()? {
         cancel(flag)?;
         let mut entry = entry?;
         let path = entry.path()?.into_owned();
         if !normal(&path)
-            || !path.starts_with(&prefix)
+            || !path.starts_with(prefix)
             || !seen.insert(path.clone())
             || seen.len() > MAX_ENTRIES
         {
@@ -198,6 +202,38 @@ fn unpack(reader: impl Read, dir: &Path, release: &str, flag: &AtomicBool) -> io
     }
     Ok(())
 }
+// The CUDA companion is unpacked into an independent private tree, then only
+// flat regular libraries are moved into the primary tree. No overwrite, no
+// traversal through previously extracted symlinks and no partially published install.
+fn merge_companion(source: &Path, dest: &Path, flag: &AtomicBool) -> io::Result<()> {
+    if !fs::symlink_metadata(source)?.is_dir() || !fs::symlink_metadata(dest)?.is_dir() {
+        return Err(io::Error::other("Invalid CUDA companion directory"));
+    }
+    let mut entries = Vec::new();
+    for entry in fs::read_dir(source)? {
+        cancel(flag)?;
+        let entry = entry?;
+        let name = entry.file_name();
+        let target = dest.join(&name);
+        if !entry.file_type()?.is_file()
+            || !name.to_string_lossy().starts_with("libcu")
+            || fs::symlink_metadata(&target).is_ok()
+        {
+            return Err(io::Error::other(
+                "Unexpected or conflicting CUDA runtime library",
+            ));
+        }
+        entries.push((entry.path(), target));
+    }
+    if entries.is_empty() {
+        return Err(io::Error::other("Missing CUDA companion libraries"));
+    }
+    for (source, target) in entries {
+        cancel(flag)?;
+        fs::rename(source, target)?;
+    }
+    Ok(())
+}
 fn private_root(root: &Path) -> io::Result<()> {
     fs::DirBuilder::new()
         .recursive(true)
@@ -255,17 +291,49 @@ pub fn install(
             "Backend destination already exists; refusing replacement",
         ));
     }
-    if fs2::available_space(root)? < asset.size + MAX_EXPANDED {
+    let expansion = MAX_EXPANDED * if asset.companion().is_some() { 2 } else { 1 };
+    if fs2::available_space(root)? < asset.total_size() + expansion {
         return Err(io::Error::other(
-            "Need archive size plus 8 GiB free for staging",
+            "Insufficient free space for verified archive staging",
         ));
     }
     let staging = tempfile::tempdir_in(root)?;
     let mut archive = tempfile::tempfile_in(root)?;
-    download(asset, &mut archive, flag, progress)?;
+    download(
+        &asset.primary(),
+        asset.release,
+        0,
+        &mut archive,
+        flag,
+        progress,
+    )?;
     use std::io::{Seek, SeekFrom};
     archive.seek(SeekFrom::Start(0))?;
     unpack(archive, staging.path(), asset.release, flag)?;
+    if let Some(companion) = asset.companion() {
+        let companion_stage = tempfile::tempdir_in(root)?;
+        let mut archive = tempfile::tempfile_in(root)?;
+        download(
+            &companion,
+            asset.release,
+            asset.size,
+            &mut archive,
+            flag,
+            progress,
+        )?;
+        archive.seek(SeekFrom::Start(0))?;
+        let prefix = companion
+            .filename
+            .strip_suffix(".tar.gz")
+            .ok_or_else(|| io::Error::other("Invalid companion filename"))?;
+        unpack_prefix(archive, companion_stage.path(), prefix, flag)?;
+        merge_companion(
+            &companion_stage.path().join(prefix),
+            &staging.path().join(format!("llama-{}", asset.release)),
+            flag,
+        )?;
+        fs::write(staging.path().join("cudart-sha256"), companion.sha256)?;
+    }
     let binary = staging
         .path()
         .join(format!("llama-{}/llama-server", asset.release));
@@ -323,10 +391,11 @@ pub fn detected_device(kind: Kind, output: &str) -> io::Result<String> {
     if kind == Kind::Cpu {
         return Ok("none".into());
     }
-    let prefix = if kind == Kind::Vulkan {
-        "Vulkan"
-    } else {
-        "ROCm"
+    let prefix = match kind {
+        Kind::Vulkan => "Vulkan",
+        Kind::Rocm => "ROCm",
+        Kind::Cuda => "CUDA",
+        Kind::Cpu => unreachable!(),
     };
     let devices: Vec<_> = output
         .lines()
@@ -339,7 +408,7 @@ pub fn detected_device(kind: Kind, output: &str) -> io::Result<String> {
         .collect();
     devices.into_iter().next().ok_or_else(||io::Error::other(if kind==Kind::Rocm{
         "ROCm installed but no device detected. Check compatible HIP, hipBLAS and rocBLAS runtimes."
-    }else{"Vulkan installed but no device detected. Check Vulkan loader and GPU driver."}))
+    }else if kind==Kind::Cuda {"CUDA installed but no compatible device detected. Check NVIDIA driver and runtime compatibility."}else{"Vulkan installed but no device detected. Check Vulkan loader and GPU driver."}))
 }
 /// A bounded benchmark of a deliberately small local model. Never fetch a model.
 pub fn benchmark(root: &Path, asset: Asset, model: &Path, flag: &AtomicBool) -> io::Result<String> {
@@ -583,6 +652,48 @@ mod tests {
         ));
         assert!(!normal(Path::new("../bad")));
         assert!(!normal(Path::new("/tmp/bad")));
+    }
+    #[test]
+    fn cuda_catalog_requires_matching_companion_and_safe_merge() {
+        let asset = catalog_version(Kind::Cuda, "b12726").unwrap();
+        let runtime = asset.companion().unwrap();
+        assert!(runtime.filename.starts_with("cudart-llama-b12726"));
+        assert!(asset.total_size() > asset.size);
+        assert_eq!(
+            detected_device(Kind::Cuda, "  CUDA0: NVIDIA").unwrap(),
+            "CUDA0"
+        );
+        assert!(detected_device(Kind::Cuda, "  Vulkan0: AMD").is_err());
+        let root = tempfile::tempdir().unwrap();
+        let binary = asset.binary(root.path());
+        fs::create_dir_all(binary.parent().unwrap()).unwrap();
+        fs::write(&binary, "fixture").unwrap();
+        fs::set_permissions(&binary, fs::Permissions::from_mode(0o700)).unwrap();
+        fs::write(asset.directory(root.path()).join("sha256"), asset.sha256).unwrap();
+        assert!(!asset.installed(root.path()));
+        fs::write(
+            asset.directory(root.path()).join("cudart-sha256"),
+            runtime.sha256,
+        )
+        .unwrap();
+        assert!(asset.installed(root.path()));
+        let src = root.path().join("companion");
+        let dst = root.path().join("primary");
+        fs::create_dir(&src).unwrap();
+        fs::create_dir(&dst).unwrap();
+        fs::write(src.join("libcudart.so.12"), "runtime").unwrap();
+        fs::write(dst.join("libcudart.so.12"), "old").unwrap();
+        assert!(merge_companion(&src, &dst, &AtomicBool::new(false)).is_err());
+        assert_eq!(
+            fs::read_to_string(dst.join("libcudart.so.12")).unwrap(),
+            "old"
+        );
+        fs::remove_file(dst.join("libcudart.so.12")).unwrap();
+        merge_companion(&src, &dst, &AtomicBool::new(false)).unwrap();
+        assert_eq!(
+            fs::read_to_string(dst.join("libcudart.so.12")).unwrap(),
+            "runtime"
+        );
     }
     #[test]
     fn safe_extract_and_reject_special_entries() {
