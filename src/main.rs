@@ -210,15 +210,15 @@ fn main() -> io::Result<()> {
                     let size = terminal.size()?;
                     let area = ratatui::layout::Rect::new(0, 0, size.width, size.height);
                     match mouse.kind {
-                        MouseEventKind::Down(MouseButton::Left)
-                            if !runtime.modal() && !runtime.app.show_invalid =>
-                        {
-                            if let Some(index) = ui::tab_at(area, mouse.column, mouse.row) {
-                                runtime.app.dispatch(Action::Select(index));
-                            } else if let Some(index) =
+                        MouseEventKind::Down(MouseButton::Left) => {
+                            if let Some(index) =
                                 ui::row_at(area, &runtime.app, mouse.column, mouse.row)
                             {
                                 runtime.select_row(index);
+                            } else if !runtime.modal() {
+                                if let Some(index) = ui::tab_at(area, mouse.column, mouse.row) {
+                                    runtime.app.dispatch(Action::Select(index));
+                                }
                             }
                         }
                         MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {

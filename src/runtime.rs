@@ -176,6 +176,7 @@ impl Runtime {
     }
     pub fn modal(&self) -> bool {
         self.app.backend_open
+            || self.app.show_invalid
             || self.app.profile_editor.is_some()
             || self.app.edit.is_some()
             || self.app.searching
@@ -185,6 +186,21 @@ impl Runtime {
             || self.app.quarantine_confirmation.is_some()
     }
     pub fn select_row(&mut self, index: usize) {
+        if self.app.backend_open {
+            if !self.app.backend_busy
+                && self.app.backend_confirmation.is_none()
+                && index < Kind::ALL.len()
+            {
+                self.app.backend_cursor = index;
+            }
+            return;
+        }
+        if self.app.show_invalid {
+            if index < self.app.invalid.len() {
+                self.app.invalid_cursor = index;
+            }
+            return;
+        }
         if self.modal() {
             return;
         }
@@ -220,6 +236,14 @@ impl Runtime {
         }
         if self.app.backend_open {
             self.backend_key(key.code)?;
+            return Ok(Effect::None);
+        }
+        if self.app.show_invalid {
+            if key.code == KeyCode::Esc {
+                self.app.show_invalid = false;
+            } else {
+                self.library_key(key.code)?;
+            }
             return Ok(Effect::None);
         }
         if key.code == KeyCode::Char('B') && matches!(self.app.tab, 3 | 4) && !self.modal() {
@@ -345,12 +369,19 @@ impl Runtime {
             }
             return Ok(());
         }
-        let action = if let Some(confirm) = self.app.backend_confirmation.take() {
-            if key != KeyCode::Char('y') {
-                self.app.backend_status = "Cancelled".into();
-                return Ok(());
+        let action = if let Some(confirm) = self.app.backend_confirmation {
+            match key {
+                KeyCode::Char('y') => {
+                    self.app.backend_confirmation = None;
+                    confirm
+                }
+                KeyCode::Char('n') | KeyCode::Esc => {
+                    self.app.backend_confirmation = None;
+                    self.app.backend_status = "Cancelled".into();
+                    return Ok(());
+                }
+                _ => return Ok(()),
             }
-            confirm
         } else {
             match key {
                 KeyCode::Esc | KeyCode::Char('q') => {
