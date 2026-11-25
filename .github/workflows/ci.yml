@@ -38,3 +38,12 @@ jobs:
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo build --locked --release
       - run: python3 tests/terminal_smoke.py target/release/llamancer
+      - name: Measure release startup and idle resource use
+        run: |
+          python3 tests/benchmark.py target/release/llamancer > benchmark.json
+          cat benchmark.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-${{ matrix.arch }}
+          path: benchmark.json
+          if-no-files-found: error
