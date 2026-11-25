@@ -108,15 +108,19 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App, p: &Palette) {
         Span::styled(format!(" {} Search ", p.icon(Icon::Discover)), p.muted),
         Span::styled(
             if app.query.is_empty() && !app.searching {
-                "all models".into()
+                "[click to filter]".into()
             } else {
                 format!(
                     "{}{}",
-                    safe(&app.query),
+                    super::search_value(
+                        &app.query,
+                        app.searching,
+                        usize::from(area.width.saturating_sub(45))
+                    ),
                     if app.searching { "▏" } else { "" }
                 )
             },
-            p.base,
+            if app.searching { p.selected } else { p.surface },
         ),
         Span::styled("   Sort ", p.muted),
         Span::styled(app.sort.label(), p.base),

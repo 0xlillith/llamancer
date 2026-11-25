@@ -18,6 +18,36 @@ pub(crate) fn safe(text: &str) -> String {
         .map(|c| if c.is_control() { '�' } else { c })
         .collect()
 }
+// Keep the end of an active query visible, including the editing cursor.
+fn search_value(value: &str, editing: bool, width: usize) -> String {
+    if value.is_empty() {
+        return if editing {
+            String::new()
+        } else {
+            "click to type".into()
+        };
+    }
+    let value = safe(value);
+    if !editing {
+        return value;
+    }
+    let mut used = 0;
+    let mut suffix = Vec::new();
+    for c in value.chars().rev() {
+        used += ratatui::text::Span::raw(c.to_string()).width();
+        if used > width.saturating_sub(1) {
+            break;
+        }
+        suffix.push(c);
+    }
+    let truncated = suffix.len() != value.chars().count();
+    let tail: String = suffix.into_iter().rev().collect();
+    if truncated {
+        format!("…{tail}")
+    } else {
+        tail
+    }
+}
 pub(super) struct Palette {
     pub base: Style,
     pub selected: Style,
@@ -135,6 +165,32 @@ fn content_regions(body: Rect, app: &App) -> (Rect, Option<Rect>) {
         (body, None)
     }
 }
+pub fn search_at(area: Rect, app: &App, column: u16, row: u16) -> bool {
+    if app.backend_open
+        || app.setup_open
+        || app.projects.is_some()
+        || app.download_destination.is_some()
+        || app.fit_report.is_some()
+        || app.help
+        || app.show_invalid
+        || app.hide_confirmation.is_some()
+        || app.quarantine_confirmation.is_some()
+        || app.profile_editor.is_some()
+        || app.edit.is_some()
+    {
+        return false;
+    }
+    let (body, _) = content_regions(regions(area)[2], app);
+    let y = match app.tab {
+        0 => body.y.saturating_add(2),
+        1 if !app.discovery.busy() => body.y.saturating_add(1),
+        _ => return false,
+    };
+    row == y
+        && row < body.bottom().saturating_sub(1)
+        && column > body.x
+        && column < body.right().saturating_sub(1)
+}
 pub fn row_at(area: Rect, app: &App, column: u16, row: u16) -> Option<usize> {
     let (body, _) = content_regions(regions(area)[2], app);
     if app.setup_open {
@@ -191,8 +247,6 @@ pub fn row_at(area: Rect, app: &App, column: u16, row: u16) -> Option<usize> {
         || app.quarantine_confirmation.is_some()
         || app.profile_editor.is_some()
         || app.edit.is_some()
-        || app.searching
-        || app.discovery.editing
     {
         return None;
     }
@@ -303,7 +357,18 @@ pub fn draw_themed(frame: &mut Frame, app: &App, theme: &Theme) {
         let (title, content) = views::content(app, body);
         let lines: Vec<Line> = content
             .lines()
-            .map(|line| {
+            .enumerate()
+            .map(|(index, line)| {
+                if title == "Discover" && index == 0 {
+                    let style = if app.discovery.editing {
+                        palette.selected
+                    } else {
+                        palette.surface
+                    };
+                    let padding = usize::from(body.width.saturating_sub(2))
+                        .saturating_sub(ratatui::text::Line::raw(line).width());
+                    return Line::styled(format!("{line}{}", " ".repeat(padding)), style);
+                }
                 let mut styled = chrome::row(line, &palette, app.tab == 3 && app.server.show_logs);
                 if line.starts_with("> ") {
                     let padding =
@@ -366,7 +431,7 @@ pub fn draw_themed(frame: &mut Frame, app: &App, theme: &Theme) {
     } else if app.help {
         "? close help  Esc close"
     } else if app.searching || app.discovery.editing {
-        "Enter search  Esc cancel  Ctrl+U clear"
+        "Enter search  Tab/Esc results  Ctrl+U clear"
     } else if app.details && app.tab == 0 {
         "PgUp/PgDn scroll  Enter close  Esc close  p profile  m fit  l Run model"
     } else if app.backend_open {
@@ -374,7 +439,7 @@ pub fn draw_themed(frame: &mut Frame, app: &App, theme: &Theme) {
     } else {
         match app.tab {
             0 => "r scan  / search  f favorite  s sort  p profile  m fit  l Run model  i invalid  h hide  t quarantine  ? help",
-            1 => "/ search/filter  s sort  Enter open/download  d download  D destination  n next page  Backspace back  ? help",
+            1 => "F3 focus search  s sort  Enter open/download  d download  n next page  Backspace back  ? help",
             2 => "r resume  R run queue  x pause  t quarantine  T restore  z remove entry  ? help",
             3 => "r refresh  D detach  s Start router  R restart  i probe  x stop  l/u load/unload  a Launch agent  A current  w web  b btop  g logs  B backends  P project",
             _ => "↑↓ select  Enter edit  T theme  I icons  B backends  P project  G setup  ? help  q quit",
@@ -470,6 +535,19 @@ mod tests {
         app.help = false;
         app.tab = 1;
         assert_eq!(row_at(area, &app, 5, body.y + 4), None);
+    }
+    #[test]
+    fn search_field_hit_testing_respects_tabs_and_dialogs() {
+        let area = Rect::new(0, 0, 120, 36);
+        let body = regions(area)[2];
+        let mut app = App::default();
+        assert!(search_at(area, &app, 5, body.y + 2));
+        app.dispatch(crate::app::Action::Select(1));
+        assert!(search_at(area, &app, 5, body.y + 1));
+        assert!(!search_at(area, &app, 5, body.y + 2));
+        app.help = true;
+        assert!(!search_at(area, &app, 5, body.y + 1));
+        assert_eq!(search_value("abcdefghijkl", true, 5), "…ijkl");
     }
     #[test]
     fn renders_profile_editor() {

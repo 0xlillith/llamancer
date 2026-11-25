@@ -40,7 +40,7 @@ def check(binary, terminate=False):
             )
             start = read_until(master, process, b"LLAMANCER")
             assert b"\x1b[?1049h" in start, "Alternate screen was not entered"
-            for key in b"23451":
+            for key in b"2\t3451":
                 os.write(master, bytes([key]))
                 time.sleep(0.08)
                 if select.select([master], [], [], 0.5)[0]:
