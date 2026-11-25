@@ -34,3 +34,9 @@ Install stable Rust and run `cargo run` on Linux. Press Tab to switch views and 
 
 MIT licensed. Contributions welcome.
 
+
+## Configuration (early development)
+
+On first launch, Llamancer creates `$XDG_CONFIG_HOME/llamancer/config.toml` (or `~/.config/llamancer/config.toml`). The file contains schema version 1, the theme, model roots, default agent and endpoint. Model roots, agent and endpoint are reserved for upcoming phases. Dracula is built in. Set `theme` to a custom name and place a matching TOML file under the configuration directory's `themes/` subdirectory; see `themes/dracula.toml` for an example. Use Tab, arrow keys, 1–5 or click a tab to navigate; press ? for help, q or Ctrl+C to exit.
+
+Development checks: `cargo fmt --all -- --check`, `cargo test --locked`, `cargo clippy --locked --all-targets -- -D warnings`.

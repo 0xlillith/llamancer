@@ -1,16 +1,28 @@
 pub const TABS: [&str; 5] = ["Library", "Discover", "Downloads", "Server", "Settings"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Action { Next, Previous, ToggleHelp, Escape, Quit }
+pub enum Action {
+    Next,
+    Previous,
+    Select(usize),
+    ToggleHelp,
+    Escape,
+    Quit,
+}
 
 #[derive(Default)]
-pub struct App { pub tab: usize, pub help: bool, pub quit: bool }
+pub struct App {
+    pub tab: usize,
+    pub help: bool,
+    pub quit: bool,
+}
 
 impl App {
     pub fn dispatch(&mut self, action: Action) {
         match action {
             Action::Next if !self.help => self.tab = (self.tab + 1) % TABS.len(),
             Action::Previous if !self.help => self.tab = (self.tab + TABS.len() - 1) % TABS.len(),
+            Action::Select(index) if !self.help && index < TABS.len() => self.tab = index,
             Action::ToggleHelp => self.help = !self.help,
             Action::Escape if self.help => self.help = false,
             Action::Escape | Action::Quit => self.quit = true,
@@ -42,4 +54,3 @@ mod tests {
         assert!(app.quit);
     }
 }
-
