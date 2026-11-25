@@ -61,7 +61,10 @@ impl Theme {
                 "Invalid theme name",
             ));
         }
-        let contents = std::fs::read_to_string(root.join("themes").join(format!("{name}.toml")))?;
+        let contents = crate::config::read_state(
+            &root.join("themes").join(format!("{name}.toml")),
+            64 * 1024,
+        )?;
         let t: Self =
             toml::from_str(&contents).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
         for value in [

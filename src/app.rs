@@ -74,7 +74,18 @@ impl App {
             .min(self.visible().len().saturating_sub(1));
     }
 
+    pub fn invalid_modal(&self) -> bool {
+        self.tab == 0 && self.show_invalid
+    }
     pub fn dispatch(&mut self, action: Action) {
+        if self.invalid_modal()
+            && matches!(
+                action,
+                Action::Next | Action::Previous | Action::Select(_) | Action::ToggleHelp
+            )
+        {
+            return;
+        }
         match action {
             Action::Next if !self.help => self.tab = (self.tab + 1) % TABS.len(),
             Action::Previous if !self.help => self.tab = (self.tab + TABS.len() - 1) % TABS.len(),
@@ -91,6 +102,27 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn invalid_file_overlay_cannot_be_left_active_on_another_tab() {
+        let mut app = App {
+            show_invalid: true,
+            ..App::default()
+        };
+        for action in [
+            Action::Next,
+            Action::Previous,
+            Action::Select(4),
+            Action::ToggleHelp,
+        ] {
+            app.dispatch(action);
+            assert_eq!(app.tab, 0);
+            assert!(!app.help);
+        }
+        app.dispatch(Action::Escape);
+        assert!(!app.show_invalid && !app.quit);
+        app.dispatch(Action::Select(4));
+        assert_eq!(app.tab, 4);
+    }
     #[test]
     fn navigation_wraps() {
         let mut app = App::default();

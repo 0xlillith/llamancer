@@ -75,7 +75,7 @@ pub fn row_at(area: Rect, app: &App, column: u16, row: u16) -> Option<usize> {
     let body = regions(area)[2];
     if app.backend_open
         || app.help
-        || app.show_invalid
+        || app.invalid_modal()
         || app.hide_confirmation.is_some()
         || app.quarantine_confirmation.is_some()
         || app.profile_editor.is_some()

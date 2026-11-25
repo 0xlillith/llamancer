@@ -152,3 +152,5 @@ Meet [Hex](assets/hex-mascot.webp), our llama sorcerer and project mascot. The d
 ## License
 
 MIT. Llamancer is an independent project and is not affiliated with llama.cpp, Oh My Pi, Pi or Hugging Face.
+
+Local TOML settings and download queues are bounded to 16 MiB; custom themes to 64 KiB. Use regular user-owned state files that are not writable by other users. Final-component symlinks and special files are rejected to prevent startup hangs or unintended reads.
