@@ -1,0 +1,50 @@
+name: Arch package smoke
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - packaging/arch/**
+      - .github/workflows/arch-package.yml
+      - Cargo.toml
+      - Cargo.lock
+
+permissions:
+  contents: read
+
+jobs:
+  arch:
+    runs-on: ubuntu-24.04
+    container: archlinux:base-devel
+    timeout-minutes: 20
+    steps:
+      - name: Install build dependencies
+        run: |
+          pacman -Syu --noconfirm --needed git rust python
+          useradd -m builder
+      - uses: actions/checkout@v4
+      - name: Build the checked-out revision as an Arch package
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          install -d -o builder -g builder /home/builder/pkg
+          cp packaging/arch/PKGBUILD /home/builder/pkg/
+          # Use the exact checked-out revision rather than cloning a different main.
+          git clone --no-hardlinks "$GITHUB_WORKSPACE" /home/builder/source
+          git -C /home/builder/source checkout --detach "$(git rev-parse HEAD)"
+          sed -i 's|llamancer::git+https://github.com/0xlillith/llamancer.git|llamancer::git+file:///home/builder/source#commit='"$(git rev-parse HEAD)"'|' /home/builder/pkg/PKGBUILD
+          chown -R builder:builder /home/builder
+          runuser -u builder -- bash -c 'cd /home/builder/pkg && makepkg --noconfirm --syncdeps'
+          pacman -U --noconfirm /home/builder/pkg/llamancer-git-*.pkg.tar.zst
+          llamancer --version
+          test -x /usr/bin/llamancer
+          test -f /usr/share/licenses/llamancer-git/LICENSE
+          test -f /usr/share/icons/hicolor/scalable/apps/llamancer.svg
+          grep -Fx 'ExecStart=/usr/bin/llamancer serve' /usr/lib/systemd/user/llamancer.service
+          python tests/terminal_smoke.py /usr/bin/llamancer
+      - uses: actions/upload-artifact@v4
+        with:
+          name: arch-package-x86_64
+          path: /home/builder/pkg/llamancer-git-*.pkg.tar.zst
+          if-no-files-found: error
