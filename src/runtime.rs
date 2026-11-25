@@ -928,7 +928,7 @@ impl Runtime {
                     if mode != crate::agents::TerminalMode::Current {
                         return Err(io::Error::other("Authenticated agent launch requires current terminal (A); no secrets in Kitty argv"));
                     }
-                    plan.with_key(&key, &c.default_agent);
+                    plan.with_key(&key, &c.default_agent)?;
                 }
                 plan.validate(mode)?;
                 return Ok(Effect::Launch(plan, mode));
