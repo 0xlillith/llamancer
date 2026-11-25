@@ -176,7 +176,6 @@ impl Runtime {
     }
     pub fn modal(&self) -> bool {
         self.app.backend_open
-            || self.app.invalid_modal()
             || self.app.profile_editor.is_some()
             || self.app.edit.is_some()
             || self.app.searching
