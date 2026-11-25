@@ -80,7 +80,7 @@ llamancer backend install vulkan b12726
 llamancer backend probe vulkan b12726
 ```
 
-See [Backend Manager](docs/BACKENDS.md) for verification, platform requirements and current limits.
+See [Backend Manager](docs/BACKENDS.md) for verification, platform requirements and current limits. For optional host-native compilation, see [pinned source builds](docs/SOURCE-BUILDS.md).
 
 ## Controls
 
