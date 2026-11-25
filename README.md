@@ -15,14 +15,14 @@ Llamancer brings local GGUF model discovery, inference preferences, server contr
 
 ## Status
 
-Early development. The core workflows are implemented but are not yet a stable release. Synthetic fixtures, native Linux CI, and a live Hugging Face GGUF download and checksum test are the current validation baseline. Real llama.cpp, OMP and Pi compatibility is still being verified.
+Early development. The core workflows are implemented but are not yet a stable release. Synthetic fixtures, native Linux CI, and a live Hugging Face GGUF download and checksum test are the current validation baseline. Real CPU inference has been validated against llama.cpp b12721 on ARM64. GPU, OMP and Pi compatibility is still being verified.
 
 | Workspace | Current functionality |
 | --- | --- |
 | Library | Read-only GGUF indexing, shard grouping, search, ordering, favorites, inspector and per-model profiles |
-| Discover | Explicit Hugging Face search, pinned revision/file listing, quantization/shard selection |
-| Downloads | Persistent queue, sequential resumable transfers, free-space checks, file locking, size and available SHA-256 validation |
-| Server | External attach, managed session, router presets, load/unload, logs, Web UI and btop |
+| Discover | Paginated Hugging Face search, pinned revision/file listing, quantization/shard selection |
+| Downloads | Persistent queue, sequential resumable transfers, bounded retry, throughput and ETA, free-space checks, file locking and integrity validation |
+| Server | External attach, managed session, headless router supervisor, router presets, load/unload, logs, Web UI and btop |
 | Settings | XDG TOML preferences, Dracula/custom themes, model roots, agent, server executable, device selection, project directory |
 
 ## Quick start
@@ -49,9 +49,9 @@ For Pi, use router mode. OMP uses the documented LLAMA_CPP_BASE_URL runtime over
 | --- | --- |
 | Global | 1–5 or Tab / Shift+Tab, mouse tabs, ? help, q / Ctrl+C quit |
 | Library | r scan, x cancel, / search, s sort, f favorite, v favorites only, Enter details, p profile, l load |
-| Discover | / search, Enter submit/open repo, Backspace back, d queue file or shard bundle |
+| Discover | / search, Enter submit/open repo, Backspace back, n next page, d queue file or shard bundle |
 | Downloads | r resume, R run queue, x pause, z remove queue entry (keeps files) |
-| Server | r refresh, i probe backend, s router, x stop owned, l/u load/unload, a agent, g logs, w Web UI, b btop |
+| Server | r refresh, i probe backend, s router, x stop owned, l/u load/unload, a agent, A current terminal, g logs, w Web UI, b btop |
 | Profile | Up/Down, Enter edit, a advanced/basic, s save, Esc discard, Ctrl+U clear input |
 
 ## Local-first by design
@@ -63,6 +63,14 @@ For Pi, use router mode. OMP uses the documented LLAMA_CPP_BASE_URL runtime over
 - Downloaded files are stored under the first model root, by repository and pinned revision. Partial files use a .part suffix and are not indexed. Set HF_TOKEN in the environment if a repository requires authentication. Llamancer never sends that token to redirect hosts outside huggingface.co.
 - Profiles separate engine options from generation defaults. Auto inherits backend defaults; unsupported CLI flags are rejected during launch. Advanced profiles accept an explicit multimodal projector path; Settings accepts a supported device identifier or automatic selection.
 
+## Persistent router (optional)
+
+Run `llamancer serve` to supervise a router using your saved model roots and profiles without a terminal UI. Stop it with Ctrl+C when running interactively. A sample systemd user unit is included in [packaging/systemd](packaging/systemd/README.md); installation and enablement are explicit user actions. The TUI can attach to that endpoint with r. Restart the supervisor when changing model roots, profiles or device settings.
+
+## Agent terminal modes
+
+Select current, kitty-tab or kitty-window in Settings. The a shortcut uses the configured mode, while A always launches in the current terminal. Kitty modes require its existing, authorized remote-control configuration and the kitten executable. Llamancer never enables remote control automatically. If launching fails, use A instead.
+
 ## Development
 
 ```sh
@@ -72,7 +80,7 @@ cargo clippy --locked --all-targets -- -D warnings
 cargo build --locked --release
 ```
 
-CI runs on native Linux x86_64 and aarch64. Release builds produce tarballs and SHA-256 files as workflow artifacts; no registry publication or stable release is automatic.
+CI runs on native Linux x86_64 and aarch64. The optional Live CPU smoke tests workflow checks a pinned upstream llama-server and a tiny checksum-verified GGUF fixture, plus live Hub download/resume. Release builds produce tarballs and SHA-256 files as workflow artifacts; no registry publication or stable release is automatic.
 
 Read [Architecture](docs/ARCHITECTURE.md), [Implementation specification](docs/IMPLEMENTATION.md), [GGUF indexing](docs/GGUF.md), [Integrations](docs/INTEGRATIONS.md), [Roadmap](docs/ROADMAP.md), [Status](docs/STATUS.md) and [Contributing](CONTRIBUTING.md).
 

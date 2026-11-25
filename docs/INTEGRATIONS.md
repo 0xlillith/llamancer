@@ -8,7 +8,7 @@ Reference: https://github.com/ggml-org/llama.cpp/tree/master/tools/server
 
 Managed single-model sessions translate typed profiles into CLI arguments after probing --help. Managed routers generate an isolated temporary INI with stable model aliases, explicit model paths and per-model settings. Router starts with one active model maximum and explicit loading. External endpoints are inspected via health, props and models endpoints. Load and unload are explicit operations through the router API. Llamancer does not call internal Web UI tool endpoints.
 
-Choose the installed backend build using the server executable setting. Managed sessions require local HTTP and stop on TUI exit. Existing servers can be attached to but are never signalled by the application. Restart an owned router after scanning new files or editing profiles. The server view can probe the version and available devices. The device setting and an explicit projector in the advanced profile are passed only when supported by the executable. Authentication and long-lived service supervision are follow-up items.
+Choose the installed backend build using the server executable setting. Managed sessions require local HTTP and stop on TUI exit. Existing servers can be attached to but are never signalled by the application. Restart an owned router after scanning new files or editing profiles. The server view can probe the version and available devices. The device setting and an explicit projector in the advanced profile are passed only when supported by the executable. The optional headless supervisor runs with llamancer serve and can be started through the provided systemd user unit. The unit is not enabled by default. API authentication remains a follow-up item.
 
 ## Oh My Pi
 
@@ -24,4 +24,4 @@ The Pi adapter targets its native router integration. It passes LLAMA_BASE_URL a
 
 ## Custom agents
 
-A custom executable and explicit argument array are configured in TOML. Llamancer passes LLAMANCER_ENDPOINT and LLAMANCER_MODEL through the environment, not shell interpolation. All agents currently run in the foreground terminal. Real agent smoke tests remain a release gate.
+A custom executable and explicit argument array are configured in TOML. Llamancer passes LLAMANCER_ENDPOINT and LLAMANCER_MODEL through the environment, not shell interpolation. Agents can run in the current terminal or use Kitty remote-control launch plans for a tab or OS window; actual graphical launches require a supported terminal environment. Real agent smoke tests remain a release gate.

@@ -9,6 +9,7 @@ use std::{
 pub enum Field {
     Theme,
     Agent,
+    AgentTerminal,
     Endpoint,
     ServerBinary,
     Device,
@@ -18,9 +19,10 @@ pub enum Field {
     RemoveRoot,
 }
 impl Field {
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 10] = [
         Self::Theme,
         Self::Agent,
+        Self::AgentTerminal,
         Self::Endpoint,
         Self::ServerBinary,
         Self::Device,
@@ -33,6 +35,7 @@ impl Field {
         match self {
             Self::Theme => "Theme",
             Self::Agent => "Default agent",
+            Self::AgentTerminal => "Agent terminal (current/kitty-tab/kitty-window)",
             Self::Endpoint => "Endpoint",
             Self::ServerBinary => "llama-server executable",
             Self::Device => "GPU device (auto/none/device IDs)",
@@ -46,6 +49,7 @@ impl Field {
         match self {
             Self::Theme => config.theme.clone(),
             Self::Agent => config.default_agent.clone(),
+            Self::AgentTerminal => config.agent_terminal.label().into(),
             Self::Endpoint => config.endpoint.clone(),
             Self::ServerBinary => config.server_binary.clone(),
             Self::Device => config.device.clone(),
@@ -79,6 +83,7 @@ pub fn apply(
             }
             draft.default_agent = value.into();
         }
+        Field::AgentTerminal => draft.agent_terminal = value.parse()?,
         Field::Endpoint => {
             draft.endpoint = crate::llama::client::endpoint(value)?.to_string();
         }

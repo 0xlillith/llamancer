@@ -1,9 +1,10 @@
 //! Background discovery with explicit user-triggered network access.
-use super::{File, Repository};
+use super::{File, Page, Repository};
 use crate::jobs::Job;
 use std::io;
 enum ResultSet {
-    Repos(Vec<Repository>),
+    Repos(Page),
+    More(Page),
     Files(Vec<File>),
 }
 #[derive(Default)]
@@ -15,6 +16,7 @@ pub struct Discovery {
     pub files: Vec<File>,
     pub repo: Option<String>,
     pub status: String,
+    pub next: Option<url::Url>,
     job: Option<Job<ResultSet>>,
 }
 impl Discovery {
@@ -48,6 +50,20 @@ impl Discovery {
         })?);
         self.status = "Searching Hugging Face…".into();
         self.editing = false;
+        Ok(())
+    }
+    pub fn more(&mut self) -> io::Result<()> {
+        if self.busy() || self.repo.is_some() {
+            return Err(io::Error::other("Return to repository search first"));
+        }
+        let next = self
+            .next
+            .clone()
+            .ok_or_else(|| io::Error::other("No additional page"))?;
+        self.job = Some(Job::start(move |_| {
+            super::page(&next).map(ResultSet::More)
+        })?);
+        self.status = "Fetching next page…".into();
         Ok(())
     }
     pub fn open(&mut self) -> io::Result<()> {
@@ -84,11 +100,26 @@ impl Discovery {
                     job.finish();
                 }
                 match result {
-                    Ok(ResultSet::Repos(repos)) => {
+                    Ok(ResultSet::Repos(page)) => {
+                        let repos = page.repos;
+                        self.next = page.next;
                         self.status = format!("{} repositories", repos.len());
                         self.repos = repos;
                         self.repo = None;
                         self.cursor = 0;
+                    }
+                    Ok(ResultSet::More(page)) => {
+                        let before = self.repos.len();
+                        let mut seen: std::collections::HashSet<_> =
+                            self.repos.iter().map(|r| r.id.clone()).collect();
+                        self.repos
+                            .extend(page.repos.into_iter().filter(|r| seen.insert(r.id.clone())));
+                        self.next = page.next.filter(|next| Some(next) != self.next.as_ref());
+                        self.status = format!(
+                            "{} repositories (+{})",
+                            self.repos.len(),
+                            self.repos.len() - before
+                        );
                     }
                     Ok(ResultSet::Files(files)) => {
                         self.status = format!("{} GGUF files with known sizes", files.len());

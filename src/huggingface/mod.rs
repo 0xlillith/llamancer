@@ -49,7 +49,10 @@ pub fn agent() -> ureq::Agent {
 }
 pub fn request(http: &ureq::Agent, url: &Url) -> ureq::Request {
     let req = http.get(url.as_str());
-    if url.scheme() == "https" && url.host_str() == Some("huggingface.co") {
+    if url.scheme() == "https"
+        && url.host_str() == Some("huggingface.co")
+        && url.port_or_known_default() == Some(443)
+    {
         if let Ok(token) = std::env::var("HF_TOKEN") {
             if !token.is_empty() {
                 return req.set("Authorization", &format!("Bearer {token}"));
@@ -60,12 +63,22 @@ pub fn request(http: &ureq::Agent, url: &Url) -> ureq::Request {
 }
 pub fn error(e: ureq::Error) -> io::Error {
     match e {
-        ureq::Error::Status(code, _) => io::Error::other(format!("Hugging Face HTTP {code}")),
-        ureq::Error::Transport(_) => io::Error::other("Hugging Face connection failed"),
+        ureq::Error::Status(code, _) => io::Error::new(
+            if matches!(code, 408 | 429 | 500 | 502 | 503 | 504) {
+                io::ErrorKind::WouldBlock
+            } else {
+                io::ErrorKind::Other
+            },
+            format!("Hugging Face HTTP {code}"),
+        ),
+
+        ureq::Error::Transport(_) => io::Error::new(
+            io::ErrorKind::ConnectionAborted,
+            "Hugging Face connection failed",
+        ),
     }
 }
-fn get<T: serde::de::DeserializeOwned>(url: &Url) -> io::Result<T> {
-    let response = request(&agent(), url).call().map_err(error)?;
+fn response_json<T: serde::de::DeserializeOwned>(response: ureq::Response) -> io::Result<T> {
     let mut data = Vec::new();
     response
         .into_reader()
@@ -75,6 +88,47 @@ fn get<T: serde::de::DeserializeOwned>(url: &Url) -> io::Result<T> {
         return Err(io::Error::other("Hub response exceeds limit"));
     }
     serde_json::from_slice(&data).map_err(|_| io::Error::other("Invalid Hugging Face response"))
+}
+fn get<T: serde::de::DeserializeOwned>(url: &Url) -> io::Result<T> {
+    response_json(request(&agent(), url).call().map_err(error)?)
+}
+#[derive(Debug)]
+pub struct Page {
+    pub repos: Vec<Repository>,
+    pub next: Option<Url>,
+}
+fn next_page(link: &str) -> Option<Url> {
+    link.split(',').find_map(|part| {
+        let (address, params) = part.trim().split_once('>')?;
+        if !params.split(';').any(|p| p.trim() == "rel=\"next\"") {
+            return None;
+        }
+        let url = Url::parse(address.strip_prefix('<')?).ok()?;
+        (url.scheme() == "https"
+            && url.host_str() == Some("huggingface.co")
+            && url.port_or_known_default() == Some(443)
+            && url.username().is_empty()
+            && url.password().is_none()
+            && url.path() == "/api/models"
+            && url.fragment().is_none())
+        .then_some(url)
+    })
+}
+pub fn page(url: &Url) -> io::Result<Page> {
+    if url.scheme() != "https"
+        || url.host_str() != Some("huggingface.co")
+        || url.port_or_known_default() != Some(443)
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.path() != "/api/models"
+        || url.fragment().is_some()
+    {
+        return Err(io::Error::other("Invalid Hub pagination URL"));
+    }
+    let response = request(&agent(), url).call().map_err(error)?;
+    let next = response.header("Link").and_then(next_page);
+    let repos = response_json(response)?;
+    Ok(Page { repos, next })
 }
 pub fn valid_segment(s: &str) -> bool {
     !s.is_empty()
@@ -99,7 +153,7 @@ pub fn validate(file: &File) -> io::Result<()> {
     }
     Ok(())
 }
-pub fn search(query: &str) -> io::Result<Vec<Repository>> {
+pub fn search(query: &str) -> io::Result<Page> {
     let mut url = Url::parse("https://huggingface.co/api/models").expect("constant URL");
     url.query_pairs_mut()
         .append_pair("search", query)
@@ -107,7 +161,7 @@ pub fn search(query: &str) -> io::Result<Vec<Repository>> {
         .append_pair("sort", "downloads")
         .append_pair("direction", "-1")
         .append_pair("limit", "50");
-    get(&url)
+    page(&url)
 }
 pub fn files(repo: &str) -> io::Result<Vec<File>> {
     let parts: Vec<_> = repo.split('/').collect();
@@ -171,6 +225,7 @@ pub fn bundle(files: &[File], index: usize) -> Vec<File> {
         .cloned()
         .collect();
     result.sort_by(|a, b| a.name.cmp(&b.name));
+    result.dedup_by(|a, b| a.name == b.name);
     if result.len() as u64 != total {
         return Vec::new();
     }
@@ -186,6 +241,20 @@ mod tests {
             name: name.into(),
             size: 100,
             sha256: None,
+        }
+    }
+    #[test]
+    fn pagination_never_leaves_hub() {
+        assert!(
+            next_page(r#"<https://huggingface.co/api/models?cursor=abc>; rel="next""#).is_some()
+        );
+        for url in [
+            "https://example.com/api/models",
+            "https://huggingface.co:444/api/models",
+            "https://huggingface.co/api/users",
+            "http://huggingface.co/api/models",
+        ] {
+            assert!(next_page(&format!(r#"<{url}>; rel="next""#)).is_none());
         }
     }
     #[test]

@@ -1,0 +1,47 @@
+name: Live CPU smoke tests
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: x64
+            digest: ab56524ce899526e51c04e77f089a5792c59282b49736b239900970d3947be47
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+            digest: 2c615cee75536574a30002ead85a3a259eac2ed3519d5e22546e61a5a9430c40
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Fetch pinned CPU server and GGUF fixture
+        shell: bash
+        env:
+          ARCH: ${{ matrix.arch }}
+          DIGEST: ${{ matrix.digest }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/llama" "$RUNNER_TEMP/models"
+          archive="$RUNNER_TEMP/llama.tar.gz"
+          curl --fail --location --retry 3 --max-time 120 "https://github.com/ggml-org/llama.cpp/releases/download/b12721/llama-b12721-bin-ubuntu-${ARCH}.tar.gz" -o "$archive"
+          printf '%s  %s\n' "$DIGEST" "$archive" | sha256sum -c -
+          tar -xzf "$archive" -C "$RUNNER_TEMP/llama"
+          model="$RUNNER_TEMP/models/stories260K.gguf"
+          curl --fail --location --retry 3 --max-time 120 https://huggingface.co/ggml-org/tiny-llamas/resolve/99dd1a73db5a37100bd4ae633f4cfce6560e1567/stories260K.gguf -o "$model"
+          printf '%s  %s\n' 047bf46455a544931cff6fef14d7910154c56afbc23ab1c5e56a72e69912c04b "$model" | sha256sum -c -
+          server="$(find "$RUNNER_TEMP/llama" -type f -name llama-server -print -quit)"
+          test -n "$server"
+          printf 'LLAMANCER_TEST_SERVER=%s\nLLAMANCER_TEST_MODELS=%s\n' "$server" "$RUNNER_TEMP/models" >> "$GITHUB_ENV"
+      - name: Test actual inference and service lifecycle
+        run: cargo test --locked --test llama_live -- --ignored --nocapture
+      - name: Test actual Hub download and resume
+        run: cargo test --locked --test hub_live -- --ignored --nocapture

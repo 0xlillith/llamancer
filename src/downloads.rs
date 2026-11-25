@@ -15,6 +15,7 @@ use std::{
         atomic::{AtomicBool, AtomicU64, Ordering},
         Arc,
     },
+    time::{Duration, Instant},
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -37,7 +38,16 @@ pub struct Queue {
 impl Queue {
     pub fn load(path: &Path) -> io::Result<Self> {
         match fs::read_to_string(path) {
-            Ok(s) => toml::from_str(&s).map_err(io::Error::other),
+            Ok(s) => {
+                let queue: Self = toml::from_str(&s).map_err(io::Error::other)?;
+                for item in &queue.items {
+                    huggingface::validate(&item.file)?;
+                    if !item.root.is_absolute() {
+                        return Err(io::Error::other("Queue root must be absolute"));
+                    }
+                }
+                Ok(queue)
+            }
             Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(Self::default()),
             Err(e) => Err(e),
         }
@@ -165,6 +175,11 @@ fn transfer(item: &Item, cancel: &AtomicBool, progress: &AtomicU64) -> io::Resul
         return Err(io::Error::other("Unsafe partial file link count"));
     }
     let mut offset = file.metadata()?.len();
+    // Without an authoritative checksum, restart instead of trusting an old prefix.
+    if item.file.sha256.is_none() && offset > 0 {
+        file.set_len(0)?;
+        offset = 0;
+    }
     if offset > item.file.size {
         return Err(io::Error::other("Partial file exceeds expected size"));
     }
@@ -237,6 +252,12 @@ fn transfer(item: &Item, cancel: &AtomicBool, progress: &AtomicU64) -> io::Resul
         }
     }
     file.sync_all()?;
+    if file.metadata()?.len() != item.file.size {
+        return Err(io::Error::new(
+            io::ErrorKind::UnexpectedEof,
+            "Incomplete transfer",
+        ));
+    }
     verify(&partial, item, cancel)?;
     cancelled(cancel)?;
     // Atomic publication without overwriting an existing model.
@@ -248,6 +269,59 @@ fn transfer(item: &Item, cancel: &AtomicBool, progress: &AtomicU64) -> io::Resul
     }
     Ok(())
 }
+fn retryable(error: &io::Error) -> bool {
+    matches!(
+        error.kind(),
+        io::ErrorKind::TimedOut
+            | io::ErrorKind::ConnectionAborted
+            | io::ErrorKind::ConnectionReset
+            | io::ErrorKind::ConnectionRefused
+            | io::ErrorKind::UnexpectedEof
+            | io::ErrorKind::WouldBlock
+    )
+}
+fn transfer_with_retry(item: &Item, cancel: &AtomicBool, progress: &AtomicU64) -> io::Result<()> {
+    for attempt in 0..3 {
+        cancelled(cancel)?;
+        match transfer(item, cancel, progress) {
+            Err(e) if retryable(&e) && attempt < 2 => {
+                for _ in 0..(10 * (1 << attempt)) {
+                    cancelled(cancel)?;
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+            }
+            result => return result,
+        }
+    }
+    unreachable!("bounded retry loop always returns")
+}
+#[derive(Default)]
+struct Rate {
+    sample: Option<(Instant, u64)>,
+    bytes_per_second: f64,
+}
+impl Rate {
+    fn update(&mut self, now: Instant, bytes: u64) {
+        if let Some((last, old)) = self.sample {
+            if bytes < old {
+                self.sample = Some((now, bytes));
+                self.bytes_per_second = 0.0;
+                return;
+            }
+            let seconds = now.duration_since(last).as_secs_f64();
+            if seconds < 0.5 {
+                return;
+            }
+            let rate = (bytes - old) as f64 / seconds;
+            self.bytes_per_second = if self.bytes_per_second == 0.0 {
+                rate
+            } else {
+                0.25 * rate + 0.75 * self.bytes_per_second
+            };
+        }
+        self.sample = Some((now, bytes));
+    }
+}
 pub struct Controller {
     pub queue: Queue,
     pub cursor: usize,
@@ -255,6 +329,7 @@ pub struct Controller {
     pub path: PathBuf,
     active: Option<(usize, Job<()>, Arc<AtomicU64>)>,
     run_queue: bool,
+    rate: Rate,
 }
 impl Controller {
     pub fn new(path: PathBuf) -> io::Result<Self> {
@@ -265,6 +340,7 @@ impl Controller {
             path,
             active: None,
             run_queue: false,
+            rate: Rate::default(),
         })
     }
     pub fn busy(&self) -> bool {
@@ -275,6 +351,13 @@ impl Controller {
             .as_ref()
             .filter(|(i, _, _)| *i == index)
             .map(|(_, _, p)| p.load(Ordering::Relaxed))
+            .filter(|&n| n != u64::MAX)
+    }
+    pub fn speed_eta(&self, index: usize) -> Option<(f64, u64)> {
+        let bytes = self.progress(index)?;
+        let speed = self.rate.bytes_per_second;
+        let remaining = self.queue.items.get(index)?.file.size.saturating_sub(bytes);
+        (speed >= 1.0 && remaining > 0).then(|| (speed, (remaining as f64 / speed).ceil() as u64))
     }
     pub fn add(&mut self, files: Vec<File>, root: PathBuf) -> io::Result<()> {
         for file in &files {
@@ -315,9 +398,10 @@ impl Controller {
         if item.state == State::Complete {
             return Err(io::Error::other("File already complete"));
         }
-        let progress = Arc::new(AtomicU64::new(0));
+        let progress = Arc::new(AtomicU64::new(u64::MAX));
         let p = Arc::clone(&progress);
-        let job = Job::start(move |cancel| transfer(&item, &cancel, &p))?;
+        let job = Job::start(move |cancel| transfer_with_retry(&item, &cancel, &p))?;
+        self.rate = Rate::default();
         self.active = Some((index, job, progress));
         self.status = "Downloading…".into();
         Ok(())
@@ -364,9 +448,11 @@ impl Controller {
         }
     }
     pub fn tick(&mut self) {
-        let Some((_, job, _)) = &mut self.active else {
+        let Some((_, job, progress)) = &mut self.active else {
             return;
         };
+        self.rate
+            .update(Instant::now(), progress.load(Ordering::Relaxed));
         if let Some(result) = job.poll() {
             if let Some((index, job, _)) = self.active.take() {
                 job.finish();
@@ -399,6 +485,21 @@ impl Controller {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn rate_ignores_initial_resumed_bytes() {
+        let now = Instant::now();
+        let mut rate = Rate::default();
+        rate.update(now, 10_000);
+        assert_eq!(rate.bytes_per_second, 0.0);
+        rate.update(now + Duration::from_secs(1), 11_000);
+        assert_eq!(rate.bytes_per_second, 1000.0);
+        rate.update(now + Duration::from_secs(2), 10);
+        assert_eq!(rate.bytes_per_second, 0.0);
+        assert!(retryable(&io::Error::from(io::ErrorKind::TimedOut)));
+        assert!(!retryable(&io::Error::from(
+            io::ErrorKind::PermissionDenied
+        )));
+    }
     #[test]
     fn range_validation() {
         assert!(content_range("bytes 20-99/100", 20, 100));

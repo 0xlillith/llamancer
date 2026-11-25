@@ -13,7 +13,7 @@ use std::{io, path::PathBuf};
 
 pub enum Effect {
     None,
-    Launch(LaunchPlan),
+    Launch(LaunchPlan, crate::agents::TerminalMode),
     Open(String),
     Monitor,
 }
@@ -339,6 +339,7 @@ impl Runtime {
     }
     fn discovery_key(&mut self, key: KeyCode) -> io::Result<()> {
         match key {
+            KeyCode::Char('n') => self.app.discovery.more()?,
             KeyCode::Char('/') => self.app.discovery.editing = true,
             KeyCode::Up => self.app.discovery.move_cursor(false),
             KeyCode::Down => self.app.discovery.move_cursor(true),
@@ -405,7 +406,7 @@ impl Runtime {
                 ))
             }
             KeyCode::Char('b') => return Ok(Effect::Monitor),
-            KeyCode::Char('a') => {
+            KeyCode::Char('a' | 'A') => {
                 if s.busy() {
                     return Err(io::Error::other("Wait for server operation"));
                 }
@@ -435,7 +436,14 @@ impl Runtime {
                     .prepare(&c.endpoint, &model.id, cwd)?,
                     _ => return Err(io::Error::other("Unknown agent")),
                 };
-                return Ok(Effect::Launch(plan));
+                return Ok(Effect::Launch(
+                    plan,
+                    if key == KeyCode::Char('A') {
+                        crate::agents::TerminalMode::Current
+                    } else {
+                        c.agent_terminal
+                    },
+                ));
             }
             _ => {}
         }
