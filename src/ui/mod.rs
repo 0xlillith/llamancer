@@ -73,9 +73,19 @@ pub(super) fn viewport(cursor: usize, height: u16, reserved: u16) -> (usize, usi
 }
 pub fn row_at(area: Rect, app: &App, column: u16, row: u16) -> Option<usize> {
     let body = regions(area)[2];
-    if app.backend_open
-        || app.help
-        || app.show_invalid
+    if app.backend_open {
+        if app.backend_busy || app.backend_confirmation.is_some() {
+            return None;
+        }
+        let row = row.checked_sub(body.y.checked_add(3)?)?;
+        return (row < 3
+            && body.width >= 3
+            && column > body.x
+            && column < body.right().saturating_sub(1)
+            && body.y + 3 + row < body.bottom().saturating_sub(1))
+        .then_some(usize::from(row));
+    }
+    if app.help
         || app.hide_confirmation.is_some()
         || app.quarantine_confirmation.is_some()
         || app.profile_editor.is_some()
@@ -86,6 +96,7 @@ pub fn row_at(area: Rect, app: &App, column: u16, row: u16) -> Option<usize> {
         return None;
     }
     let (rect, header, reserved, cursor, len) = match app.tab {
+        0 if app.show_invalid => (body, 2, 4, app.invalid_cursor, app.invalid.len()),
         0 => {
             if app.details && body.width < 100 {
                 return None;
@@ -212,7 +223,6 @@ pub fn draw_themed(frame: &mut Frame, app: &App, theme: &Theme) {
             || app.profile_editor.is_some()
             || app.edit.is_some()
             || app.quarantine_confirmation.is_some()
-            || app.backend_open
         {
             paragraph.wrap(Wrap { trim: false })
         } else {
@@ -329,6 +339,33 @@ mod tests {
             };
             terminal.draw(|f| draw_themed(f, &app, &theme)).unwrap();
         }
+    }
+    #[test]
+    fn modal_row_hit_testing_matches_rendered_rows() {
+        let area = Rect::new(0, 0, 80, 24);
+        let body = regions(area)[2];
+        let mut app = App {
+            backend_open: true,
+            ..App::default()
+        };
+        assert_eq!(row_at(area, &app, 5, body.y + 3), Some(0));
+        assert_eq!(row_at(area, &app, 5, body.y + 5), Some(2));
+        app.backend_confirmation = Some('d');
+        assert_eq!(row_at(area, &app, 5, body.y + 5), None);
+        app.backend_confirmation = None;
+        app.backend_open = false;
+        app.show_invalid = true;
+        app.invalid = (0..30)
+            .map(|i| {
+                (
+                    format!("/tmp/{i}.gguf").into(),
+                    std::io::ErrorKind::InvalidData,
+                )
+            })
+            .collect();
+        app.invalid_cursor = 20;
+        let (offset, _) = viewport(20, body.height, 4);
+        assert_eq!(row_at(area, &app, 5, body.y + 2), Some(offset));
     }
     #[test]
     fn narrow_backend_confirmation_exposes_target_and_controls() {
