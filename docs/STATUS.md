@@ -4,7 +4,7 @@ This is a pre-release development snapshot, not a production-ready claim.
 
 | Area | Implemented | Remaining validation or work |
 | --- | --- | --- |
-| Foundation | Typed navigation, runtime/controller separation, bounded cancellable workers, XDG configuration, custom themes, keyboard/mouse tabs, CI | Full terminal usability and accessibility review; persistent structured diagnostics |
+| Foundation | Typed navigation, runtime/controller separation, bounded cancellable workers, XDG configuration, custom themes, keyboard/mouse tabs, PTY terminal smoke test, CI | Full terminal usability and accessibility review; persistent structured diagnostics |
 | Library | Metadata indexing, conventional shard grouping, stable identities, search, sorting, favorites, inspector, Basic/Advanced profiles, explicit projector, known tensor extent checks | Broader real-model coverage, automatic projector matching, full tensor type coverage, safe physical removal |
 | Inference | CLI capability probing, single model and router sessions, generated presets, headless service supervisor, external attach, load/unload, bounded logs, device probing and selection, Web UI, btop | GPU/device matrix, systemd user-bus validation, authentication, lifecycle stress testing |
 | Hub | Search, revision-pinned GGUF listing, shard bundles, persistent queue, resumable transfer, size and SHA-256 validation, free-space checks, file locking, sequential queue, pagination, bounded retry, speed/ETA | Disk-space and concurrency stress testing, gated-repository UX, broader network failure coverage |

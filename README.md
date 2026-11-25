@@ -78,6 +78,7 @@ cargo fmt --all -- --check
 cargo test --locked --all-targets
 cargo clippy --locked --all-targets -- -D warnings
 cargo build --locked --release
+python3 tests/terminal_smoke.py target/release/llamancer
 ```
 
 CI runs on native Linux x86_64 and aarch64. The optional Live CPU smoke tests workflow checks a pinned upstream llama-server and a tiny checksum-verified GGUF fixture, plus live Hub download/resume. Release builds produce tarballs and SHA-256 files as workflow artifacts; no registry publication or stable release is automatic.
