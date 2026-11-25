@@ -349,10 +349,36 @@ fn main() -> io::Result<()> {
                     let area = ratatui::layout::Rect::new(0, 0, size.width, size.height);
                     match mouse.kind {
                         MouseEventKind::Down(MouseButton::Left) => {
-                            if let Some(code) =
-                                ui::server_action_at(area, &runtime.app, mouse.column, mouse.row)
+                            if let Some((index, code)) =
+                                ui::launch_hit(area, &runtime.app, mouse.column, mouse.row)
+                            {
+                                if let Some(i) = index {
+                                    runtime.select_row(i);
+                                }
+                                let effect = runtime.handle_key(event::KeyEvent::new(
+                                    code,
+                                    event::KeyModifiers::NONE,
+                                ));
+                                apply_effect(
+                                    &mut runtime,
+                                    &mut terminal,
+                                    &stop,
+                                    effect,
+                                    &mut agent_windows,
+                                );
+                                last_click = None;
+                            } else if let Some(command) =
+                                ui::controls::hit(area, &runtime.app, mouse.column, mouse.row)
                                     .filter(|_| !runtime.modal())
                             {
+                                runtime.blur_search();
+                                let code = match command {
+                                    ui::controls::Command::Key(key) => key,
+                                    ui::controls::Command::SubmitSearch => {
+                                        runtime.focus_search();
+                                        event::KeyCode::Enter
+                                    }
+                                };
                                 let effect = runtime.handle_key(event::KeyEvent::new(
                                     code,
                                     event::KeyModifiers::NONE,
@@ -377,7 +403,9 @@ fn main() -> io::Result<()> {
                                 let tab = runtime.app.tab;
                                 let menu = runtime.app.launch_menu.is_some();
                                 let eligible = !runtime.modal()
-                                    && (tab == 0 || (tab == 1 && !runtime.app.discovery.busy()));
+                                    && (tab == 0
+                                        || tab == 4
+                                        || (tab == 1 && !runtime.app.discovery.busy()));
                                 let now = Instant::now();
                                 let double = eligible
                                     && last_click.is_some_and(|(t, i, x, y, when)| {

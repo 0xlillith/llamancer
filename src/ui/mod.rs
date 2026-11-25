@@ -1,5 +1,7 @@
 mod chrome;
+pub mod controls;
 pub mod icons;
+mod launch;
 mod library;
 pub mod theme;
 mod views;
@@ -219,65 +221,19 @@ pub fn server_actions(app: &App) -> String {
     let fourth = if active { "[ Web UI ]" } else { "[ Setup ]" };
     format!("{first:<16}{second:<17}{third:<15}{fourth}")
 }
-pub fn server_action_at(
+pub fn launch_hit(
     area: Rect,
     app: &App,
-    column: u16,
-    row: u16,
-) -> Option<crossterm::event::KeyCode> {
-    if app.tab != 3
-        || app.server.show_logs
-        || app.backend_open
-        || app.setup_open
-        || app.projects.is_some()
-        || app.help
-        || app.edit.is_some()
-    {
-        return None;
-    }
+    x: u16,
+    y: u16,
+) -> Option<(Option<usize>, crossterm::event::KeyCode)> {
     let (body, _) = content_regions(regions(area)[2], app);
-    if row != body.y + 3 || column <= body.x || column >= body.right().saturating_sub(1) {
-        return None;
-    }
-    use crossterm::event::KeyCode::Char;
-    let x = column - body.x - 1;
-    let active = app.server.owns_server() || app.server.snapshot.is_some();
-    match x {
-        0..=14 => Some(Char(if app.server.owns_server() {
-            'x'
-        } else if active {
-            'D'
-        } else {
-            'r'
-        })),
-        16..=31 => Some(Char(
-            if app.server.snapshot.as_ref().is_some_and(|s| s.router) {
-                'u'
-            } else if active {
-                '1'
-            } else {
-                's'
-            },
-        )),
-        33..=46 => Some(if active {
-            crossterm::event::KeyCode::Enter
-        } else {
-            Char('B')
-        }),
-        48..=59 => Some(Char(if active { 'w' } else { 'G' })),
-        _ => None,
-    }
+    launch::hit(body, app, x, y).map(|h| (h.index, h.key))
 }
 pub fn row_at(area: Rect, app: &App, column: u16, row: u16) -> Option<usize> {
     let (body, _) = content_regions(regions(area)[2], app);
     if app.launch_menu.is_some() {
-        let index = usize::from(row.checked_sub(body.y.checked_add(4)?)?);
-        return (index < 8
-            && app.context_input.is_none()
-            && row < body.bottom().saturating_sub(1)
-            && column > body.x
-            && column < body.right().saturating_sub(1))
-        .then_some(index);
+        return launch::hit(body, app, column, row).and_then(|h| h.index);
     }
     if app.setup_open {
         let row = row.checked_sub(body.y.checked_add(2)?)?;
@@ -429,6 +385,8 @@ pub fn draw_themed(frame: &mut Frame, app: &App, theme: &Theme) {
                 .block(palette.panel(" Backend confirmation ")),
             body,
         );
+    } else if app.launch_menu.is_some() {
+        launch::draw(frame, body, app, &palette);
     } else if app.tab == 0
         && app.launch_menu.is_none()
         && !app.backend_open
@@ -500,6 +458,7 @@ pub fn draw_themed(frame: &mut Frame, app: &App, theme: &Theme) {
     if let Some(side) = aside {
         chrome::aside(frame, side, app, &palette);
     }
+    controls::draw(frame, app, &palette);
     let footer_text = if app.launch_menu.is_some() {
         "Enter action  ↑↓ choose  ←→ context presets  c custom context  Esc back"
     } else if app.launching_agent {
@@ -532,8 +491,8 @@ pub fn draw_themed(frame: &mut Frame, app: &App, theme: &Theme) {
         match app.tab {
             0 => "Enter open / double-click  j inspect  p profile  m fit  F3 search  r refresh  ? help",
             1 => "F3 focus search  s sort  Enter open/download  d download  n next page  Backspace back  ? help",
-            2 => "r resume  R run queue  x pause  t quarantine  T restore  z remove entry  ? help",
-            3 => "r refresh  D detach  s Start router  R restart  i probe  x stop  l/u load/unload  a Launch agent  A current  w web  b btop  g logs  B backends  P project",
+            2 => "Enter resume  x pause  ? help",
+            3 => "Enter agent  P project  g logs  ? help",
             _ => "↑↓ select  Enter edit  T theme  I icons  B backends  P project  G setup  ? help  q quit",
         }
     };
@@ -550,6 +509,8 @@ pub fn draw_themed(frame: &mut Frame, app: &App, theme: &Theme) {
         && !app.searching
         && !app.discovery.editing
         && !app.details
+        && app.launch_menu.is_none()
+        && !app.launching_agent
     {
         match (app.backend_open, app.tab) {
             (true, _) => "↑↓ select  i install  Enter use  v version  ? help",
@@ -602,6 +563,69 @@ mod tests {
         let (main, side) = content_regions(regions(Rect::new(0, 0, 80, 24))[2], &app);
         assert_eq!(main.width, 80);
         assert!(side.is_none());
+    }
+    #[test]
+    fn launch_layout_keeps_focused_row_visible_and_steppers_clickable() {
+        use crate::models::{gguf::Metadata, group::Group, Candidate};
+        use crossterm::event::KeyCode;
+        let group = Group {
+            name: "Fixture Qwen Q4".into(),
+            files: vec![Candidate {
+                path: "/models/fixture.gguf".into(),
+                bytes: 1024,
+                version: 3,
+                metadata: Metadata::default(),
+            }],
+            expected: 1,
+            complete: true,
+            projector: false,
+        };
+        let mut app = App {
+            launch_menu: Some(group),
+            ..Default::default()
+        };
+        for (w, h) in [(1, 1), (20, 5), (50, 14), (80, 24), (140, 36)] {
+            for index in 0..8 {
+                app.launch_cursor = index;
+                let mut terminal = Terminal::new(TestBackend::new(w, h)).unwrap();
+                terminal.draw(|f| draw(f, &app)).unwrap();
+                let area = Rect::new(0, 0, w, h);
+                if w >= 50 && h >= 14 {
+                    let hits = (0..h)
+                        .flat_map(|y| (0..w).map(move |x| (x, y)))
+                        .filter_map(|(x, y)| launch_hit(area, &app, x, y))
+                        .collect::<Vec<_>>();
+                    assert!(hits.contains(&(Some(index), KeyCode::Enter)));
+                    if (3..=5).contains(&index) {
+                        assert!(hits.contains(&(Some(index), KeyCode::Left)));
+                        assert!(hits.contains(&(Some(index), KeyCode::Right)));
+                    }
+                }
+            }
+        }
+        app.context_input = Some("65536".into());
+        let area = Rect::new(0, 0, 80, 24);
+        assert!((0..24).all(|y| (0..80).all(|x| launch_hit(area, &app, x, y).is_none())));
+    }
+    #[test]
+    fn visible_controls_share_pointer_geometry() {
+        let app = App::default();
+        let area = Rect::new(0, 0, 80, 24);
+        let body = regions(area)[2];
+        assert_eq!(
+            controls::hit(area, &app, 2, body.y + 1),
+            Some(controls::Command::Key(crossterm::event::KeyCode::Char('2')))
+        );
+        assert_eq!(controls::hit(area, &app, 0, body.y + 1), None);
+        let mut app = app;
+        app.tab = 1;
+        app.discovery.editing = true;
+        assert_eq!(
+            controls::hit(area, &app, 2, body.y + 3),
+            Some(controls::Command::SubmitSearch)
+        );
+        app.help = true;
+        assert_eq!(controls::hit(area, &app, 2, body.y + 3), None);
     }
     #[test]
     fn mouse_hit_testing() {

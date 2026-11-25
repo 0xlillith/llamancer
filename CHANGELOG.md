@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Shared clickable action bars for Library, Discover, Downloads and Server; responsive launch panel with context and thinking steppers, plus double-click settings editing.
+
 - Opt-in local tool-call preflight (Responses SSE for OMP), exact argument checks and explicit failure confirmation.
 - Persistent OMP thinking preference and an explicitly selected revision-specific model-card sampler preset.
 
