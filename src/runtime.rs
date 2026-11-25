@@ -377,6 +377,15 @@ impl Runtime {
                             .into();
                     return Ok(());
                 }
+                KeyCode::Char('c') => {
+                    let job = Job::start(|cancel| {
+                        Ok(BackendResult::Message(backends::discovery::check(&cancel)?))
+                    })?;
+                    self.backend = Some((job, Arc::new(AtomicU64::new(0)), 0));
+                    self.app.backend_busy = true;
+                    self.app.backend_status = "Checking upstream releases…".into();
+                    return Ok(());
+                }
                 KeyCode::Char('p') => 'p',
                 KeyCode::Enter => 's',
                 _ => return Ok(()),
