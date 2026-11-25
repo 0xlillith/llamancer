@@ -98,6 +98,9 @@ def build(args):
                      "-DGGML_VULKAN=" + ("ON" if args.kind == "vulkan" else "OFF"),
                      "-DGGML_HIP=" + ("ON" if args.kind == "rocm" else "OFF"),
                      "-DGGML_CUDA=OFF"]
+            if args.vulkan_include:
+                flags += ["-DVulkan_INCLUDE_DIR=" + str(args.vulkan_include),
+                          "-DCMAKE_PREFIX_PATH=" + str(args.vulkan_include.parent)]
             if args.kind == "rocm":
                 rocm = Path("/opt/rocm")
                 compiler = rocm / "llvm/bin/clang++"
@@ -142,6 +145,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("kind", choices=["cpu", "vulkan", "rocm"])
     parser.add_argument("--gpu-target", help="Explicit AMD ISA, e.g. gfx1201, for ROCm")
+    parser.add_argument("--vulkan-include", type=Path, help="Explicit local Vulkan SDK header directory (containing vulkan/vulkan.h)")
     parser.add_argument("--jobs", type=int, default=min(os.cpu_count() or 1, 8))
     args = parser.parse_args()
     if not 1 <= args.jobs <= 32:
@@ -151,6 +155,12 @@ def main():
             parser.error("ROCm requires an explicit valid --gpu-target")
     elif args.gpu_target:
         parser.error("--gpu-target is only for ROCm")
+    if args.vulkan_include is not None:
+        if args.kind != "vulkan":
+            parser.error("--vulkan-include is only for Vulkan")
+        args.vulkan_include = args.vulkan_include.resolve()
+        if not (args.vulkan_include / "vulkan/vulkan.h").is_file() or not (args.vulkan_include / "vulkan/vulkan_core.h").is_file():
+            parser.error("Vulkan include directory must contain vulkan/vulkan.h and vulkan/vulkan_core.h")
     for program in ("git", "cmake", "ninja"):
         if not shutil.which(program):
             parser.error(f"Missing build prerequisite: {program}")
