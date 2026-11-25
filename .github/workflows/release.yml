@@ -1,0 +1,49 @@
+name: Release builds
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Linux release (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-24.04
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 25
+    env:
+      CARGO_TERM_COLOR: always
+      ARCH: ${{ matrix.arch }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --locked --all-targets
+      - run: cargo build --locked --release
+      - name: Package binary and checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          package="llamancer-linux-${ARCH}"
+          mkdir -p "dist/${package}"
+          install -m 755 target/release/llamancer "dist/${package}/llamancer"
+          cp LICENSE README.md "dist/${package}/"
+          cd dist
+          tar -czf "${package}.tar.gz" "${package}"
+          sha256sum "${package}.tar.gz" > "${package}.tar.gz.sha256"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: llamancer-linux-${{ matrix.arch }}
+          path: |
+            dist/*.tar.gz
+            dist/*.sha256
+          if-no-files-found: error
