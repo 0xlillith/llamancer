@@ -2,13 +2,15 @@
 
 Official binary archives remain the recommended Backend Manager path. For users who want host-native compilation, the repository includes an explicit helper targeting the reviewed llama.cpp b12726 source commit 81ff0cab06cf97b445c647d278594c7f97b39740.
 
-Requirements: Python 3.11+, Git, CMake, Ninja, C/C++ compiler, disk space and appropriate system GPU development packages. Vulkan requires development headers and a shader compiler; ROCm requires the HIP development toolchain at /opt/rocm and an explicit ISA target. No packages, drivers, services or PATH entries are installed or modified.
+Requirements: Python 3.11+, Git, CMake, Ninja, C/C++ compiler, disk space and appropriate system GPU development packages. Vulkan requires Vulkan and SPIR-V development headers and a shader compiler; ROCm requires the HIP development toolchain at /opt/rocm and an explicit ISA target. No packages, drivers, services or PATH entries are installed or modified.
 
 Run from the repository:
 
 ```sh
 python3 scripts/build-backend.py cpu --jobs 8
 python3 scripts/build-backend.py vulkan --jobs 8
+# Optional: headers from a trusted SDK prefix, including SPIRV-Headers CMake metadata
+python3 scripts/build-backend.py vulkan --vulkan-include /absolute/sdk/usr/include --jobs 8
 python3 scripts/build-backend.py rocm --gpu-target gfx1201 --jobs 8
 ```
 
@@ -18,6 +20,6 @@ On success the helper prints the absolute executable path. Select it in Settings
 
 ## Andromeda verification
 
-CachyOS, Ryzen 9 9950X3D, AMD Radeon RX 9070 XT, ROCm 10.1. Actual pinned CPU and gfx1201 ROCm builds completed from clean staging using 16 build jobs. Both ran standalone after the build directories were deleted, and both passed the production-controller authenticated single-model/router generation and clean shutdown test using the pinned SmolLM2-135M fixture at context 2048. CPU used zero GPU layers; ROCm requested eight layers. ROCm enumerated ROCm0 (discrete RX 9070 XT) and ROCm1 (integrated GPU). Vulkan source compilation remains untested on this host because the development headers are missing; the official managed Vulkan archive is separately verified.
+CachyOS, Ryzen 9 9950X3D, AMD Radeon RX 9070 XT, ROCm 10.1. Actual pinned CPU and gfx1201 ROCm builds completed from clean staging using 16 build jobs. Both ran standalone after the build directories were deleted, and both passed the production-controller authenticated single-model/router generation and clean shutdown test using the pinned SmolLM2-135M fixture at context 2048. CPU used zero GPU layers; ROCm requested eight layers. ROCm enumerated ROCm0 (discrete RX 9070 XT) and ROCm1 (integrated GPU). Vulkan source compilation also completed using checksum-verified Vulkan and SPIR-V header packages extracted to a private SDK prefix, without installing system packages. The standalone executable passed authenticated single-model/router generation on Vulkan0 with eight GPU layers and context 2048. The official managed Vulkan archive is separately verified.
 
 These short-prompt tests validate the build and inference path, not peak throughput, every upstream architecture, or cross-host reproducibility.
