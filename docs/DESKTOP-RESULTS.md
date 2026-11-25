@@ -23,7 +23,7 @@ Independent verbose backend log checks confirmed actual GPU offload. Model, KV a
 - Kitty 0.51.1: actual graphical tab and separate OS-window launch of a custom test agent passed, with the expected project cwd, endpoint and model. Tested in a disposable instance with private socket-only remote control, not by changing normal Kitty configuration. This does not establish interactive OMP/Pi graphical compatibility.
 - Temporary real systemd user unit: start, restart, stop, port release passed. No normal service was installed or enabled.
 
-## Remaining checks
+## Remaining checks at the initial baseline (historical)
 
 Larger and additional architectures, GPU vision, multi-context memory measurements, independent real-model coding-tool selection, desktop Pi availability, ordinary interactive UI and agent sessions, authorized private/gated repository fixture, native package installation and final release review. No stable release implied.
 
@@ -47,9 +47,9 @@ Fixtures:
 
 To reproduce, verify the pinned files and use the existing desktop_live harness with each file, Vulkan0, eight GPU layers and each context. Separately inspect verbose llama-server startup logs for the actual per-device model, KV and compute buffers. These fixture downloads and logs are not bundled in releases.
 
-## Current backend status
+## Backend status after initial managed-archive checks
 
-Managed official b12721 CPU and Vulkan and b12726 Vulkan passed real single/router inference. Official ROCm runtime validation now passed after installing the compatible system libraries; see the follow-up below. The graphical custom-agent launch was verified before the user removed the old agents; interactive OMP/Pi and real tool use remain separate acceptance tests.
+Managed official b12721 CPU and Vulkan and b12726 Vulkan passed real single/router inference. Official ROCm runtime validation now passed after installing the compatible system libraries; see the follow-up below. The initial graphical custom-agent launch predates the later interactive OMP/Pi and real tool-use evidence below.
 
 ## Managed ROCm and gated Hub acceptance
 
@@ -73,16 +73,20 @@ OMP 19.2.0 and isolated Pi 1.6.0 (Node 22.23.2) passed authenticated streaming, 
 
 The same checksum-pinned SmolVLM-256M and projector used by CPU CI passed actual single-model and router image inference on both Vulkan0 and ROCm0, using official managed b12726, context 4096 and 99 requested GPU layers. All four runs returned "The image is red." See branch test/desktop-gpu-vision for the reproducible opt-in GPU test. Exact vision-tensor placement is not independently measured.
 
-The pinned source helper on branch feature/pinned-source-build fetched official commit 81ff0cab06cf97b445c647d278594c7f97b39740 and built native CPU and gfx1201 ROCm versions on Andromeda. Both passed authenticated single-model/router inference after removal of the intermediate build tree. Vulkan source compilation is untested because the development headers are absent. Managed archive Vulkan inference remains verified.
+The pinned source helper on branch feature/pinned-source-build fetched official commit 81ff0cab06cf97b445c647d278594c7f97b39740 and built native CPU and gfx1201 ROCm versions on Andromeda. Both passed authenticated single-model/router inference after removal of the intermediate build tree. At this stage Vulkan source compilation was blocked by missing development headers; subsequent [PR #58](https://github.com/0xlillith/llamancer/pull/58) verified a private SDK-prefix build and authenticated single/router inference with Vulkan0, without sudo or global header installation. Managed archive Vulkan inference also remains verified.
 
 Read-only upstream release discovery on branch feature/backend-update-check identified b12728 prerelease CPU/Vulkan/ROCm assets with published SHA-256 digests; no unreviewed archive was installed.
 
 Manual dependency inventory review: 174/177 external packages in the conservative all-target locked graph had discovered source notices. Both Linux target graphs contain 159 packages including Llamancer, and every external package in each has a discovered notice. The three missing all-target notices (r-efi 6.0.0, winapi-i686-pc-windows-gnu 0.4.0 and winapi-x86_64-pc-windows-gnu 0.4.0) are outside both Linux graphs. Ring's original Apache/ISC/BoringSSL and other notices, Unicode data notices and CDLA-Permissive webpki-roots texts are retained by the existing release collector. This is inventory evidence, not final legal certification or a comprehensive security audit.
 
-Agent follow-up: Pi passed one constrained-system-prompt read-tool exact-marker test, but a later randomized fixture failed. Both agents independently executed the tool and transported the actual result. Default and constrained end-to-end fidelity remain unreliable; do not mark the release gate complete.
+Agent follow-up: Pi passed one constrained-system-prompt read-tool exact-marker test, but a later randomized fixture failed. Both agents independently executed the tool and transported the actual result. These exact-marker trials were unreliable. Later [PR #53](https://github.com/0xlillith/llamancer/pull/53) passed two independent randomized seven-word read-tool trials per agent, requiring the actual tool result and exact answer; arbitrary model/tool fidelity remains unguaranteed.
 
 ## Existing agent configuration and ordinary exit
 
 A separate actual Kitty instance (KDE Wayland, socket-only remote control) launched OMP 19.2.0 and Pi 1.6.0 from the foreground A action of Llamancer. Each used an isolated home with a pre-existing synthetic model default that differed from the selected local model, plus an unrelated preference. The real agent composer showed the selected local model; the stored preference survived, the normal quit path returned to the TUI, and shutdown released the router port. The initial OMP Ctrl-D and slash-quit trials failed because the first-run provider/model wizard intercepted input; OMP's documented bare `quit` in an empty session passed after onboarding was skipped. The fixture disables OMP's onboarding via its own `startup.setupWizard` setting. Pi Ctrl-D passed. No personal settings or real account credentials were read or changed. Agents may update their own stored defaults during normal operation; this is distinct from Llamancer rewriting their configuration.
 
 Reproduce with `python3 tests/agent_kitty_live.py target/release/llamancer /path/to/llama-server /path/to/small.gguf omp` (or `pi`). Requires a real graphical Kitty session and installed agent. Prior real authenticated read-tool tests used Qwen3 4B and randomized ordinary words; arbitrary-model answer fidelity is not guaranteed.
+
+## Authenticated profile isolation and terminal shutdown
+
+[PR #60](https://github.com/0xlillith/llamancer/pull/60) verified owned server cleanup when a real controlling PTY closes and on explicit SIGTERM/SIGHUP. [PR #61](https://github.com/0xlillith/llamancer/pull/61) verified an authenticated OMP graphical session with a stale synthetic stored provider and broker: a real ROCm Qwen3-4B response, normal exit, unchanged stored provider, and no remaining scoped daemon. The private profile is not a sandbox for agent or project code. No personal configuration compatibility is claimed.
