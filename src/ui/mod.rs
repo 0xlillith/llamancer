@@ -223,7 +223,7 @@ pub fn draw_themed(frame: &mut Frame, app: &App, theme: &Theme) {
     let footer_text = if app.backend_open && app.backend_confirmation.is_some() {
         "y confirm / n cancel / Esc back"
     } else if app.backend_open && app.notice.is_empty() {
-        "↑↓ select  i install  Enter use  v version  p probe  b benchmark  d remove  x cancel  Esc back"
+        "↑↓ select  i install  Enter use  v version  c check  p probe  b benchmark  d remove  x cancel  Esc back"
     } else if app.notice.is_empty() {
         match app.tab {
             0 => "r scan  / search  f favorite  s sort  p profile  l load  i invalid  h hide  t quarantine  ? help",
@@ -238,7 +238,7 @@ pub fn draw_themed(frame: &mut Frame, app: &App, theme: &Theme) {
     let footer_text =
         if footer.width < 60 && app.notice.is_empty() && app.backend_confirmation.is_none() {
             match (app.backend_open, app.tab) {
-                (true, _) => "↑↓ i install Enter use v ver p probe d rm b bench",
+                (true, _) => "↑↓ i install Enter use v ver c check p probe d rm",
                 (false, 0) => "r scan / find p profile Enter inspect ? help",
                 (false, 1) => "/ find Enter open d queue ? help",
                 (false, 2) => "r run x pause t move T restore ? help",
