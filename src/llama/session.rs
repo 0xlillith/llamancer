@@ -26,6 +26,7 @@ pub struct Controller {
     owned: Option<Owned>,
     pending: Option<Job<Outcome>>,
     last_refresh: Option<Instant>,
+    startup_deadline: Option<Instant>,
     attached: bool,
     failures: u32,
     selected_id: Option<String>,
@@ -212,6 +213,7 @@ impl Controller {
             }
             Ok(Outcome::Started(server, version))
         })?;
+        self.startup_deadline = Some(Instant::now() + Duration::from_secs(90));
         self.single = launch_mode;
         self.selected_id = None;
         self.attached = false;
@@ -275,6 +277,7 @@ impl Controller {
             self.attached = false;
             self.snapshot = None;
             self.selected_id = None;
+            self.startup_deadline = None;
             self.status = "Managed server stopped".into();
             Ok(())
         } else {
@@ -285,6 +288,7 @@ impl Controller {
     }
     /// Finish a pending bounded operation and release only the process we own.
     pub fn shutdown(&mut self) -> io::Result<()> {
+        self.startup_deadline = None;
         if let Some(job) = self.pending.take() {
             job.cancel();
             job.finish();
@@ -301,6 +305,7 @@ impl Controller {
             self.logs = server.logs();
             if !server.running().unwrap_or(false) {
                 self.owned = None;
+                self.startup_deadline = None;
                 self.attached = false;
                 self.snapshot = None;
                 self.selected_id = None;
@@ -310,6 +315,28 @@ impl Controller {
                     self.discard_pending = true;
                 }
             }
+        }
+
+        // A healthy endpoint must be observed before the startup deadline.
+        // Cancel the worker and discard any late result (including a newly
+        // spawned Owned server, whose Drop implementation stops it).
+        if self
+            .startup_deadline
+            .is_some_and(|deadline| Instant::now() >= deadline)
+        {
+            self.startup_deadline = None;
+            self.attached = false;
+            self.snapshot = None;
+            self.selected_id = None;
+            if let Some(job) = &self.pending {
+                job.cancel();
+                self.discard_pending = true;
+            }
+            if let Some(mut server) = self.owned.take() {
+                let _ = server.stop();
+                self.logs = server.logs();
+            }
+            self.status = "Managed server startup timed out (90 seconds); inspect logs".into();
         }
 
         if let Some(job) = self.pending.as_mut() {
@@ -337,6 +364,7 @@ impl Controller {
                                 self.cursor.min(snapshot.models.len().saturating_sub(1))
                             });
                         self.failures = 0;
+                        self.startup_deadline = None;
                         self.snapshot = Some(snapshot);
                         self.status = "Connected".into();
                     }
@@ -352,6 +380,9 @@ impl Controller {
                         let _ = self.refresh(config);
                     }
                     Err(error) => {
+                        if !self.owns_server() && !self.attached {
+                            self.startup_deadline = None;
+                        }
                         self.failures = self.failures.saturating_add(1);
                         self.selected_id = self
                             .selected()
@@ -428,6 +459,37 @@ mod tests {
             assert!(Instant::now() < deadline, "{}", controller.status);
             std::thread::sleep(Duration::from_millis(5));
         }
+    }
+    #[test]
+    fn startup_deadline_stops_owned_server_and_discards_late_refresh() {
+        let config = Config::default();
+        let server = Owned::start(
+            "/bin/sh",
+            &["-c".into(), "while :; do sleep 1; done".into()],
+        )
+        .unwrap();
+        let mut controller = Controller {
+            owned: Some(server),
+            attached: true,
+            startup_deadline: Some(Instant::now() - Duration::from_secs(1)),
+            ..Controller::default()
+        };
+        controller
+            .submit(|cancel| {
+                while !cancel.load(Ordering::Acquire) {
+                    std::thread::yield_now();
+                }
+                Ok(Outcome::Snapshot(Snapshot {
+                    router: true,
+                    models: Vec::new(),
+                }))
+            })
+            .unwrap();
+        controller.tick(&config);
+        wait(&mut controller, &config);
+        assert!(!controller.polling());
+        assert!(controller.snapshot.is_none());
+        assert!(controller.status.contains("startup timed out"));
     }
     #[test]
     fn external_failure_clears_snapshot_and_reconnect_preserves_selection() {

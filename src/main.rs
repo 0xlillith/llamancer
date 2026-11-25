@@ -14,13 +14,34 @@ use llamancer::{
 use std::{
     io,
     process::{Command, Stdio},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
     time::Duration,
 };
 
-fn run_child(terminal: &mut ratatui::DefaultTerminal, mut command: Command) -> io::Result<()> {
+fn run_child(
+    terminal: &mut ratatui::DefaultTerminal,
+    mut command: Command,
+    stop: &AtomicBool,
+) -> io::Result<()> {
     execute!(io::stdout(), DisableMouseCapture)?;
     ratatui::restore();
-    let status = command.status();
+    let status = (|| {
+        let mut child = command.spawn()?;
+        loop {
+            if let Some(status) = child.try_wait()? {
+                return Ok(status);
+            }
+            if stop.load(Ordering::Acquire) {
+                // Only signal the child we spawned, not the shell's foreground group.
+                let _ = child.kill();
+                return child.wait();
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    })();
     // Always restore the TUI before reporting a failed spawn or exit.
     terminal::enable_raw_mode()?;
     execute!(io::stdout(), EnterAlternateScreen, EnableMouseCapture)?;
@@ -146,6 +167,8 @@ fn main() -> io::Result<()> {
         }
     }
 
+    let stop = Arc::new(AtomicBool::new(false));
+    signal_hook::flag::register(libc::SIGTERM, Arc::clone(&stop))?;
     let mut runtime = Runtime::new()?;
     if !runtime.app.config.scan_roots().is_empty() {
         runtime.scan()?;
@@ -153,10 +176,26 @@ fn main() -> io::Result<()> {
     let mut terminal = ratatui::init();
     let result = (|| -> io::Result<()> {
         execute!(io::stdout(), EnableMouseCapture)?;
-        while !runtime.app.quit {
+        while !runtime.app.quit && !stop.load(Ordering::Acquire) {
             runtime.tick();
             terminal.draw(|frame| ui::draw_themed(frame, &runtime.app, &runtime.theme))?;
-            if runtime.active() && !event::poll(Duration::from_millis(150))? {
+            // When idle, wait in bounded polls without repainting repeatedly.
+            // SIGTERM can now wake an otherwise idle TUI.
+            loop {
+                if stop.load(Ordering::Acquire) {
+                    return Ok(());
+                }
+                if event::poll(Duration::from_millis(150))? {
+                    break;
+                }
+                if runtime.active() {
+                    break;
+                }
+            }
+            if stop.load(Ordering::Acquire) {
+                return Ok(());
+            }
+            if !event::poll(Duration::ZERO)? {
                 continue;
             }
             match event::read()? {
@@ -166,7 +205,7 @@ fn main() -> io::Result<()> {
                         Ok(Effect::Launch(plan, mode)) => {
                             runtime.app.notice = match plan
                                 .terminal_command(mode)
-                                .and_then(|command| run_child(&mut terminal, command))
+                                .and_then(|command| run_child(&mut terminal, command, &stop))
                             {
                                 Ok(()) => {
                                     if mode == llamancer::agents::TerminalMode::Current {
@@ -186,7 +225,7 @@ fn main() -> io::Result<()> {
                         }
                         Ok(Effect::Monitor) => {
                             runtime.app.notice =
-                                match run_child(&mut terminal, Command::new("btop")) {
+                                match run_child(&mut terminal, Command::new("btop"), &stop) {
                                     Ok(()) => "Monitor closed".into(),
                                     Err(e) => e.to_string(),
                                 };

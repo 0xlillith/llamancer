@@ -167,8 +167,9 @@ impl Runtime {
             job.cancel();
             job.finish();
         }
-        let downloads = self.app.downloads.as_mut().map_or(Ok(()), |d| d.shutdown());
         let result = self.app.server.shutdown();
+        self.app.discovery.shutdown();
+        let downloads = self.app.downloads.as_mut().map_or(Ok(()), |d| d.shutdown());
         let _ = self
             .diagnostics
             .record(crate::diagnostics::Event::Shutdown, None);
