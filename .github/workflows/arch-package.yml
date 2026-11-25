@@ -38,7 +38,17 @@ jobs:
           sed -i 's|llamancer::git+https://github.com/0xlillith/llamancer.git|llamancer::git+file:///home/builder/source#commit='"$(git rev-parse HEAD)"'|' /home/builder/pkg/PKGBUILD
           chown -R builder:builder /home/builder
           runuser -u builder -- bash -c 'cd /home/builder/pkg && makepkg --noconfirm --syncdeps'
-          pacman -U --noconfirm /home/builder/pkg/llamancer-git-*.pkg.tar.zst
+          # Minimal Arch container images may suppress documentation extraction.
+          # Test the actual package contents, then install with documentation
+          # enabled using a temporary CI-only config (not a host policy change).
+          package="$(find /home/builder/pkg -maxdepth 1 -name 'llamancer-git-*.pkg.tar.zst' ! -name 'llamancer-git-debug-*' -print -quit)"
+          test -n "$package"
+          unpack="$(mktemp -d)"
+          trap 'rm -rf -- "$unpack"' EXIT
+          bsdtar -xf "$package" -C "$unpack"
+          python tests/package_documentation.py "$unpack/usr/share/doc/llamancer-git"
+          sed '/^[[:space:]]*NoExtract[[:space:]]*=/d' /etc/pacman.conf > "$unpack/pacman.conf"
+          pacman --config "$unpack/pacman.conf" -U --noconfirm /home/builder/pkg/llamancer-git-*.pkg.tar.zst
           llamancer --version
           test -x /usr/bin/llamancer
           test -f /usr/share/licenses/llamancer-git/LICENSE
