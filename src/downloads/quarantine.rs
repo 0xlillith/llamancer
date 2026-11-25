@@ -4,11 +4,14 @@ use super::{cancelled, same_inode, verify_file, Destination, Item, Receipt, Stat
 use std::{
     ffi::CString,
     fs::{self, File, OpenOptions},
-    io,
+    io::{self, BufRead, BufReader},
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener},
     os::{
         fd::AsRawFd,
-        unix::fs::{MetadataExt, OpenOptionsExt},
+        unix::{
+            ffi::OsStrExt,
+            fs::{MetadataExt, OpenOptionsExt},
+        },
     },
     path::{Path, PathBuf},
     sync::{
@@ -84,6 +87,107 @@ fn idle_endpoint(endpoint: &str) -> io::Result<Vec<TcpListener>> {
             })
         })
         .collect()
+}
+/// Leases alone do not consistently reject existing mappings on all filesystems.
+/// Inspect visible same-user procfs mappings as an additional fail-closed guard.
+fn reject_mappings(meta: &fs::Metadata, path: &Path) -> io::Result<()> {
+    // SAFETY: geteuid has no arguments.
+    let uid = unsafe { libc::geteuid() };
+    if meta.uid() != uid || meta.mode() & 0o077 != 0 {
+        return Err(io::Error::other(
+            "Quarantine requires an owner-only managed file",
+        ));
+    }
+    let major = libc::major(meta.dev());
+    let minor = libc::minor(meta.dev());
+    let path = path.as_os_str().as_bytes();
+    let mut saw_self = false;
+    for entry in fs::read_dir("/proc")? {
+        let entry = match entry {
+            Ok(e) => e,
+            Err(e) if gone(&e) => continue,
+            Err(e) => return Err(e),
+        };
+        let name = entry.file_name();
+        let Some(pid) = name.to_str().and_then(|s| s.parse::<u32>().ok()) else {
+            continue;
+        };
+        let status = match fs::read_to_string(entry.path().join("status")) {
+            Ok(s) => s,
+            Err(e) if gone(&e) => continue,
+            Err(e) => return Err(e),
+        };
+        let user = status
+            .lines()
+            .find_map(|line| line.strip_prefix("Uid:"))
+            .ok_or_else(|| io::Error::other("Cannot inspect process ownership"))?;
+        if !user
+            .split_whitespace()
+            .any(|v| v.parse::<u32>().ok() == Some(uid))
+        {
+            continue;
+        }
+        let maps = match File::open(entry.path().join("maps")) {
+            Ok(f) => f,
+            Err(e) if gone(&e) => continue,
+            Err(_) => {
+                return Err(io::Error::other(
+                    "Cannot inspect same-user mappings; stop inference and retry",
+                ))
+            }
+        };
+        if pid == std::process::id() {
+            saw_self = true;
+        }
+        for line in BufReader::new(maps).split(b'\n') {
+            let line = match line {
+                Ok(l) => l,
+                Err(e) if gone(&e) => break,
+                Err(e) => return Err(e),
+            };
+            if mapping_matches(&line, major, minor, meta.ino(), path) {
+                return Err(io::Error::other("Managed model is memory-mapped"));
+            }
+        }
+    }
+    if !saw_self {
+        return Err(io::Error::other("Cannot verify local process mappings"));
+    }
+    Ok(())
+}
+fn gone(error: &io::Error) -> bool {
+    error.kind() == io::ErrorKind::NotFound || error.raw_os_error() == Some(libc::ESRCH)
+}
+fn mapping_matches(line: &[u8], major: u32, minor: u32, inode: u64, path: &[u8]) -> bool {
+    let mut rest = line;
+    let mut fields = [&[][..]; 5];
+    for field in &mut fields {
+        rest = rest.trim_ascii_start();
+        let end = rest
+            .iter()
+            .position(|b| b.is_ascii_whitespace())
+            .unwrap_or(rest.len());
+        *field = &rest[..end];
+        rest = &rest[end..];
+    }
+    let device = std::str::from_utf8(fields[3])
+        .ok()
+        .and_then(|s| s.split_once(':'))
+        .and_then(|(a, b)| {
+            Some((
+                u32::from_str_radix(a, 16).ok()?,
+                u32::from_str_radix(b, 16).ok()?,
+            ))
+        });
+    let mapped_inode = std::str::from_utf8(fields[4])
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok());
+    let mapped_path = rest.trim_ascii_start();
+    // Overlay and other layered filesystems may expose a different device/inode in
+    // procfs; compare the exact visible pathname as an independent conservative check.
+    (device == Some((major, minor)) && mapped_inode == Some(inode))
+        || mapped_path == path
+        || mapped_path.strip_suffix(b" (deleted)") == Some(path)
 }
 struct BreakSignal {
     flag: Arc<AtomicBool>,
@@ -216,6 +320,7 @@ pub(super) fn move_items(
     let mut moves = Vec::new();
     for (destination, source, target, file, before, receipt) in prepared {
         cancelled(cancel)?;
+        reject_mappings(&before, &destination.visible.join(&source))?;
         let lease = Lease::acquire(file)?;
         let after = lease.0.metadata()?;
         if !receipt.matches(&after)
@@ -224,6 +329,7 @@ pub(super) fn move_items(
         {
             return Err(io::Error::other("Managed file changed during verification"));
         }
+        reject_mappings(&after, &destination.visible.join(&source))?;
         moves.push(Move {
             destination,
             source,
@@ -263,6 +369,8 @@ mod tests {
         };
         let path = super::super::destination(&item).unwrap();
         fs::write(&path, b"abcdef").unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
         item.receipt = Some(Receipt::from_metadata(&fs::metadata(&path).unwrap()));
         (item, path)
     }
@@ -291,6 +399,30 @@ mod tests {
         assert!(move_items(vec![item], false, &endpoint(), &AtomicBool::new(false)).is_err());
         assert_eq!(fs::read(path).unwrap(), b"abcdef");
         assert_eq!(fs::read(trash).unwrap(), b"external");
+    }
+    #[test]
+    fn recognizes_procfs_identity_and_layered_path() {
+        assert!(mapping_matches(
+            b"7f-8f r--p 00000000 08:01 42 /some/other/path",
+            8,
+            1,
+            42,
+            b"/model.gguf"
+        ));
+        assert!(mapping_matches(
+            b"7f-8f r--p 00000000 00:99 11 /model with spaces.gguf",
+            8,
+            1,
+            42,
+            b"/model with spaces.gguf"
+        ));
+        assert!(!mapping_matches(
+            b"7f-8f r--p 00000000 08:01 43 /other.gguf",
+            8,
+            1,
+            42,
+            b"/model.gguf"
+        ));
     }
     #[test]
     fn mapped_file_is_not_moved() {
