@@ -40,6 +40,7 @@ jobs:
           llamancer --version
           test -x /usr/bin/llamancer
           test -f /usr/share/licenses/llamancer-git/LICENSE
+          test -s /usr/share/licenses/llamancer-git/third-party-notices/inventory.json
           test -f /usr/share/icons/hicolor/scalable/apps/llamancer.svg
           grep -Fx 'ExecStart=/usr/bin/llamancer serve' /usr/lib/systemd/user/llamancer.service
           python tests/terminal_smoke.py /usr/bin/llamancer
