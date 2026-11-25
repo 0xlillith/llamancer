@@ -2,7 +2,9 @@
 
 The CI workflow runs Rust formatting, all offline tests, strict Clippy, release builds and PTY restoration on native Linux x86_64 and aarch64 runners.
 
-Each CI job also uploads a benchmark JSON with executable size, three fresh empty-library launches, median time to first rendered header, idle RSS and process CPU ticks over a two-second interval. These are host-dependent observations, not a GPU or active-server benchmark. Release targets remain startup below 100 ms, idle RSS below 30 MiB, near-zero idle CPU, and a 5–15 MB executable. Investigate deviations rather than silently removing the targets.
+The minimum supported Rust version is 1.88 and is checked separately. The terminal stack uses only its Crossterm and layout-cache features.
+
+Each native release-build CI job also uploads a benchmark JSON with executable size, three fresh empty-library launches, median time to first rendered header, idle RSS and process CPU ticks over a two-second interval. These are host-dependent observations, not a GPU or active-server benchmark. Release targets remain startup below 100 ms, idle RSS below 30 MiB, near-zero idle CPU, and a 5–15 MB executable. Investigate deviations rather than silently removing the targets.
 
 Run the measurements locally:
 
