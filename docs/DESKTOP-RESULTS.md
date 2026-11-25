@@ -90,3 +90,28 @@ Reproduce with `python3 tests/agent_kitty_live.py target/release/llamancer /path
 ## Authenticated profile isolation and terminal shutdown
 
 [PR #60](https://github.com/0xlillith/llamancer/pull/60) verified owned server cleanup when a real controlling PTY closes and on explicit SIGTERM/SIGHUP. [PR #61](https://github.com/0xlillith/llamancer/pull/61) verified an authenticated OMP graphical session with a stale synthetic stored provider and broker: a real ROCm Qwen3-4B response, normal exit, unchanged stored provider, and no remaining scoped daemon. The private profile is not a sandbox for agent or project code. No personal configuration compatibility is claimed.
+
+
+## Workspace and backend expansion
+
+The graphical Kitty fixture on Andromeda validated the new workspace selector (active synthetic project persisted), theme cycling across all eight palettes, guided setup, real Vulkan device-memory advisory and the same-model CPU/Vulkan/ROCm benchmark comparison. The original user configuration was not changed.
+
+The Qwen3-4B-Instruct-2507 Q4_K_M fixture (2,497,280,736 bytes) was tested at context 16,384, 99 requested GPU layers and two CPU threads, with official b12726. Four authenticated single-model/router scenarios generated output and released the port on shutdown. Conventional KV estimate: 2,415,919,104 bytes (2.25 GiB). Global dedicated GPU usage after model load was approximately 5.67 GiB on Vulkan and 5.95 GiB on ROCm, including other processes and runtime allocations. These observations do not prove per-process allocation or a universal capacity threshold.
+
+| Backend | Single generation tok/s | Router generation tok/s |
+| --- | ---: | ---: |
+| Vulkan0 | 175.83 | 175.28 |
+| ROCm0 | 139.32 | 138.25 |
+
+The fixed quick benchmark used the 91,893,088-byte public SmolLM2 fixture (SHA-256 bcc3af2849ad6095af57e9b5cd43775256efdc66e306acb529172f92d0c04b03), b12726, PP128/TG32, two threads and two repeats:
+
+| Backend | GPU layers | PP tok/s | TG tok/s |
+| --- | ---: | ---: | ---: |
+| CPU | 0 | 2648.64 | 437.40 |
+| Vulkan0 | 8 | 4477.31 | 430.11 |
+| ROCm0 | 8 | 5349.62 | 348.65 |
+| CUDA | — | not measured | not measured |
+
+The GUI persisted all three results under the identical model checksum. These small-model partial-offload results are not peak full-GPU comparisons.
+
+The official x86_64 CUDA 12.8 primary and runtime companion archives (814,939,138 combined bytes) installed successfully in isolated storage, passed staged version verification and reported no compatible device on AMD-only Andromeda. No driver installation, NVIDIA inference or aarch64 hardware validation is claimed. The isolated CUDA installation was removed. Broader hybrid architecture and controlled memory-pressure scenarios remain outstanding.
