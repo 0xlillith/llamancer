@@ -8,7 +8,7 @@
 
 [![CI](https://github.com/0xlillith/llamancer/actions/workflows/ci.yml/badge.svg)](https://github.com/0xlillith/llamancer/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-bd93f9.svg)](LICENSE)
-[![Status: pre-release](https://img.shields.io/badge/status-pre--release-ffb86c)](docs/STATUS.md)
+[![Beta: 0.1.0-beta.1](https://img.shields.io/badge/beta-0.1.0--beta.1-bd93f9)](https://github.com/0xlillith/llamancer/releases/tag/v0.1.0-beta.1)
 
 **A lightweight Rust TUI for llama.cpp model and inference management.**
 **OMP-first. Not OMP-only.**
@@ -19,7 +19,7 @@ Llamancer brings local GGUF model discovery, inference preferences, server contr
 
 ## Status
 
-Pre-release candidate for the first Linux beta. Native Linux x86_64 and aarch64 CI, managed CPU text/vision inference, checksum-verified public and authorized gated Hub downloads, systemd lifecycle, Arch package installation, AMD Vulkan/ROCm text and vision inference, pinned CPU/Vulkan/ROCm source builds, real OMP/Pi tool use and graphical agent exit have passed their documented acceptance tests. Authenticated OMP uses an isolated temporary profile. No general model compatibility, comprehensive security audit or stable-release certification is implied. See [verified status](docs/STATUS.md), [desktop results](docs/DESKTOP-RESULTS.md) and [release review](docs/BETA-REVIEW.md).
+First Linux beta (0.1.0-beta.1). Native Linux x86_64 and aarch64 CI, managed CPU text/vision inference, checksum-verified public and authorized gated Hub downloads, systemd lifecycle, Arch package installation, AMD Vulkan/ROCm text and vision inference, pinned CPU/Vulkan/ROCm source builds, real OMP/Pi tool use and graphical agent exit have passed their documented acceptance tests. Authenticated OMP uses an isolated temporary profile. No general model compatibility, comprehensive security audit or stable-release certification is implied. See [verified status](docs/STATUS.md), [desktop results](docs/DESKTOP-RESULTS.md) and [release review](docs/BETA-REVIEW.md).
 
 | Workspace | Current functionality |
 | --- | --- |
@@ -55,7 +55,7 @@ Keyless OMP launches use the documented LLAMA_CPP_BASE_URL runtime override; che
 
 ## Installation packages
 
-Pre-release packages are built for Linux x86_64 and aarch64. Download the matching archive and its SHA-256 file from a successful [Release builds workflow](https://github.com/0xlillith/llamancer/actions/workflows/release.yml), extract the Actions artifact ZIP first, then run:
+Beta packages are available for Linux x86_64 and aarch64 on the [GitHub release page](https://github.com/0xlillith/llamancer/releases/tag/v0.1.0-beta.1). Download the matching archive and its SHA-256 file, then run:
 
 ```sh
 # Choose x86_64 or aarch64 to match uname -m
@@ -67,9 +67,9 @@ install -m755 "llamancer-linux-${arch}/llamancer" ~/.local/bin/llamancer
 ~/.local/bin/llamancer --version
 ```
 
-Keep the extracted documentation and third-party notices. Check the workflow run commit for the source revision. Add ~/.local/bin to PATH if necessary. Archives contain Llamancer, not model weights or GPU runtimes.
+Keep the extracted documentation and third-party notices. The release tag identifies the source revision. Add ~/.local/bin to PATH if necessary. Archives contain Llamancer, not model weights or GPU runtimes.
 
-For Arch/CachyOS, download the x86_64 package from [Arch package smoke](https://github.com/0xlillith/llamancer/actions/workflows/arch-package.yml), extract the ZIP and install the matching non-debug package with `sudo pacman -U ./llamancer-git-VERSION-x86_64.pkg.tar.zst` (replace the placeholder with the actual filename). Alternatively build from the [VCS package recipe](packaging/arch/README.md). Registry publication is not yet enabled. Candidate package checksums are also generated during independent artifact verification.
+For Arch/CachyOS, download the x86_64 package and SHA256SUMS from the release page, verify with `sha256sum -c SHA256SUMS --ignore-missing`, then install the matching non-debug package with `sudo pacman -U ./llamancer-git-VERSION-x86_64.pkg.tar.zst` (replace the placeholder with the actual filename). Alternatively build from the [VCS package recipe](packaging/arch/README.md). Not yet published to AUR or crates.io.
 
 Run `llamancer doctor`, then `llamancer` and press G for guided setup. On Linux distributions without compatible system libraries, build from source instead.
 

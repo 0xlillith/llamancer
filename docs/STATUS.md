@@ -1,6 +1,6 @@
 # Development status
 
-This is a pre-release snapshot, not a production-ready claim.
+This is the first Linux beta, not a production-ready claim.
 
 | Area | Implemented and validated | Outstanding release evidence |
 | --- | --- | --- |
@@ -9,7 +9,7 @@ This is a pre-release snapshot, not a production-ready claim.
 | Inference | Managed CPU/Vulkan/ROCm; experimental CUDA archive installation; official and pinned source builds, desktop text and GPU vision, lifecycle/authentication, systemd and terminal hangup cleanup | Actual NVIDIA inference; larger model/device combinations |
 | Hub | Public and authorized gated checksum/index verification, real multi-root pause/resume, pinned directory identity, scoped credential discovery, quarantine and restore | Broader private-repository configurations |
 | Agents | Real OMP/Pi read-tool execution, graphical normal exit, configured-default precedence, scoped authenticated OMP profile/daemon, custom Kitty launch | Broader versions, arbitrary project extensions and model-specific fidelity |
-| Release | Native x86_64/aarch64, Rust 1.88, Arch packaging, checksum archives and current RustSec audit | Final combined artifact verification and beta publication |
+| Release | Native x86_64/aarch64, Rust 1.88, Arch packaging, checksum archives and current RustSec audit | Broader hardware and distribution compatibility; registry publication |
 
 ## Evidence
 
