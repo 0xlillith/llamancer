@@ -133,6 +133,8 @@ impl Runtime {
                             scan.skipped
                         );
                         self.app.invalid = scan.invalid;
+                        self.app.invalid_total = scan.invalid_total;
+                        self.app.invalid_cursor = 0;
                         self.app.candidates = self
                             .app
                             .config
@@ -560,6 +562,8 @@ impl Runtime {
                 if roots_changed {
                     self.app.candidates.clear();
                     self.app.invalid.clear();
+                    self.app.invalid_total = 0;
+                    self.app.invalid_cursor = 0;
                     self.app.details = false;
                     self.app.model_cursor = 0;
                     if let Some(job) = &self.scan {
@@ -625,8 +629,16 @@ impl Runtime {
     }
     fn library_key(&mut self, key: KeyCode) -> io::Result<()> {
         if self.app.show_invalid {
-            if matches!(key, KeyCode::Char('i') | KeyCode::Enter) {
-                self.app.show_invalid = false;
+            match key {
+                KeyCode::Char('i') | KeyCode::Enter => self.app.show_invalid = false,
+                KeyCode::Up => self.app.invalid_cursor = self.app.invalid_cursor.saturating_sub(1),
+                KeyCode::Down => {
+                    self.app.invalid_cursor =
+                        (self.app.invalid_cursor + 1).min(self.app.invalid.len().saturating_sub(1))
+                }
+                KeyCode::Home => self.app.invalid_cursor = 0,
+                KeyCode::End => self.app.invalid_cursor = self.app.invalid.len().saturating_sub(1),
+                _ => {}
             }
             return Ok(());
         }

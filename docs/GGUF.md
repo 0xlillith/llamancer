@@ -9,3 +9,5 @@ Files matching the conventional five-digit shard pattern are grouped within thei
 Tests cover synthetic malformed/truncated data, known tensor types and actual Llama/SmolVLM fixtures. Actual architecture coverage and GPU allocation remain separate tasks. Weights are approximated from on-disk bytes; KV cache estimates cover conventional supported attention architectures, exclude compute buffers, projector and allocator overhead, and are not a VRAM fit guarantee.
 
 File references preserve the snapshot filename while canonicalizing the parent directory. Hugging Face cache GGUF symlinks to content-addressed regular blobs are indexed read-only; nested directory symlinks are never traversed. Distinct snapshot paths retain independent identities. Imported cache blobs are never adopted into managed quarantine.
+
+Qwen3 attention widths must be explicit in metadata; hidden-size division alone is not sufficient. Missing or zero head widths produce no KV estimate rather than a misleading value. Invalid-file reporting counts all observed failures and retains up to 1000 navigable entries. Removing an imported reference never removes the file.

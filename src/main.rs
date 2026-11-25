@@ -204,11 +204,15 @@ fn main() -> io::Result<()> {
                         }
                     }
                 }
-                Event::Mouse(mouse) if !runtime.modal() => {
+                Event::Mouse(mouse)
+                    if !runtime.modal() || runtime.app.backend_open || runtime.app.show_invalid =>
+                {
                     let size = terminal.size()?;
                     let area = ratatui::layout::Rect::new(0, 0, size.width, size.height);
                     match mouse.kind {
-                        MouseEventKind::Down(MouseButton::Left) => {
+                        MouseEventKind::Down(MouseButton::Left)
+                            if !runtime.modal() && !runtime.app.show_invalid =>
+                        {
                             if let Some(index) = ui::tab_at(area, mouse.column, mouse.row) {
                                 runtime.app.dispatch(Action::Select(index));
                             } else if let Some(index) =

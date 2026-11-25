@@ -2,7 +2,6 @@
 //! Format: https://github.com/ggml-org/ggml/blob/master/docs/gguf.md
 use std::{
     collections::BTreeMap,
-    fs::File,
     io::{self, BufReader, Read, Seek, SeekFrom},
     path::Path,
     sync::atomic::{AtomicBool, Ordering},
@@ -157,8 +156,17 @@ fn type_layout(kind: u32) -> Option<(u64, u64)> {
     })
 }
 pub fn read(path: &Path, cancel: &AtomicBool) -> io::Result<Metadata> {
-    let file = File::open(path)?;
-    let len = file.metadata()?.len();
+    // Follow logical snapshot links, but never block opening a substituted FIFO.
+    use std::os::unix::fs::OpenOptionsExt;
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK)
+        .open(path)?;
+    let meta = file.metadata()?;
+    if !meta.is_file() {
+        return Err(invalid("Expected regular GGUF file"));
+    }
+    let len = meta.len();
     let mut r = Reader {
         inner: BufReader::new(file),
         pos: 0,
@@ -357,6 +365,15 @@ mod tests {
     fn string(b: &mut Vec<u8>, s: &str) {
         b.extend((s.len() as u64).to_le_bytes());
         b.extend(s.as_bytes());
+    }
+    #[test]
+    fn rejects_fifo_without_waiting_for_a_writer() {
+        use std::{ffi::CString, os::unix::ffi::OsStrExt};
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("pipe.gguf");
+        let c = CString::new(path.as_os_str().as_bytes()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
+        assert!(read(&path, &AtomicBool::new(false)).is_err());
     }
     #[test]
     fn metadata_and_truncation() {

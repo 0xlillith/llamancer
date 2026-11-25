@@ -255,6 +255,35 @@ mod tests {
         terminal.draw(|frame| draw(frame, &app)).unwrap();
     }
     #[test]
+    fn renders_backend_and_invalid_views_at_small_sizes_in_high_contrast() {
+        let root = tempfile::tempdir().unwrap();
+        let theme = Theme::load(root.path(), "high-contrast").unwrap();
+        for (w, h) in [(1, 1), (20, 5), (40, 12), (80, 24), (120, 36)] {
+            let mut terminal = Terminal::new(TestBackend::new(w, h)).unwrap();
+            let app = App {
+                backend_open: true,
+                backend_confirmation: Some('d'),
+                ..App::default()
+            };
+            terminal.draw(|f| draw_themed(f, &app, &theme)).unwrap();
+            let app = App {
+                show_invalid: true,
+                invalid_cursor: 12,
+                invalid_total: 20,
+                invalid: (0..20)
+                    .map(|i| {
+                        (
+                            format!("/tmp/{i}.gguf").into(),
+                            std::io::ErrorKind::InvalidData,
+                        )
+                    })
+                    .collect(),
+                ..App::default()
+            };
+            terminal.draw(|f| draw_themed(f, &app, &theme)).unwrap();
+        }
+    }
+    #[test]
     fn renders_small_terminal() {
         for (w, h) in [(1, 1), (20, 5), (80, 24)] {
             let mut terminal = Terminal::new(TestBackend::new(w, h)).unwrap();

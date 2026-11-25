@@ -35,8 +35,19 @@ pub fn estimate(group: &Group, profile: &Profile) -> Option<Estimate> {
     let heads = m.heads.filter(|&n| n > 0)?;
     let kv_heads = m.kv_heads.filter(|&n| n > 0 && n <= heads)?;
     let embedding = m.embedding.filter(|&n| n > 0 && n % heads == 0)?;
-    let key = m.key_length.unwrap_or(embedding / heads);
-    let value = m.value_length.unwrap_or(embedding / heads);
+    // Qwen3 can use head widths independent of hidden_size / attention_heads.
+    // Do not infer these dimensions when its explicit metadata is missing.
+    let width = embedding / heads;
+    let key = match m.key_length {
+        Some(n) if n > 0 => n,
+        None if m.architecture.as_deref() != Some("qwen3") => width,
+        _ => return None,
+    };
+    let value = match m.value_length {
+        Some(n) if n > 0 => n,
+        None if m.architecture.as_deref() != Some("qwen3") => width,
+        _ => return None,
+    };
     let context = profile
         .engine
         .context_size
@@ -84,6 +95,13 @@ mod tests {
         p.engine.cache_type_k = Some("q8_0".into());
         p.engine.cache_type_v = Some("q8_0".into());
         assert_eq!(estimate(&group, &p).unwrap().kv, 142606336);
+        group.files[0].metadata.architecture = Some("qwen3".into());
+        assert!(estimate(&group, &p).is_none());
+        group.files[0].metadata.key_length = Some(128);
+        group.files[0].metadata.value_length = Some(128);
+        assert_eq!(estimate(&group, &p).unwrap().kv, 142606336);
+        group.files[0].metadata.key_length = Some(0);
+        assert!(estimate(&group, &p).is_none());
         group.files[0].metadata.architecture = Some("unknown".into());
         assert!(estimate(&group, &p).is_none());
     }
