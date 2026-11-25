@@ -18,7 +18,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
         Arc,
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 fn run_child(
@@ -180,6 +180,7 @@ fn main() -> io::Result<()> {
     let mut terminal = ratatui::init();
     let result = (|| -> io::Result<()> {
         execute!(io::stdout(), EnableMouseCapture)?;
+        let mut last_click: Option<(usize, usize, u16, u16, Instant)> = None;
         while !runtime.app.quit && !stop.load(Ordering::Acquire) {
             runtime.tick();
             if runtime.app.details && runtime.app.inspector_scroll > 0 {
@@ -212,6 +213,7 @@ fn main() -> io::Result<()> {
             }
             match event::read()? {
                 Event::Key(key) if key.kind == KeyEventKind::Press => {
+                    last_click = None;
                     match runtime.handle_key(key) {
                         Ok(Effect::None) => {}
                         Ok(Effect::Launch(plan, mode)) => {
@@ -281,14 +283,42 @@ fn main() -> io::Result<()> {
                             if let Some(index) =
                                 ui::row_at(area, &runtime.app, mouse.column, mouse.row)
                             {
+                                let tab = runtime.app.tab;
+                                let eligible =
+                                    !runtime.modal() && tab == 1 && !runtime.app.discovery.busy();
+                                let now = Instant::now();
+                                let double = eligible
+                                    && last_click.is_some_and(|(t, i, x, y, when)| {
+                                        t == tab
+                                            && i == index
+                                            && x.abs_diff(mouse.column) <= 2
+                                            && y == mouse.row
+                                            && now.duration_since(when)
+                                                <= Duration::from_millis(400)
+                                    });
                                 runtime.select_row(index);
+                                last_click = if eligible && !double {
+                                    Some((tab, index, mouse.column, mouse.row, now))
+                                } else {
+                                    None
+                                };
+                                if double {
+                                    if let Err(e) = runtime.handle_key(event::KeyEvent::new(
+                                        event::KeyCode::Enter,
+                                        event::KeyModifiers::NONE,
+                                    )) {
+                                        runtime.app.notice = e.to_string();
+                                    }
+                                }
                             } else if !runtime.modal() {
+                                last_click = None;
                                 if let Some(index) = ui::tab_at(area, mouse.column, mouse.row) {
                                     runtime.app.dispatch(Action::Select(index));
                                 }
                             }
                         }
                         MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
+                            last_click = None;
                             let code = if mouse.kind == MouseEventKind::ScrollUp {
                                 event::KeyCode::Up
                             } else {

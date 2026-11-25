@@ -27,22 +27,22 @@ pub enum Field {
 }
 impl Field {
     pub const ALL: [Self; 17] = [
-        Self::Theme,
-        Self::Agent,
-        Self::AgentTerminal,
-        Self::Endpoint,
-        Self::ApiKeyFile,
+        Self::AddRoot,
+        Self::DownloadRoot,
+        Self::ImportModel,
+        Self::RemoveRoot,
+        Self::RemoveImport,
+        Self::RestoreModel,
         Self::ServerBinary,
         Self::Device,
-        Self::ProjectDir,
+        Self::Endpoint,
+        Self::ApiKeyFile,
+        Self::Agent,
+        Self::AgentTerminal,
         Self::CustomAgent,
-        Self::AddRoot,
-        Self::RemoveRoot,
-        Self::ImportModel,
-        Self::RestoreModel,
-        Self::RemoveImport,
         Self::WorkspaceRoot,
-        Self::DownloadRoot,
+        Self::ProjectDir,
+        Self::Theme,
         Self::Icons,
     ];
     pub fn label(self) -> &'static str {
@@ -55,8 +55,8 @@ impl Field {
             Self::ApiKeyFile => "API key file (absolute private path or none)",
             Self::ServerBinary => "llama-server executable",
             Self::Device => "GPU device (auto/none/device IDs)",
-            Self::ProjectDir => "Active project directory (or none)",
-            Self::WorkspaceRoot => "Workspace parent directory (or none)",
+            Self::ProjectDir => "Active project (agent working folder)",
+            Self::WorkspaceRoot => "Workspace root (parent of all projects)",
             Self::CustomAgent => "Custom agent executable",
             Self::AddRoot => "Add model root",
             Self::DownloadRoot => "Default download root (or none)",
@@ -66,8 +66,50 @@ impl Field {
             Self::RemoveImport => "Remove imported model reference (exact path)",
         }
     }
+    pub fn hint(self) -> &'static str {
+        match self {
+            Self::AddRoot=>"Required for downloading. Enter default to create the suggested private model folder, or choose an existing absolute folder.",
+            Self::DownloadRoot=>"Optional. none asks which configured folder to use when there are several.",
+            Self::RemoveRoot=>"Removes a library reference, not the files.",
+            Self::ImportModel=>"Optional. Index one existing GGUF without copying it.",
+            Self::RemoveImport=>"Remove the reference, not the model file.",
+            Self::RestoreModel=>"Restore a hidden entry; does not change the file.",
+            Self::Theme=>"Appearance only. Press T to cycle built-in themes.",
+            Self::Icons=>"Auto detects supported local fonts; plain works everywhere.",
+            Self::Agent=>"Optional coding agent: omp, pi, pi-native or custom.",
+            Self::AgentTerminal=>"Where the agent opens. current works in any terminal.",
+            Self::Endpoint=>"Local default: http://127.0.0.1:8080. Only change for another server.",
+            Self::ApiKeyFile=>"Optional. none is normal for local managed sessions. Use a private key file for external servers.",
+            Self::ServerBinary=>"Normally select an installed llama.cpp backend with B rather than typing a path.",
+            Self::Device=>"auto lets the backend choose. none forces CPU. B selects a tested GPU.",
+            Self::ProjectDir=>"Active project: the exact folder in which the coding agent works. Press P to switch.",
+            Self::WorkspaceRoot=>"Optional parent of your projects, e.g. /home/user/src. P selects an individual project.",
+            Self::CustomAgent=>"Only required when Default agent is custom.",
+        }
+    }
+    pub fn category(self) -> &'static str {
+        match self {
+            Self::Theme | Self::Icons => "Appearance",
+            Self::AddRoot
+            | Self::RemoveRoot
+            | Self::DownloadRoot
+            | Self::ImportModel
+            | Self::RemoveImport
+            | Self::RestoreModel => "Storage",
+            Self::Agent | Self::AgentTerminal | Self::CustomAgent => "Agent",
+            Self::ProjectDir | Self::WorkspaceRoot => "Workspace",
+            _ => "Inference",
+        }
+    }
     pub fn initial(self, config: &Config) -> String {
         match self {
+            Self::AddRoot => {
+                if config.model_roots.is_empty() {
+                    "default".into()
+                } else {
+                    String::new()
+                }
+            }
             Self::Theme => config.theme.clone(),
             Self::Icons => config.icon_mode.label().into(),
             Self::Agent => config.default_agent.clone(),
@@ -110,6 +152,12 @@ impl Field {
             _ => String::new(),
         }
     }
+}
+pub fn default_model_root() -> io::Result<PathBuf> {
+    crate::backends::root()?
+        .parent()
+        .map(|p| p.join("models"))
+        .ok_or_else(|| io::Error::other("No user data directory"))
 }
 pub fn apply(
     config: &Config,
@@ -190,7 +238,14 @@ pub fn apply(
             };
         }
         Field::AddRoot => {
-            let path = PathBuf::from(value);
+            let path = if value == "default" {
+                let path = default_model_root()?;
+                // Explicit confirmation in the editor is required to create this directory.
+                std::fs::create_dir_all(&path)?;
+                path
+            } else {
+                PathBuf::from(value)
+            };
             if !path.is_absolute() || !path.is_dir() {
                 return Err(invalid("Enter an existing absolute directory"));
             }

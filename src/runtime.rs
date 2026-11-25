@@ -827,6 +827,7 @@ impl Runtime {
                 self.persist(next)?;
                 self.theme = theme;
                 if roots_changed {
+                    self.rescan_pending = true;
                     self.app.candidates.clear();
                     self.app.invalid.clear();
                     self.app.invalid_total = 0;
@@ -1018,11 +1019,25 @@ impl Runtime {
                     self.app.profile_editor = Some(models::profile::Editor::new(id, draft));
                 }
             }
-            KeyCode::Char('l') => {
+            KeyCode::Char('l' | 'L') => {
                 if self.mutation_active() {
                     return Err(io::Error::other("Wait for model quarantine to finish"));
                 }
                 if let Some(group) = self.app.selected().cloned() {
+                    if !group.complete || group.projector {
+                        return Err(io::Error::other("Select a complete model, not a projector"));
+                    }
+                    if !self.app.server.owns_server()
+                        && !crate::doctor::executable(
+                            &self.app.config.server_binary,
+                            std::env::var_os("PATH").as_deref(),
+                        )
+                    {
+                        self.app.tab = 3;
+                        self.handle_key(KeyEvent::new(KeyCode::Char('B'), KeyModifiers::NONE))?;
+                        self.app.notice="Choose/install a backend first. Then return to Library and press l to run the model.".into();
+                        return Ok(());
+                    }
                     if self.app.server.owns_server()
                         && self.app.server.snapshot.as_ref().is_some_and(|s| s.router)
                     {
@@ -1065,8 +1080,14 @@ impl Runtime {
             KeyCode::Up => self.app.discovery.move_cursor(false),
             KeyCode::Down => self.app.discovery.move_cursor(true),
             KeyCode::Backspace => self.app.discovery.back(),
-            KeyCode::Enter if self.app.discovery.repo.is_none() => self.app.discovery.open()?,
-            KeyCode::Char('d' | 'D') if !self.app.discovery.busy() => {
+            KeyCode::Enter if self.app.discovery.repo.is_none() => {
+                if self.app.discovery.repos.is_empty() {
+                    self.app.discovery.search()?;
+                } else {
+                    self.app.discovery.open()?;
+                }
+            }
+            KeyCode::Char('d' | 'D') | KeyCode::Enter if !self.app.discovery.busy() => {
                 let files = self.app.discovery.selected_bundle();
                 if files.is_empty() {
                     return Err(io::Error::other("Select a file or complete shard bundle"));
@@ -1078,7 +1099,10 @@ impl Runtime {
                     ));
                 }
                 let preferred = self.app.config.download_root.as_deref();
-                if key == KeyCode::Char('D') || (roots.len() > 1 && preferred.is_none()) {
+                if key == KeyCode::Enter
+                    || key == KeyCode::Char('D')
+                    || (roots.len() > 1 && preferred.is_none())
+                {
                     self.app.download_destination = Some(crate::downloads::DestinationChoice::new(
                         files,
                         roots.clone(),

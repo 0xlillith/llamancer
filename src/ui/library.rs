@@ -167,7 +167,7 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App, p: &Palette) {
     };
     if indices.is_empty() {
         let message = if app.candidates.is_empty() {
-            "No models indexed.\n\nPress G for guided setup, or add a model root in Settings (5), then press r to scan.\nDiscover (2) can queue Hugging Face GGUF files."
+            "        /\\\n       /  \\\n      / *  \\\n     /______\\\n    /________\\\n     LLAMANCER\n\nNo models indexed.\n\n1. G  Guided setup (model folder and backend)\n2. 2  Discover and download a GGUF\n3. 1  Select a complete model; l to run\n4. 4  Server: w opens Web UI; a launches agent"
         } else {
             "No matching models. Edit search with / or toggle favorites with v."
         };
