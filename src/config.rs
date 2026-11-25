@@ -14,6 +14,11 @@ pub struct Config {
     pub model_roots: Vec<PathBuf>,
     pub default_agent: String,
     pub endpoint: String,
+    pub server_binary: String,
+    pub device: String,
+    pub custom_agent: String,
+    pub custom_agent_args: Vec<String>,
+    pub project_dir: Option<PathBuf>,
     pub favorites: BTreeSet<PathBuf>,
     pub profiles: BTreeMap<PathBuf, crate::models::profile::Profile>,
 }
@@ -26,6 +31,11 @@ impl Default for Config {
             model_roots: Vec::new(),
             default_agent: "omp".into(),
             endpoint: "http://127.0.0.1:8080".into(),
+            server_binary: "llama-server".into(),
+            device: "auto".into(),
+            custom_agent: String::new(),
+            custom_agent_args: Vec::new(),
+            project_dir: None,
             favorites: BTreeSet::new(),
             profiles: BTreeMap::new(),
         }

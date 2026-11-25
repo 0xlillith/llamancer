@@ -4,7 +4,6 @@
 
 - Initial project identity, architecture and TUI navigation scaffold.
 
-
 - Added versioned XDG configuration, atomic persistence, custom TOML themes, mouse tab navigation and keyboard shortcuts.
 
 - Added cancellable background jobs, an interactive settings editor and read-only GGUF candidate discovery.
@@ -14,3 +13,7 @@
 - Added library search, size/name ordering, persistent favorites and readable quantization labels.
 
 - Added per-model inference profiles, Basic/Advanced editing, transactional persistence and parameter validation.
+
+- Implemented the initial inference, Hub download and coding-agent workflows; refactored runtime and UI, added original Hex branding and experimental Arch packaging.
+
+- Hardened partial downloads with exclusive locks and free-space checks, added sequential queue execution, backend/device probing, explicit projector paths, and known GGUF tensor extent validation.

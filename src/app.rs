@@ -34,6 +34,9 @@ pub struct App {
     pub only_favorites: bool,
     pub sort: Sort,
     pub profile_editor: Option<crate::models::profile::Editor>,
+    pub server: crate::llama::session::Controller,
+    pub discovery: crate::huggingface::discovery::Discovery,
+    pub downloads: Option<crate::downloads::Controller>,
 }
 impl App {
     pub fn visible(&self) -> Vec<usize> {

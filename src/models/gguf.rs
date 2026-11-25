@@ -13,6 +13,7 @@ pub struct Metadata {
     pub version: u32,
     pub tensors: u64,
     pub elements: u64,
+    pub payload_bounds_checked: bool,
     pub name: Option<String>,
     pub architecture: Option<String>,
     pub file_type: Option<u64>,
@@ -107,6 +108,28 @@ fn cancelled(cancel: &AtomicBool) -> io::Result<()> {
     } else {
         Ok(())
     }
+}
+// The common GGML tensor types have a fixed number of bytes per block.
+// Unknown/new tensor types remain indexable but are not certified.
+fn type_layout(kind: u32) -> Option<(u64, u64)> {
+    Some(match kind {
+        0 => (1, 4),
+        1 => (1, 2),
+        2 => (32, 18),
+        3 => (32, 20),
+        6 => (32, 22),
+        7 => (32, 24),
+        8 => (32, 34),
+        9 => (32, 36),
+        10 => (256, 84),
+        11 => (256, 110),
+        12 => (256, 144),
+        13 => (256, 176),
+        14 => (256, 210),
+        15 => (256, 292),
+        30 => (1, 2),
+        _ => return None,
+    })
 }
 pub fn read(path: &Path, cancel: &AtomicBool) -> io::Result<Metadata> {
     let file = File::open(path)?;
@@ -212,6 +235,8 @@ pub fn read(path: &Path, cancel: &AtomicBool) -> io::Result<Metadata> {
     if alignment == 0 || !alignment.is_power_of_two() || alignment > 1024 * 1024 {
         return Err(invalid("Invalid tensor alignment"));
     }
+    let mut intervals = Vec::new();
+    let mut all_known = tensors > 0;
     let mut max_offset = None::<u64>;
     for _ in 0..tensors {
         cancelled(cancel)?;
@@ -221,10 +246,14 @@ pub fn read(path: &Path, cancel: &AtomicBool) -> io::Result<Metadata> {
             return Err(invalid("Invalid tensor rank"));
         }
         let mut elements = 1u64;
-        for _ in 0..dims {
+        let mut row = 0;
+        for axis in 0..dims {
             let n = r.u64()?;
             if n == 0 {
                 return Err(invalid("Empty tensor dimension"));
+            }
+            if axis == 0 {
+                row = n;
             }
             elements = elements
                 .checked_mul(n)
@@ -234,12 +263,26 @@ pub fn read(path: &Path, cancel: &AtomicBool) -> io::Result<Metadata> {
             .elements
             .checked_add(elements)
             .ok_or_else(|| invalid("Element count overflow"))?;
-        let _kind = r.u32()?;
+        let kind = r.u32()?;
         let offset = r.u64()?;
         if offset % alignment != 0 {
             return Err(invalid("Unaligned tensor offset"));
         }
         max_offset = Some(max_offset.map_or(offset, |old| old.max(offset)));
+        if let Some((block, bytes)) = type_layout(kind) {
+            if row % block != 0 {
+                return Err(invalid("Tensor row not divisible by quantization block"));
+            }
+            let size = (elements / block)
+                .checked_mul(bytes)
+                .ok_or_else(|| invalid("Tensor payload size overflow"))?;
+            let end = offset
+                .checked_add(size)
+                .ok_or_else(|| invalid("Tensor payload offset overflow"))?;
+            intervals.push((offset, end));
+        } else {
+            all_known = false;
+        }
     }
     let start = r
         .pos
@@ -251,6 +294,15 @@ pub fn read(path: &Path, cancel: &AtomicBool) -> io::Result<Metadata> {
             return Err(invalid("Tensor offset outside file"));
         }
     }
+    intervals.sort_unstable();
+    let mut previous = 0;
+    for (offset, end) in intervals {
+        if offset < previous || start.checked_add(end).is_none_or(|p| p > len) {
+            return Err(invalid("Overlapping or truncated tensor payload"));
+        }
+        previous = end;
+    }
+    m.payload_bounds_checked = all_known;
     Ok(m)
 }
 #[cfg(test)]
@@ -286,6 +338,26 @@ mod tests {
         assert_eq!(m.context, Some(32768));
         assert_eq!(m.vocabulary, Some(2));
         f.as_file().set_len(b.len() as u64 - 1).unwrap();
+        assert!(read(f.path(), &cancel).is_err());
+    }
+    #[test]
+    fn validates_payload_extent_without_reading_weights() {
+        let mut b = b"GGUF".to_vec();
+        b.extend(3u32.to_le_bytes());
+        b.extend(1u64.to_le_bytes());
+        b.extend(0u64.to_le_bytes());
+        string(&mut b, "tensor");
+        b.extend(1u32.to_le_bytes());
+        b.extend(8u64.to_le_bytes());
+        b.extend(0u32.to_le_bytes());
+        b.extend(0u64.to_le_bytes());
+        b.resize((b.len() + 31) & !31, 0);
+        let mut f = tempfile::NamedTempFile::new().unwrap();
+        f.write_all(&b).unwrap();
+        f.write_all(&[0; 32]).unwrap();
+        let cancel = AtomicBool::new(false);
+        assert!(read(f.path(), &cancel).unwrap().payload_bounds_checked);
+        f.as_file().set_len(b.len() as u64 + 31).unwrap();
         assert!(read(f.path(), &cancel).is_err());
     }
     #[test]

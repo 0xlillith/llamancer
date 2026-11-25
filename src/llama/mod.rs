@@ -1,1 +1,5 @@
-//! llama-server process lifecycle and HTTP API integration.
+//! llama.cpp process and API integration.
+pub mod client;
+pub mod process;
+pub mod router;
+pub mod session;

@@ -6,5 +6,7 @@ pub mod llama;
 pub mod models;
 pub mod ui;
 
+pub mod downloads;
 pub mod jobs;
+pub mod runtime;
 pub mod settings;

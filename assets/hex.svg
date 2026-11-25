@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="28 16 224 224" role="img" aria-labelledby="title desc">
+<title id="title">Llamancer</title><desc id="desc">Hex, a geometric purple llama sorcerer, beside the Llamancer wordmark.</desc>
+<defs><linearGradient id="magic" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#ff79c6"/><stop offset="1" stop-color="#bd93f9"/></linearGradient></defs>
+
+<g transform="translate(28 16)">
+<circle cx="112" cy="112" r="94" fill="#282a36" stroke="#44475a" stroke-width="2"/>
+<path d="M112 12v18m0 164v18M12 112h18m164 0h18" stroke="#6272a4" stroke-width="2"/>
+<path d="M45 155 68 109 58 49 86 75 107 45 138 76 166 50 158 111 181 155 146 193 77 193Z" fill="#44475a" stroke="#bd93f9" stroke-width="3" stroke-linejoin="round"/>
+<path d="M67 111 88 90 112 104 136 90 157 112 143 153 112 173 82 153Z" fill="#f8f8f2"/>
+<path d="m86 119 16 0m20 0h16" stroke="#282a36" stroke-width="7" stroke-linecap="round"/>
+<path d="m105 139 7 6 7-6m-7 6v9m-10 1 10 5 10-5" fill="none" stroke="#282a36" stroke-width="3" stroke-linecap="round"/>
+<path d="m32 101 39-13 28-57 27 34 41 19 25 11-34 12-58-8-48 13Z" fill="#282a36" stroke="url(#magic)" stroke-width="4" stroke-linejoin="round"/>
+<path d="m86 81 33-7 29 14" fill="none" stroke="#ff79c6" stroke-width="3"/>
+<path d="m112 49 4 10 10 4-10 4-4 10-4-10-10-4 10-4Z" fill="#8be9fd"/>
+<path d="m42 58 3 8 8 3-8 3-3 8-3-8-8-3 8-3Zm135 83 3 8 8 3-8 3-3 8-3-8-8-3 8-3Z" fill="#ff79c6"/>
+<path d="m100 190 12-14 12 14-12 14Z" fill="#8be9fd"/>
+</g>
+</svg>
