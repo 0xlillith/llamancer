@@ -1,5 +1,32 @@
 # Screenshots and terminal captures
 
+## Polished Nerd Font interface
+
+These captures show the running application with the optional JetBrainsMono Nerd Font Mono glyphs on CachyOS. The first is a real KDE active-window screenshot; the four remaining images are rasterizations of actual Kitty terminal buffers. All paths in the storage demo are temporary; no private repositories, credentials or model files are included. The portable icon mode also works without Nerd Fonts.
+
+### Andromeda Library
+
+![Polished Andromeda Library and inspector](../assets/screenshots/polished-library.png)
+
+### Catppuccin Mocha
+
+![Polished Catppuccin Mocha](../assets/screenshots/polished-catppuccin.png)
+
+### Backend management
+
+![Backend manager and runtime sidebar](../assets/screenshots/polished-backends.png)
+
+### Public Hub discovery
+
+![Hugging Face discovery and repository sidebar](../assets/screenshots/polished-discover.png)
+
+### Storage planning
+
+![Storage destination and capacity sidebar](../assets/screenshots/polished-storage.png)
+
+## Earlier captures
+
+
 The original captures below show the running Llamancer v0.1.0 on CachyOS with Kitty and the default Dracula theme. An isolated temporary configuration used public GGUF fixtures and a public Hub repository; no personal configuration or credentials are shown. The Library is a KDE active-window screenshot. The other images are rasterizations of the actual ANSI terminal buffer exported from Kitty, not mockups or independent desktop screenshots.
 
 ## Library

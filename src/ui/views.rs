@@ -130,7 +130,8 @@ pub fn content(app: &App, body: Rect) -> (&'static str, String) {
             lines.push(format!("{label}? y confirm / n cancel"));
         } else if let Some((bytes, total)) = app.backend_progress {
             lines.push(format!(
-                "Download: {:.1}/{:.1} MiB ({:.0}%)",
+                "Download: {} {:.1}/{:.1} MiB ({:.0}%)",
+                super::chrome::meter(bytes, total, 12),
                 bytes as f64 / 1048576.0,
                 total as f64 / 1048576.0,
                 100.0 * bytes as f64 / total as f64
@@ -206,7 +207,7 @@ pub fn content(app: &App, body: Rect) -> (&'static str, String) {
             ),
         )
     } else if app.help {
-        ("Help", "Tab / arrows / 1–5: navigate; click tab or row, scroll to select\nLibrary: r scan, x cancel, Up/Down select, Enter details\n/: search, s: sort, f: favorite, v: favorites only, p: inference profile, m: memory advisory, l: start single model, i: invalid files, h: hide model, t: quarantine\nDiscover: / search, Enter open, d queue, n next page\nDownloads: r resume, R run queue, x pause, t quarantine, T restore, z remove entry\nServer: r refresh, D detach, s router  R restart, i probe, x stop, l/u load/unload, a agent, A current terminal, g logs\nG guided setup (any view). Settings: Up/Down select, Enter edit; T next theme; B backend manager, P project picker (also Server)\n?: toggle help\nEsc: close help or quit\nq / Ctrl+C: quit".into())
+        ("Help", "Tab / arrows / 1–5: navigate; click tab or row, scroll to select\nLibrary: r scan, x cancel, Up/Down select, Enter details (PgUp/PgDn scroll)\n/: search, s: sort, f: favorite, v: favorites only, p: inference profile, m: memory advisory, l: start single model, i: invalid files, h: hide model, t: quarantine\nDiscover: / search, Enter open, d queue, n next page\nDownloads: r resume, R run queue, x pause, t quarantine, T restore, z remove entry\nServer: r refresh, D detach, s router  R restart, i probe, x stop, l/u load/unload, a agent, A current terminal, g logs\nG guided setup (any view). Settings: Up/Down select, Enter edit; T next theme; I icon mode; B backend manager, P project picker (also Server)\n?: toggle help\nEsc: close help or quit\nq / Ctrl+C: quit".into())
     } else {
         (
             TABS[app.tab],

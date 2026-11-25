@@ -8,6 +8,7 @@ use std::{
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Field {
     Theme,
+    Icons,
     Agent,
     AgentTerminal,
     Endpoint,
@@ -25,7 +26,7 @@ pub enum Field {
     RemoveImport,
 }
 impl Field {
-    pub const ALL: [Self; 16] = [
+    pub const ALL: [Self; 17] = [
         Self::Theme,
         Self::Agent,
         Self::AgentTerminal,
@@ -42,10 +43,12 @@ impl Field {
         Self::RemoveImport,
         Self::WorkspaceRoot,
         Self::DownloadRoot,
+        Self::Icons,
     ];
     pub fn label(self) -> &'static str {
         match self {
             Self::Theme => "Theme (T to cycle built-ins)",
+            Self::Icons => "Icons (auto/nerd/plain; I to cycle)",
             Self::Agent => "Default agent",
             Self::AgentTerminal => "Agent terminal (current/kitty-tab/kitty-window)",
             Self::Endpoint => "Endpoint",
@@ -66,6 +69,7 @@ impl Field {
     pub fn initial(self, config: &Config) -> String {
         match self {
             Self::Theme => config.theme.clone(),
+            Self::Icons => config.icon_mode.label().into(),
             Self::Agent => config.default_agent.clone(),
             Self::AgentTerminal => config.agent_terminal.label().into(),
             Self::Endpoint => config.endpoint.clone(),
@@ -121,6 +125,7 @@ pub fn apply(
     let mut draft = config.clone();
     match field {
         Field::Theme => draft.theme = value.into(),
+        Field::Icons => draft.icon_mode = value.parse()?,
         Field::Agent => {
             if !matches!(value, "omp" | "pi" | "pi-native" | "custom") {
                 return Err(invalid("Choose omp, pi, pi-native or custom"));

@@ -11,6 +11,7 @@ use std::{
 pub struct Config {
     pub schema_version: u32,
     pub theme: String,
+    pub icon_mode: crate::ui::icons::Mode,
     pub model_roots: Vec<PathBuf>,
     pub download_root: Option<PathBuf>,
     pub model_imports: Vec<PathBuf>,
@@ -35,6 +36,7 @@ impl Default for Config {
         Self {
             schema_version: 1,
             theme: "dracula".into(),
+            icon_mode: Default::default(),
             model_roots: Vec::new(),
             download_root: None,
             model_imports: Vec::new(),
