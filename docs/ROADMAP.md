@@ -9,3 +9,5 @@
 
 These are goals, not completed features.
 
+
+See [Implementation master plan](IMPLEMENTATION.md) for acceptance criteria and dependencies.
