@@ -7,7 +7,7 @@ pub mod profile;
 use std::{
     collections::HashSet,
     fs, io,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::atomic::{AtomicBool, Ordering},
 };
 
@@ -25,12 +25,45 @@ pub struct Scan {
     pub invalid: Vec<(PathBuf, io::ErrorKind)>,
 }
 
+/// Preserve the logical filename of a file reference (including a Hub snapshot
+/// symlink to a content-addressed blob). Canonicalize only its parent.
+pub fn file_reference(path: &Path) -> io::Result<PathBuf> {
+    if !path.is_file() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Expected a regular file",
+        ));
+    }
+    let name = path
+        .file_name()
+        .ok_or_else(|| io::Error::other("Missing filename"))?;
+    let parent = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    Ok(parent.canonicalize()?.join(name))
+}
+fn gguf_name(path: &Path) -> bool {
+    path.extension()
+        .is_some_and(|s| s.eq_ignore_ascii_case("gguf"))
+}
+fn directory_entry(entry: &fs::DirEntry) -> bool {
+    entry.file_type().is_ok_and(|t| {
+        t.is_dir()
+            || t.is_file()
+            || (t.is_symlink() && gguf_name(&entry.path()) && entry.path().is_file())
+    })
+}
 pub fn scan(roots: Vec<PathBuf>, cancel: &AtomicBool) -> io::Result<Scan> {
     let mut result = Scan::default();
     let mut pending = Vec::new();
     for root in roots {
         // For explicitly imported shards, include matching siblings only.
-        let canonical = root.canonicalize().unwrap_or(root);
+        let canonical = if root.is_file() {
+            file_reference(&root).unwrap_or(root)
+        } else {
+            root.canonicalize().unwrap_or(root)
+        };
         if canonical.is_file() {
             if let Some((base, _, total)) = group::shard(&canonical) {
                 if let Some(parent) = canonical.parent() {
@@ -43,10 +76,9 @@ pub fn scan(roots: Vec<PathBuf>, cancel: &AtomicBool) -> io::Result<Scan> {
                                 ));
                             }
                             let path = entry.path();
-                            if entry.file_type().is_ok_and(|t| t.is_file())
-                                && path
-                                    .extension()
-                                    .is_some_and(|s| s.eq_ignore_ascii_case("gguf"))
+                            if directory_entry(&entry)
+                                && path.is_file()
+                                && gguf_name(&path)
                                 && group::shard(&path)
                                     .is_some_and(|(b, _, t)| b == base && t == total)
                             {
@@ -64,7 +96,12 @@ pub fn scan(roots: Vec<PathBuf>, cancel: &AtomicBool) -> io::Result<Scan> {
         if cancel.load(Ordering::Acquire) {
             return Err(io::Error::new(io::ErrorKind::Interrupted, "Scan cancelled"));
         }
-        let Ok(path) = path.canonicalize() else {
+        let normalized = if path.is_file() {
+            file_reference(&path)
+        } else {
+            path.canonicalize()
+        };
+        let Ok(path) = normalized else {
             result.skipped += 1;
             continue;
         };
@@ -86,10 +123,8 @@ pub fn scan(roots: Vec<PathBuf>, cancel: &AtomicBool) -> io::Result<Scan> {
                             ));
                         }
                         match entry {
-                            Ok(e) => match e.file_type() {
-                                Ok(t) if t.is_dir() || t.is_file() => pending.push(e.path()),
-                                _ => {}
-                            },
+                            Ok(e) if directory_entry(&e) => pending.push(e.path()),
+                            Ok(_) => {}
                             Err(_) => result.skipped += 1,
                         }
                     }
@@ -97,11 +132,7 @@ pub fn scan(roots: Vec<PathBuf>, cancel: &AtomicBool) -> io::Result<Scan> {
                 Err(e) if e.kind() == io::ErrorKind::Interrupted => return Err(e),
                 Err(_) => result.skipped += 1,
             }
-        } else if meta.is_file()
-            && path
-                .extension()
-                .is_some_and(|s| s.eq_ignore_ascii_case("gguf"))
-        {
+        } else if meta.is_file() && gguf_name(&path) {
             match gguf::read(&path, cancel) {
                 Ok(metadata) => result.candidates.push(Candidate {
                     path,
@@ -152,6 +183,36 @@ mod tests {
         fs::write(dir.path().join("unrelated.gguf"), bytes).unwrap();
         let result = scan(vec![a], &AtomicBool::new(false)).unwrap();
         assert_eq!(result.candidates.len(), 2);
+    }
+    #[test]
+    fn preserves_hub_snapshot_filenames_and_does_not_follow_directory_links() {
+        use std::os::unix::fs::symlink;
+        let root = tempfile::tempdir().unwrap();
+        let blobs = root.path().join("blobs");
+        let snapshot = root.path().join("snapshots/revision");
+        fs::create_dir_all(&blobs).unwrap();
+        fs::create_dir_all(&snapshot).unwrap();
+        let mut header = [0u8; 24];
+        header[..4].copy_from_slice(b"GGUF");
+        header[4..8].copy_from_slice(&3u32.to_le_bytes());
+        for index in 1..=2 {
+            let blob = blobs.join(format!("hash{index}"));
+            fs::write(&blob, header).unwrap();
+            symlink(
+                blob,
+                snapshot.join(format!("model-{index:05}-of-00002.gguf")),
+            )
+            .unwrap();
+        }
+        let first = snapshot.join("model-00001-of-00002.gguf");
+        symlink(root.path(), snapshot.join("loop")).unwrap();
+        symlink(root.path().join("missing"), snapshot.join("missing.gguf")).unwrap();
+        let explicit = scan(vec![first.clone()], &AtomicBool::new(false)).unwrap();
+        assert_eq!(explicit.candidates.len(), 2);
+        assert_eq!(explicit.candidates[0].path, first);
+        let all = scan(vec![root.path().into(), first], &AtomicBool::new(false)).unwrap();
+        assert_eq!(all.candidates.len(), 2);
+        assert!(all.candidates.iter().all(|c| c.path.starts_with(&snapshot)));
     }
     #[test]
     fn scans_read_only_root_without_mutating_it() {

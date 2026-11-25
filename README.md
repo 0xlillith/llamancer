@@ -23,7 +23,7 @@ Pre-release development. Native Linux x86_64 and aarch64 CI, real CPU text and i
 
 | Workspace | Current functionality |
 | --- | --- |
-| Library | Read-only GGUF indexing, shard grouping, search, favorites, inspector, inference profiles, import, hide/restore and recoverable managed-file quarantine |
+| Library | Read-only GGUF indexing (including Hugging Face cache snapshot links), shard grouping, search, favorites, inspector, inference profiles, import, hide/restore and recoverable managed-file quarantine |
 | Discover | Paginated Hugging Face search, exact repository lookup, license/quantization filters, pinned revisions and shard selection |
 | Downloads | Persistent queue, sequential resumable transfers, bounded retry, throughput and ETA, free-space checks, file locking and integrity validation |
 | Server | External attach, managed session, headless router supervisor, router presets, load/unload, logs, Web UI and btop |
