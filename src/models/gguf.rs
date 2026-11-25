@@ -19,6 +19,11 @@ pub struct Metadata {
     pub file_type: Option<u64>,
     pub context: Option<u64>,
     pub layers: Option<u64>,
+    pub heads: Option<u64>,
+    pub kv_heads: Option<u64>,
+    pub embedding: Option<u64>,
+    pub key_length: Option<u64>,
+    pub value_length: Option<u64>,
     pub tokenizer: Option<String>,
     pub vocabulary: Option<u64>,
     pub split_no: Option<u64>,
@@ -217,7 +222,17 @@ pub fn read(path: &Path, cancel: &AtomicBool) -> io::Result<Metadata> {
                         _ => {}
                     }
                     if key.len() <= 256
-                        && (key.ends_with(".context_length") || key.ends_with(".block_count"))
+                        && [
+                            ".context_length",
+                            ".block_count",
+                            ".attention.head_count",
+                            ".attention.head_count_kv",
+                            ".embedding_length",
+                            ".attention.key_length",
+                            ".attention.value_length",
+                        ]
+                        .iter()
+                        .any(|suffix| key.ends_with(suffix))
                     {
                         if numbers.len() >= 4096 {
                             return Err(invalid("Too many architecture fields"));
@@ -231,6 +246,13 @@ pub fn read(path: &Path, cancel: &AtomicBool) -> io::Result<Metadata> {
     if let Some(a) = &m.architecture {
         m.context = numbers.get(&format!("{a}.context_length")).copied();
         m.layers = numbers.get(&format!("{a}.block_count")).copied();
+        m.heads = numbers.get(&format!("{a}.attention.head_count")).copied();
+        m.kv_heads = numbers
+            .get(&format!("{a}.attention.head_count_kv"))
+            .copied();
+        m.embedding = numbers.get(&format!("{a}.embedding_length")).copied();
+        m.key_length = numbers.get(&format!("{a}.attention.key_length")).copied();
+        m.value_length = numbers.get(&format!("{a}.attention.value_length")).copied();
     }
     if alignment == 0 || !alignment.is_power_of_two() || alignment > 1024 * 1024 {
         return Err(invalid("Invalid tensor alignment"));

@@ -12,9 +12,12 @@ pub struct Config {
     pub schema_version: u32,
     pub theme: String,
     pub model_roots: Vec<PathBuf>,
+    pub model_imports: Vec<PathBuf>,
+    pub hidden_models: BTreeSet<PathBuf>,
     pub default_agent: String,
     pub agent_terminal: crate::agents::TerminalMode,
     pub endpoint: String,
+    pub api_key_file: Option<PathBuf>,
     pub server_binary: String,
     pub device: String,
     pub custom_agent: String,
@@ -30,9 +33,12 @@ impl Default for Config {
             schema_version: 1,
             theme: "dracula".into(),
             model_roots: Vec::new(),
+            model_imports: Vec::new(),
+            hidden_models: BTreeSet::new(),
             default_agent: "omp".into(),
             agent_terminal: Default::default(),
             endpoint: "http://127.0.0.1:8080".into(),
+            api_key_file: None,
             server_binary: "llama-server".into(),
             device: "auto".into(),
             custom_agent: String::new(),
@@ -59,6 +65,27 @@ pub fn config_dir() -> io::Result<PathBuf> {
 }
 
 impl Config {
+    pub fn scan_roots(&self) -> Vec<PathBuf> {
+        self.model_roots
+            .iter()
+            .chain(&self.model_imports)
+            .cloned()
+            .collect()
+    }
+    pub fn filter_groups(
+        &self,
+        groups: Vec<crate::models::group::Group>,
+    ) -> Vec<crate::models::group::Group> {
+        groups
+            .into_iter()
+            .filter(|g| {
+                !self
+                    .hidden_models
+                    .contains(&crate::models::library::identity(g))
+            })
+            .collect()
+    }
+
     pub fn load(path: &Path) -> io::Result<Self> {
         let contents = match fs::read_to_string(path) {
             Ok(s) => s,
@@ -73,6 +100,7 @@ impl Config {
                 "Unsupported configuration schema",
             ));
         }
+        crate::llama::client::endpoint(&config.endpoint)?;
         for profile in config.profiles.values() {
             profile.validate()?;
         }

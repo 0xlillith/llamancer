@@ -23,10 +23,14 @@ pub struct Runtime {
     root: PathBuf,
     path: PathBuf,
     scan: Option<Job<Scan>>,
+    _lock: crate::diagnostics::SessionLock,
+    diagnostics: crate::diagnostics::Diagnostics,
 }
 impl Runtime {
     pub fn new() -> io::Result<Self> {
         let root = config::config_dir()?;
+        let lock = crate::diagnostics::SessionLock::acquire(&root)?;
+        let diagnostics = crate::diagnostics::Diagnostics::new(&root);
         let path = root.join("config.toml");
         let config = Config::load(&path)?;
         let theme = Theme::load(&root, &config.theme)?;
@@ -34,6 +38,7 @@ impl Runtime {
             config.save(&path)?;
         }
         let downloads = crate::downloads::Controller::new(root.join("downloads.toml"))?;
+        let _ = diagnostics.record(crate::diagnostics::Event::Startup, None);
         Ok(Self {
             app: App {
                 config,
@@ -44,11 +49,13 @@ impl Runtime {
             root,
             path,
             scan: None,
+            _lock: lock,
+            diagnostics,
         })
     }
     pub fn active(&self) -> bool {
         self.scan.is_some()
-            || self.app.server.active()
+            || self.app.server.polling()
             || self.app.discovery.busy()
             || self.app.downloads.as_ref().is_some_and(|d| d.busy())
     }
@@ -66,21 +73,56 @@ impl Runtime {
                 }
                 self.app.scanning = false;
                 match outcome {
-                    _ if cancelled => self.app.notice = "Scan cancelled".into(),
+                    _ if cancelled => {
+                        let _ = self
+                            .diagnostics
+                            .record(crate::diagnostics::Event::ScanCancelled, None);
+                        self.app.notice = "Scan cancelled".into();
+                    }
                     Ok(scan) => {
+                        let _ = self.diagnostics.record(
+                            crate::diagnostics::Event::ScanCompleted,
+                            Some(scan.candidates.len()),
+                        );
                         self.app.notice = format!(
                             "Scan complete: {} files, {} skipped",
                             scan.candidates.len(),
                             scan.skipped
                         );
-                        self.app.candidates = models::group::group(scan.candidates);
+                        self.app.invalid = scan.invalid;
+                        self.app.candidates = self
+                            .app
+                            .config
+                            .filter_groups(models::group::group(scan.candidates));
                         self.app.model_cursor = 0;
                         self.app.details = false;
                     }
-                    Err(e) => self.app.notice = format!("Scan ended: {}", e.kind()),
+                    Err(e) => {
+                        let _ = self
+                            .diagnostics
+                            .record(crate::diagnostics::Event::ScanFailed, None);
+                        self.app.notice = format!("Scan ended: {}", e.kind());
+                    }
                 }
             }
         }
+    }
+    pub fn input_failed(&self) {
+        let _ = self
+            .diagnostics
+            .record(crate::diagnostics::Event::InputFailed, None);
+    }
+    pub fn shutdown(&mut self) -> io::Result<()> {
+        if let Some(job) = self.scan.take() {
+            job.cancel();
+            job.finish();
+        }
+        let downloads = self.app.downloads.as_mut().map_or(Ok(()), |d| d.shutdown());
+        let result = self.app.server.shutdown();
+        let _ = self
+            .diagnostics
+            .record(crate::diagnostics::Event::Shutdown, None);
+        result.and(downloads)
     }
     pub fn modal(&self) -> bool {
         self.app.profile_editor.is_some()
@@ -88,10 +130,31 @@ impl Runtime {
             || self.app.searching
             || self.app.discovery.editing
             || self.app.help
+            || self.app.hide_confirmation.is_some()
     }
     pub fn handle_key(&mut self, key: KeyEvent) -> io::Result<Effect> {
         if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
             self.app.dispatch(Action::Quit);
+            return Ok(Effect::None);
+        }
+        if let Some(id) = self.app.hide_confirmation.clone() {
+            match key.code {
+                KeyCode::Esc | KeyCode::Char('n') => self.app.hide_confirmation = None,
+                KeyCode::Char('y') => {
+                    let mut next = self.app.config.clone();
+                    next.hidden_models.insert(id.clone());
+                    self.persist(next)?;
+                    self.app
+                        .candidates
+                        .retain(|g| models::library::identity(g) != id);
+                    self.app.clamp_cursor();
+                    self.app.hide_confirmation = None;
+                    self.app.details = false;
+                    self.app.notice =
+                        "Hidden from library; files retained. Restore in Settings.".into();
+                }
+                _ => {}
+            }
             return Ok(Effect::None);
         }
         if self.app.discovery.editing {
@@ -151,6 +214,9 @@ impl Runtime {
     fn persist(&mut self, next: Config) -> io::Result<()> {
         next.save(&self.path)?;
         self.app.config = next;
+        let _ = self
+            .diagnostics
+            .record(crate::diagnostics::Event::SettingsSaved, None);
         Ok(())
     }
     fn profile_key(&mut self, key: KeyEvent) -> io::Result<()> {
@@ -206,17 +272,20 @@ impl Runtime {
                 let (next, theme) = settings::apply(&self.app.config, *field, input, &self.root)?;
                 let endpoint_changed = next.endpoint != self.app.config.endpoint
                     || next.server_binary != self.app.config.server_binary
-                    || next.device != self.app.config.device;
+                    || next.device != self.app.config.device
+                    || next.api_key_file != self.app.config.api_key_file;
                 if self.app.server.active() && endpoint_changed {
                     return Err(io::Error::other(
                         "Stop server before changing endpoint or binary",
                     ));
                 }
-                let roots_changed = next.model_roots != self.app.config.model_roots;
+                let roots_changed = next.scan_roots() != self.app.config.scan_roots()
+                    || next.hidden_models != self.app.config.hidden_models;
                 self.persist(next)?;
                 self.theme = theme;
                 if roots_changed {
                     self.app.candidates.clear();
+                    self.app.invalid.clear();
                     self.app.details = false;
                     self.app.model_cursor = 0;
                     if let Some(job) = &self.scan {
@@ -224,7 +293,7 @@ impl Runtime {
                     }
                 }
                 if endpoint_changed {
-                    self.app.server.snapshot = None;
+                    self.app.server.disconnect()?;
                     self.app.server.status = "Endpoint changed; refresh server".into();
                 }
                 self.app.edit = None;
@@ -251,14 +320,35 @@ impl Runtime {
         if self.scan.is_some() {
             return Err(io::Error::other("Scan already running"));
         }
-        let roots = self.app.config.model_roots.clone();
+        let roots = self.app.config.scan_roots();
         self.scan = Some(Job::start(move |cancel| models::scan(roots, &cancel))?);
+        let _ = self
+            .diagnostics
+            .record(crate::diagnostics::Event::ScanStarted, None);
         self.app.scanning = true;
         self.app.notice = "Scanning model roots…".into();
         Ok(())
     }
     fn library_key(&mut self, key: KeyCode) -> io::Result<()> {
+        if self.app.show_invalid {
+            if matches!(key, KeyCode::Char('i') | KeyCode::Enter) {
+                self.app.show_invalid = false;
+            }
+            return Ok(());
+        }
         match key {
+            KeyCode::Char('i') => self.app.show_invalid = true,
+            KeyCode::Char('h') => {
+                if self.app.server.polling() || self.app.server.snapshot.is_some() {
+                    return Err(io::Error::other(
+                        "Stop or disconnect inference before hiding a model",
+                    ));
+                }
+                if let Some(group) = self.app.selected() {
+                    self.app.hide_confirmation = Some(models::library::identity(group));
+                }
+            }
+
             KeyCode::Up => self.app.model_cursor = self.app.model_cursor.saturating_sub(1),
             KeyCode::Down => {
                 self.app.model_cursor =
@@ -395,6 +485,7 @@ impl Runtime {
             KeyCode::Up => s.move_cursor(false),
             KeyCode::Down => s.move_cursor(true),
             KeyCode::Char('r') => s.refresh(c)?,
+            KeyCode::Char('D') => s.disconnect()?,
             KeyCode::Char('i') => s.probe(c)?,
             KeyCode::Char('s') => s.start(c, self.app.candidates.clone(), None)?,
             KeyCode::Char('x') => s.stop()?,
@@ -426,7 +517,7 @@ impl Runtime {
                     ));
                 }
                 let cwd = c.project_dir.clone().unwrap_or(std::env::current_dir()?);
-                let plan = match c.default_agent.as_str() {
+                let mut plan = match c.default_agent.as_str() {
                     "omp" => Native("omp").prepare(&c.endpoint, &model.id, cwd)?,
                     "pi" => Native("pi").prepare(&c.endpoint, &model.id, cwd)?,
                     "custom" => Custom {
@@ -436,6 +527,20 @@ impl Runtime {
                     .prepare(&c.endpoint, &model.id, cwd)?,
                     _ => return Err(io::Error::other("Unknown agent")),
                 };
+                let mode = if key == KeyCode::Char('A') {
+                    crate::agents::TerminalMode::Current
+                } else {
+                    c.agent_terminal
+                };
+                if let Some(key) = crate::llama::auth::Key::for_endpoint(
+                    c.api_key_file.as_deref(),
+                    &crate::llama::client::endpoint(&c.endpoint)?,
+                )? {
+                    if mode != crate::agents::TerminalMode::Current {
+                        return Err(io::Error::other("Authenticated agent launch requires current terminal (A); no secrets in Kitty argv"));
+                    }
+                    plan.with_key(&key, &c.default_agent);
+                }
                 return Ok(Effect::Launch(
                     plan,
                     if key == KeyCode::Char('A') {

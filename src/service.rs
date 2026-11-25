@@ -9,8 +9,8 @@ use std::{
     time::{Duration, Instant},
 };
 pub fn run(config: Config, stop: Arc<AtomicBool>) -> io::Result<()> {
-    let scan = models::scan(config.model_roots.clone(), &stop)?;
-    let groups = models::group::group(scan.candidates);
+    let scan = models::scan(config.scan_roots(), &stop)?;
+    let groups = config.filter_groups(models::group::group(scan.candidates));
     if stop.load(Ordering::Acquire) {
         return Ok(());
     }

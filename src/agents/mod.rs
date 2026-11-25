@@ -1,7 +1,7 @@
 //! Non-invasive coding-agent launch plans; no shell interpolation or config rewrites.
 use crate::llama::client::endpoint;
 use std::{ffi::OsString, io, path::PathBuf, process::Command};
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct LaunchPlan {
     pub executable: String,
     pub args: Vec<OsString>,
@@ -9,6 +9,14 @@ pub struct LaunchPlan {
     pub cwd: PathBuf,
 }
 impl LaunchPlan {
+    pub fn with_key(&mut self, key: &crate::llama::auth::Key, agent: &str) {
+        let variable = match agent {
+            "omp" => "LLAMA_CPP_API_KEY",
+            "pi" => "LLAMA_API_KEY",
+            _ => "LLAMANCER_API_KEY",
+        };
+        self.env.push((variable.into(), key.expose().into()));
+    }
     pub fn command(&self) -> Command {
         let mut cmd = Command::new(&self.executable);
         cmd.args(&self.args)

@@ -48,6 +48,16 @@ impl<T: Send + 'static> Job<T> {
             }
         }
     }
+    pub fn finish_result(mut self) -> io::Result<T> {
+        if let Some(worker) = self.worker.take() {
+            worker
+                .join()
+                .map_err(|_| io::Error::other("Background worker panicked"))?;
+        }
+        self.result
+            .recv()
+            .map_err(|_| io::Error::other("Background worker disconnected"))?
+    }
     pub fn finish(mut self) {
         if let Some(worker) = self.worker.take() {
             let _ = worker.join();
