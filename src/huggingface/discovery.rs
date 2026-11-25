@@ -111,6 +111,12 @@ impl Discovery {
             self.cursor = 0;
         }
     }
+    pub fn shutdown(&mut self) {
+        if let Some(job) = self.job.take() {
+            job.cancel();
+            job.finish();
+        }
+    }
     pub fn tick(&mut self) {
         if let Some(job) = self.job.as_mut() {
             if let Some(result) = job.poll() {
