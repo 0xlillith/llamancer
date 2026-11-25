@@ -27,7 +27,7 @@ fn run_child(
     stop: &AtomicBool,
 ) -> io::Result<()> {
     execute!(io::stdout(), DisableMouseCapture)?;
-    ratatui::restore();
+    ratatui::try_restore()?;
     let status = (|| {
         let mut child = command.spawn()?;
         loop {
@@ -69,6 +69,7 @@ fn backend_cli(mut args: impl Iterator<Item = std::ffi::OsString>) -> io::Result
         let cancel = Arc::new(AtomicBool::new(false));
         signal_hook::flag::register(libc::SIGINT, cancel.clone())?;
         signal_hook::flag::register(libc::SIGTERM, cancel.clone())?;
+        signal_hook::flag::register(libc::SIGHUP, cancel.clone())?;
         println!("{}", backends::discovery::check(&cancel)?);
         return Ok(());
     }
@@ -117,6 +118,7 @@ fn backend_cli(mut args: impl Iterator<Item = std::ffi::OsString>) -> io::Result
             let cancel = Arc::new(AtomicBool::new(false));
             signal_hook::flag::register(libc::SIGINT, cancel.clone())?;
             signal_hook::flag::register(libc::SIGTERM, cancel.clone())?;
+            signal_hook::flag::register(libc::SIGHUP, cancel.clone())?;
             println!(
                 "{}",
                 backends::install(&root, asset, &cancel, &AtomicU64::new(0))?.display()
@@ -169,6 +171,7 @@ fn main() -> io::Result<()> {
 
     let stop = Arc::new(AtomicBool::new(false));
     signal_hook::flag::register(libc::SIGTERM, Arc::clone(&stop))?;
+    signal_hook::flag::register(libc::SIGHUP, Arc::clone(&stop))?;
     let mut runtime = Runtime::new()?;
     if !runtime.app.config.scan_roots().is_empty() {
         runtime.scan()?;
@@ -290,8 +293,11 @@ fn main() -> io::Result<()> {
         }
         Ok(())
     })();
-    let mouse_result = execute!(io::stdout(), DisableMouseCapture);
-    ratatui::restore();
+    // A disconnected terminal can fail every output and raw-mode operation.
+    // Stop owned inference before attempting terminal restoration; never
+    // invoke restore(), which logs errors to the possibly disconnected tty.
     let shutdown = runtime.shutdown();
-    result.and(mouse_result).and(shutdown)
+    let mouse_result = execute!(io::stdout(), DisableMouseCapture);
+    let restored = ratatui::try_restore();
+    result.and(shutdown).and(mouse_result).and(restored)
 }

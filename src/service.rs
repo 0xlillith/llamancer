@@ -48,6 +48,7 @@ pub fn from_config() -> io::Result<()> {
     let stop = Arc::new(AtomicBool::new(false));
     signal_hook::flag::register(signal_hook::consts::SIGTERM, Arc::clone(&stop))?;
     signal_hook::flag::register(signal_hook::consts::SIGINT, Arc::clone(&stop))?;
+    signal_hook::flag::register(signal_hook::consts::SIGHUP, Arc::clone(&stop))?;
     let config = Config::load(&crate::config::config_dir()?.join("config.toml"))?;
     run(config, stop)
 }
