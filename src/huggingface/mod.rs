@@ -1,4 +1,4 @@
-//! Hugging Face Hub discovery; only explicitly requested public endpoints are contacted.
+//! Hugging Face Hub discovery; authentication is limited to the exact HTTPS Hub origin.
 use serde::{Deserialize, Serialize};
 use std::{
     io::{self, Read},
@@ -13,6 +13,8 @@ pub struct Repository {
     pub downloads: u64,
     #[serde(default)]
     pub gated: serde_json::Value,
+    #[serde(default)]
+    pub private: bool,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct File {
@@ -47,16 +49,54 @@ pub fn agent() -> ureq::Agent {
         .redirects(0)
         .build()
 }
-pub fn request(http: &ureq::Agent, url: &Url) -> ureq::Request {
-    let req = http.get(url.as_str());
-    if url.scheme() == "https"
+fn token_path() -> Option<std::path::PathBuf> {
+    use std::path::PathBuf;
+    let absolute = |key: &str| {
+        std::env::var_os(key)
+            .map(PathBuf::from)
+            .filter(|p| p.is_absolute())
+    };
+    absolute("HF_TOKEN_PATH")
+        .or_else(|| absolute("HF_HOME").map(|p| p.join("token")))
+        .or_else(|| absolute("XDG_CACHE_HOME").map(|p| p.join("huggingface/token")))
+        .or_else(|| absolute("HOME").map(|p| p.join(".cache/huggingface/token")))
+}
+fn valid_token(value: &str) -> Option<String> {
+    let value = value.trim();
+    (!value.is_empty() && value.len() <= 4096 && value.bytes().all(|b| b.is_ascii_graphic()))
+        .then(|| value.to_owned())
+}
+fn hub_token() -> Option<String> {
+    use std::os::unix::fs::OpenOptionsExt;
+    if let Ok(value) = std::env::var("HF_TOKEN") {
+        return valid_token(&value);
+    }
+    let path = token_path()?;
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK)
+        .open(path)
+        .ok()?;
+    if !file.metadata().ok()?.is_file() {
+        return None;
+    }
+    let mut text = String::new();
+    file.take(4097).read_to_string(&mut text).ok()?;
+    valid_token(&text)
+}
+fn hub_origin(url: &Url) -> bool {
+    url.scheme() == "https"
         && url.host_str() == Some("huggingface.co")
         && url.port_or_known_default() == Some(443)
-    {
-        if let Ok(token) = std::env::var("HF_TOKEN") {
-            if !token.is_empty() {
-                return req.set("Authorization", &format!("Bearer {token}"));
-            }
+        && url.username().is_empty()
+        && url.password().is_none()
+        && url.fragment().is_none()
+}
+pub fn request(http: &ureq::Agent, url: &Url) -> ureq::Request {
+    let req = http.get(url.as_str());
+    if hub_origin(url) {
+        if let Some(token) = hub_token() {
+            return req.set("Authorization", &format!("Bearer {token}"));
         }
     }
     req
@@ -69,7 +109,7 @@ pub fn error(e: ureq::Error) -> io::Error {
             } else {
                 io::ErrorKind::Other
             },
-            format!("Hugging Face HTTP {code}"),
+            match code {401|403=>format!("Hugging Face HTTP {code}: sign in with a read token and accept gated access on the repository page"),404=>"Hugging Face HTTP 404: repository or revision unavailable (private repositories require read access)".into(),_=>format!("Hugging Face HTTP {code}")},
         ),
 
         ureq::Error::Transport(_) => io::Error::new(
@@ -153,15 +193,94 @@ pub fn validate(file: &File) -> io::Result<()> {
     }
     Ok(())
 }
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct SearchSpec {
+    pub query: String,
+    pub license: Option<String>,
+    pub quant: Option<String>,
+    pub repo: Option<String>,
+}
+impl SearchSpec {
+    pub fn parse(input: &str) -> io::Result<Self> {
+        let mut spec = Self::default();
+        let mut terms = Vec::new();
+        for word in input.split_whitespace() {
+            if let Some(value) = word.strip_prefix("license:") {
+                if value.is_empty()
+                    || !value
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b == b'-')
+                    || spec.license.is_some()
+                {
+                    return Err(io::Error::other("Use one license:identifier filter"));
+                }
+                spec.license = Some(value.to_ascii_lowercase());
+            } else if let Some(value) = word.strip_prefix("quant:") {
+                if value.is_empty()
+                    || !value
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
+                    || spec.quant.is_some()
+                {
+                    return Err(io::Error::other("Use one quant:Q4_K_M filter"));
+                }
+                spec.quant = Some(value.to_ascii_lowercase());
+            } else if let Some(value) = word.strip_prefix('@') {
+                if value.split('/').count() != 2
+                    || !value.split('/').all(valid_segment)
+                    || spec.repo.is_some()
+                {
+                    return Err(io::Error::other(
+                        "Use @owner/repository for an exact repository",
+                    ));
+                }
+                spec.repo = Some(value.into());
+            } else {
+                terms.push(word);
+            }
+        }
+        spec.query = terms.join(" ");
+        if spec.repo.is_some() && (!spec.query.is_empty() || spec.license.is_some()) {
+            return Err(io::Error::other(
+                "Exact repository searches support only quant filters",
+            ));
+        }
+        Ok(spec)
+    }
+    pub fn url(&self) -> Url {
+        let mut url = Url::parse("https://huggingface.co/api/models").expect("constant URL");
+        url.query_pairs_mut()
+            .append_pair("search", &self.query)
+            .append_pair("filter", "gguf")
+            .append_pair("sort", "downloads")
+            .append_pair("direction", "-1")
+            .append_pair("limit", "50");
+        if let Some(license) = &self.license {
+            url.query_pairs_mut()
+                .append_pair("filter", &format!("license:{license}"));
+        }
+        url
+    }
+    pub fn filter_files(&self, files: Vec<File>) -> Vec<File> {
+        let Some(quant) = &self.quant else {
+            return files;
+        };
+        files
+            .into_iter()
+            .filter(|f| {
+                let name = std::path::Path::new(&f.name)
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_ascii_lowercase();
+                // Keep projector candidates visible; all matching conventional shards share the same quantization stem.
+                name.starts_with("mmproj") || name.contains(quant)
+            })
+            .collect()
+    }
+}
 pub fn search(query: &str) -> io::Result<Page> {
-    let mut url = Url::parse("https://huggingface.co/api/models").expect("constant URL");
-    url.query_pairs_mut()
-        .append_pair("search", query)
-        .append_pair("filter", "gguf")
-        .append_pair("sort", "downloads")
-        .append_pair("direction", "-1")
-        .append_pair("limit", "50");
-    page(&url)
+    page(&SearchSpec::parse(query)?.url())
 }
 pub fn files(repo: &str) -> io::Result<Vec<File>> {
     let parts: Vec<_> = repo.split('/').collect();
@@ -220,6 +339,8 @@ pub fn bundle(files: &[File], index: usize) -> Vec<File> {
         .filter(|f| {
             let p = std::path::Path::new(&f.name);
             p.parent() == path.parent()
+                && f.repo == selected.repo
+                && f.revision == selected.revision
                 && crate::models::group::shard(p).is_some_and(|(b, _, t)| b == base && t == total)
         })
         .cloned()
@@ -242,6 +363,34 @@ mod tests {
             size: 100,
             sha256: None,
         }
+    }
+    #[test]
+    fn filters_and_private_repo_addressing() {
+        let spec = SearchSpec::parse("qwen license:apache-2.0 quant:Q4_K_M").unwrap();
+        assert_eq!(spec.query, "qwen");
+        assert!(spec
+            .url()
+            .query_pairs()
+            .any(|(k, v)| k == "filter" && v == "license:apache-2.0"));
+        let exact = SearchSpec::parse("@owner/private quant:Q4_K_M").unwrap();
+        assert_eq!(exact.repo.as_deref(), Some("owner/private"));
+        let filtered = exact.filter_files(vec![
+            file("x-Q4_K_M-00001-of-00002.gguf"),
+            file("x-Q4_K_M-00002-of-00002.gguf"),
+            file("x-Q8_0.gguf"),
+            file("mmproj-F16.gguf"),
+        ]);
+        assert_eq!(filtered.len(), 3);
+        assert_eq!(bundle(&filtered, 0).len(), 2);
+        assert!(SearchSpec::parse("@owner/../bad").is_err());
+        assert!(!hub_origin(
+            &Url::parse("https://huggingface.co:444/x").unwrap()
+        ));
+        assert!(!hub_origin(
+            &Url::parse("https://user@huggingface.co/x").unwrap()
+        ));
+        assert!(!hub_origin(&Url::parse("https://example.org/x").unwrap()));
+        assert!(valid_token("foo\nbar").is_none());
     }
     #[test]
     fn pagination_never_leaves_hub() {

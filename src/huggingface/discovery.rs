@@ -1,5 +1,5 @@
 //! Background discovery with explicit user-triggered network access.
-use super::{File, Page, Repository};
+use super::{File, Page, Repository, SearchSpec};
 use crate::jobs::Job;
 use std::io;
 enum ResultSet {
@@ -18,6 +18,7 @@ pub struct Discovery {
     pub status: String,
     pub next: Option<url::Url>,
     job: Option<Job<ResultSet>>,
+    spec: SearchSpec,
 }
 impl Discovery {
     pub fn busy(&self) -> bool {
@@ -44,11 +45,27 @@ impl Discovery {
         if self.busy() {
             return Err(io::Error::other("Discovery request pending"));
         }
-        let query = self.query.clone();
-        self.job = Some(Job::start(move |_| {
-            super::search(&query).map(ResultSet::Repos)
-        })?);
-        self.status = "Searching Hugging Face…".into();
+        let spec = SearchSpec::parse(&self.query)?;
+        if let Some(repo) = spec.repo.clone() {
+            let query_spec = spec.clone();
+            let selected = repo.clone();
+            self.job = Some(Job::start(move |_| {
+                super::files(&repo).map(|files| ResultSet::Files(query_spec.filter_files(files)))
+            })?);
+            self.repo = Some(selected);
+            self.files.clear();
+            self.repos.clear();
+            self.next = None;
+            self.cursor = 0;
+            self.status = "Fetching exact repository…".into();
+        } else {
+            let url = spec.url();
+            self.job = Some(Job::start(move |_| {
+                super::page(&url).map(ResultSet::Repos)
+            })?);
+            self.status = "Searching Hugging Face…".into();
+        }
+        self.spec = spec;
         self.editing = false;
         Ok(())
     }
@@ -77,13 +94,14 @@ impl Discovery {
             .id
             .clone();
         let selected = repo.clone();
+        let spec = self.spec.clone();
         self.job = Some(Job::start(move |_| {
-            super::files(&repo).map(ResultSet::Files)
+            super::files(&repo).map(|files| ResultSet::Files(spec.filter_files(files)))
         })?);
         self.repo = Some(selected);
         self.files.clear();
         self.cursor = 0;
-        self.status = "Fetching revision and files…".into();
+        self.status = "Fetching revision and files (access may require a read token)…".into();
         Ok(())
     }
     pub fn back(&mut self) {
