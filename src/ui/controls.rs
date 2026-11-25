@@ -65,7 +65,7 @@ fn buttons(area: Rect, app: &App) -> Vec<Button> {
                     },
                     Key(Char('v')),
                 ),
-                ("★".into(), Key(Char('f'))),
+                ("Star model".into(), Key(Char('f'))),
             ],
         ),
         0 => (
@@ -157,6 +157,19 @@ fn buttons(area: Rect, app: &App) -> Vec<Button> {
                 )
             }
         }
+        4 if body.width < 66 => (
+            1,
+            vec![
+                (
+                    format!(
+                        "Category: {}",
+                        crate::settings::Field::ALL[app.setting].category()
+                    ),
+                    Pick(super::choices::Kind::Category),
+                ),
+                ("Edit".into(), Key(Enter)),
+            ],
+        ),
         4 => (
             1,
             ["Storage", "Inference", "Agent", "Workspace", "Appearance"]

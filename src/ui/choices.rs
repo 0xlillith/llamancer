@@ -16,6 +16,7 @@ pub enum Kind {
     Quant,
     Setting(Field),
     Context(bool),
+    Category,
 }
 pub struct Picker {
     pub kind: Kind,
@@ -68,6 +69,7 @@ impl Picker {
                 "BF16",
             ],
             Setting(f) => f.choices(),
+            Category => &["Storage", "Inference", "Agent", "Workspace", "Appearance"],
             Context(_) => &[
                 "auto",
                 "8192",
@@ -83,6 +85,7 @@ impl Picker {
             Sort if app.discovery.repo.is_some() => app.discovery.variant_sort.label().to_owned(),
             Sort => app.discovery.ranking.label().to_owned(),
             Setting(f) => f.initial(&app.config),
+            Category => Field::ALL[app.setting].category().into(),
             Context(global) => if global {
                 app.config.default_context
             } else {
@@ -129,6 +132,7 @@ impl Picker {
             Kind::Quant => "Quantization (repository variants)",
             Kind::Setting(_) => "Choose a value",
             Kind::Context(_) => "Context size (tokens)",
+            Kind::Category => "Settings category",
         }
     }
 }

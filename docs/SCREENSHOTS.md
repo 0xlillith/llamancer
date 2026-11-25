@@ -1,5 +1,21 @@
 # Screenshots and terminal captures
 
+## Beta.4 development interface
+
+These images are rasterized from actual Kitty ANSI terminal buffers of the reviewed beta.4 development code (before the final version bump). Isolated public fixtures and temporary configuration were used.
+
+![Library with direct actions](../assets/screenshots/beta4-library.png)
+
+![Launch panel](../assets/screenshots/beta4-launch.png)
+
+![Context presets](../assets/screenshots/beta4-context.png)
+
+![Advanced launch preferences](../assets/screenshots/beta4-advanced.png)
+
+![Repository variants](../assets/screenshots/beta4-discover.png)
+
+![Variant sort selector](../assets/screenshots/beta4-sort.png)
+
 ## Polished Nerd Font interface
 
 These captures show the running application with the optional JetBrainsMono Nerd Font Mono glyphs on CachyOS. The first is a real KDE active-window screenshot; the four remaining images are rasterizations of actual Kitty terminal buffers. All paths in the storage demo are temporary; no private repositories, credentials or model files are included. The portable icon mode also works without Nerd Fonts.

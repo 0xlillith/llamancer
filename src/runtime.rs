@@ -397,6 +397,7 @@ impl Runtime {
                 )));
             }
         }
+        self.app.server.cancel_owned_refresh();
         let mut exclusive = false;
         let target = if self.app.server.owns_server()
             && self.app.server.snapshot.as_ref().is_some_and(|s| s.router)
@@ -851,6 +852,11 @@ impl Runtime {
                 crate::huggingface::SearchSpec::parse(&query)?;
                 self.app.discovery.query = query;
                 self.app.discovery.search()?;
+            }
+            Kind::Category => {
+                if let Some(i) = Field::ALL.iter().position(|f| f.category() == value) {
+                    self.app.setting = i;
+                }
             }
             Kind::Context(global) => {
                 self.app.launch_cursor = if global { 4 } else { 3 };
@@ -1942,6 +1948,7 @@ impl Runtime {
         Ok(Effect::None)
     }
     fn launch_agent(&mut self, mode: crate::agents::TerminalMode) -> io::Result<Effect> {
+        self.app.server.cancel_owned_refresh();
         let c = &self.app.config;
         let s = &self.app.server;
         if s.busy() {

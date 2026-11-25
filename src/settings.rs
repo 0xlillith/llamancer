@@ -45,6 +45,14 @@ impl Field {
         Self::Theme,
         Self::Icons,
     ];
+    pub fn category_indices(selected: usize) -> Vec<usize> {
+        let category = Self::ALL[selected.min(Self::ALL.len() - 1)].category();
+        Self::ALL
+            .iter()
+            .enumerate()
+            .filter_map(|(i, f)| (f.category() == category).then_some(i))
+            .collect()
+    }
     pub fn choices(self) -> &'static [&'static str] {
         match self {
             Self::Theme => &[
