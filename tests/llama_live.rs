@@ -178,3 +178,90 @@ fn real_cpu_router_lifecycle() {
     supervisor.join().unwrap().unwrap();
     assert!(TcpListener::bind(config.endpoint.strip_prefix("http://").unwrap()).is_ok());
 }
+
+#[test]
+#[ignore = "requires a real multimodal model and projector"]
+fn real_cpu_multimodal() {
+    let binary = std::env::var("LLAMANCER_TEST_SERVER").expect("Set LLAMANCER_TEST_SERVER");
+    let root = PathBuf::from(
+        std::env::var_os("LLAMANCER_TEST_VISION_MODELS").expect("Set LLAMANCER_TEST_VISION_MODELS"),
+    );
+    let scan = models::scan(vec![root], &AtomicBool::new(false)).unwrap();
+    assert!(scan.invalid.is_empty(), "{:?}", scan.invalid);
+    let groups = models::group::group(scan.candidates);
+    let model = groups
+        .iter()
+        .find(|g| g.complete && !g.projector)
+        .expect("Model");
+    let projectors = models::group::projector_candidates(model, &groups);
+    assert_eq!(projectors.len(), 1);
+    assert!(model.files[0].metadata.payload_bounds_checked);
+    let projector = &projectors[0].files[0];
+    assert!(projector.metadata.payload_bounds_checked);
+    let port = TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let mut config = Config {
+        server_binary: binary,
+        endpoint: format!("http://127.0.0.1:{port}"),
+        device: "none".into(),
+        ..Config::default()
+    };
+    let mut profile = models::profile::Profile::default();
+    profile.engine.projector = Some(projector.path.to_str().unwrap().into());
+    profile.engine.context_size = Some(4096);
+    profile.engine.threads = Some(2);
+    config
+        .profiles
+        .insert(models::library::identity(model), profile);
+    const IMAGE:&str="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAIAAABMXPacAAAA+klEQVR4nO3RQQ0AIAzAwIlABP71IAYZe/SSCmhy887VYrN+EA8AgHYAALQDAKAdAADtAABoBwBAOwAA2gEA0A4AgHYAALQDAKAdAADtAABoBwBAOwAA2gEA0A4AgHYAALQDAKAdAADtAABoBwBAOwAA2gEA0A4AgHYAALQDAKAdAADtAABoBwBAOwAA2gEA0A4AgHYAALQDAKAdAADtAABoBwBAOwAA2gEA0A4AgHYAALQDAKAdAADtAABoBwBAOwAA2gEA0A4AgHYAALQDAKAdAADtAABoBwBAOwAA2gEA0A4AgHYAALQDAKAdAADtAABoBwBAOwAA2n2gyAQbEhRKvAAAAABJRU5ErkJggg==";
+    let id = llamancer::llama::router::id(model);
+    for router in [false, true] {
+        let mut controller = Controller::default();
+        controller
+            .start(
+                &config,
+                groups.clone(),
+                if router { None } else { Some(model.clone()) },
+            )
+            .unwrap();
+        wait(&mut controller, &config, |c| {
+            !c.busy()
+                && c.snapshot
+                    .as_ref()
+                    .is_some_and(|s| s.router == router && !s.models.is_empty())
+        });
+        if router {
+            controller.select_id(&id).unwrap();
+            controller.set_loaded(&config, true).unwrap();
+            wait(&mut controller, &config, |c| {
+                !c.busy() && c.selected().is_some_and(|m| m.state() == "loaded")
+            });
+        }
+        let model_id = if router { &id } else { "llamancer" };
+        let response:serde_json::Value=ureq::post(&format!("{}/v1/chat/completions",config.endpoint))
+            .timeout(Duration::from_secs(90))
+            .send_json(serde_json::json!({"model":model_id,"messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":IMAGE}},{"type":"text","text":"What color is the image?"}]}],"max_tokens":12,"temperature":0.0}))
+            .expect("Vision request accepted").into_json().unwrap();
+        assert!(
+            response["choices"][0]["message"]["content"]
+                .as_str()
+                .is_some_and(|s| !s.is_empty()),
+            "{response}"
+        );
+        assert!(
+            response["usage"]["prompt_tokens"]
+                .as_u64()
+                .is_some_and(|n| n > 50),
+            "Image tokens missing: {response}"
+        );
+        eprintln!(
+            "Vision {}: {}",
+            if router { "router" } else { "single" },
+            response["choices"][0]["message"]["content"]
+        );
+        controller.shutdown().unwrap();
+    }
+}
