@@ -24,3 +24,7 @@ The review covers credential scoping, bounded file/network inputs, locked downlo
 ## Release boundary
 
 A GitHub beta must include the exact reviewed tag's native archives and checksums, verified after downloading. Registry publication is separate; recheck names before publishing. No model weights, tokens, personal configuration, externally downloaded backends, or agent binaries belong in release artifacts. Keep stable release claims out of the initial beta. Other GPUs, model families, large-memory scenarios, terminal environments and agent versions remain outside the tested matrix.
+
+## First beta scope
+
+Version 0.1.0-beta.1 targets Linux x86_64 and aarch64. Experimental CUDA is not validated for NVIDIA inference. Qwen3.5 hybrid estimates remain unavailable; bounded CPU allocation-failure recovery is tested, not system-wide or dedicated GPU OOM. See [desktop evidence](DESKTOP-RESULTS.md). GitHub release assets are the distribution channel; no registry publication is implied.
