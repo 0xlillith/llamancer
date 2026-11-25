@@ -41,3 +41,5 @@
 - Added per-bundle download destination selection and disk-space preflight.
 
 - Added explicit model memory advisory with actual backend-reported device capacity.
+
+- Added experimental managed NVIDIA CUDA archives and separately verified runtime companions.

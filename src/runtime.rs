@@ -488,11 +488,12 @@ impl Runtime {
                     return Ok(());
                 }
                 KeyCode::Up => {
-                    self.app.backend_cursor = (self.app.backend_cursor + 2) % 3;
+                    self.app.backend_cursor =
+                        (self.app.backend_cursor + Kind::ALL.len() - 1) % Kind::ALL.len();
                     return Ok(());
                 }
                 KeyCode::Down => {
-                    self.app.backend_cursor = (self.app.backend_cursor + 1) % 3;
+                    self.app.backend_cursor = (self.app.backend_cursor + 1) % Kind::ALL.len();
                     return Ok(());
                 }
                 KeyCode::Char(action @ ('i' | 'd' | 'b')) => {
@@ -593,7 +594,11 @@ impl Runtime {
                 _ => Err(io::Error::other("Unknown backend action")),
             }
         })?;
-        self.backend = Some((job, progress, if action == 'i' { asset.size } else { 0 }));
+        self.backend = Some((
+            job,
+            progress,
+            if action == 'i' { asset.total_size() } else { 0 },
+        ));
         self.app.backend_busy = true;
         self.app.backend_status = "Working…".into();
         Ok(())

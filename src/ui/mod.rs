@@ -100,7 +100,7 @@ pub fn row_at(area: Rect, app: &App, column: u16, row: u16) -> Option<usize> {
             return None;
         }
         let row = row.checked_sub(body.y.checked_add(3)?)?;
-        return (row < 3
+        return (usize::from(row) < crate::backends::Kind::ALL.len()
             && body.width >= 3
             && column > body.x
             && column < body.right().saturating_sub(1)

@@ -74,7 +74,7 @@ Llamancer can install official llama.cpp distributions itself. No Unsloth, packa
 
 | Action | Key |
 |---|---|
-| Select CPU, Vulkan or ROCm | Up / Down |
+| Select CPU, Vulkan, ROCm or CUDA | Up / Down |
 | Browse newer/older reviewed release (upgrade/rollback) | v / u |
 | Check recent upstream releases (read-only) | c |
 | Download and install the pinned official build | i, then y |
@@ -84,7 +84,7 @@ Llamancer can install official llama.cpp distributions itself. No Unsloth, packa
 | Remove an unused managed backend | d, then y |
 | Cancel a running operation / return | x / Esc |
 
-The reviewed catalog pins llama.cpp **b12721 and b12726**, with SHA-256 and archive sizes obtained from official GitHub release metadata. CPU and Vulkan are available on x86_64 and aarch64; ROCm is available on x86_64. Installations live under `$XDG_DATA_HOME/llamancer/backends` (default `~/.local/share/llamancer/backends`). Downloads are verified before extraction and published as private versioned directories. GPU selection refuses backends that expose no compatible device. Vulkan and ROCm still require compatible system GPU runtimes; no drivers are installed automatically.
+The reviewed catalog pins llama.cpp **b12721 and b12726**, with SHA-256 and archive sizes obtained from official GitHub release metadata. CPU and Vulkan are available on x86_64 and aarch64; ROCm is available on x86_64. Experimental managed CUDA pairs the official backend with its separately checksum-pinned runtime companion (CUDA 12.8 x86_64, CUDA 13.5 aarch64); an appropriate NVIDIA driver is still required. GPU inference on NVIDIA has not yet been hardware-validated. Installations live under `$XDG_DATA_HOME/llamancer/backends` (default `~/.local/share/llamancer/backends`). Downloads are verified before extraction and published as private versioned directories. GPU selection refuses backends that expose no compatible device. Vulkan, ROCm and CUDA still require compatible system GPU runtimes/drivers; no drivers are installed automatically.
 
 Select a complete single-file GGUF of at most 512 MiB in Library before benchmarking. The quick test uses 128 prompt tokens, 32 generation tokens, two threads, two repetitions and eight GPU layers (zero for CPU). Stop all inference first. Confirm the selected GPU device in Settings, particularly on multi-GPU systems. Do not start unmanaged programs from Llamancer-owned backend directories during removal. External executable paths remain supported. Versions install side-by-side; select an installed version explicitly to switch or roll back. The reviewed catalog is updated through Llamancer releases; The read-only upstream check reports compatible newer builds with published SHA-256 metadata; unreviewed builds are not installable. Source compilation is a separate workflow.
 
