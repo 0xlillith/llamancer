@@ -48,8 +48,14 @@ jobs:
           printf 'LLAMANCER_TEST_SERVER=%s\nLLAMANCER_TEST_MODELS=%s\n' "$server" "$RUNNER_TEMP/models" >> "$GITHUB_ENV"
       - name: Test actual inference and service lifecycle
         run: cargo test --locked --test llama_live real_cpu_router_lifecycle -- --ignored --nocapture
+      - name: Exercise desktop backend harness on CPU
+        env:
+          LLAMANCER_TEST_DEVICE: none
+          LLAMANCER_TEST_GPU_LAYERS: "0"
+        run: |
+          LLAMANCER_TEST_MODEL="$LLAMANCER_TEST_MODELS/stories260K.gguf" cargo test --locked --test desktop_live -- --ignored --nocapture
       - name: Test actual Hub download and resume
-        run: cargo test --locked --test hub_live -- --ignored --nocapture
+        run: cargo test --locked --test hub_live download_and_index_real_gguf -- --ignored --nocapture
 
       - name: Fetch pinned multimodal fixtures
         if: inputs.multimodal

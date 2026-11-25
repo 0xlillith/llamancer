@@ -115,3 +115,47 @@ fn download_and_index_real_gguf() {
     assert!(downloads.queue.items[0].receipt.is_some());
     assert!(dest.exists() && !partial.exists());
 }
+
+#[test]
+#[ignore = "requires an authorized private or gated Hub repository and explicit small GGUF"]
+fn authorized_repository() {
+    let repo = std::env::var("LLAMANCER_TEST_HF_REPO").expect("Set authorized repository ID");
+    let name = std::env::var("LLAMANCER_TEST_HF_FILE").expect("Set exact GGUF filename");
+    let limit: u64 = std::env::var("LLAMANCER_TEST_HF_MAX_BYTES")
+        .unwrap_or_else(|_| "100000000".into())
+        .parse()
+        .unwrap();
+    let file = huggingface::files(&repo)
+        .unwrap()
+        .into_iter()
+        .find(|f| f.name == name)
+        .expect("Authorized file listed");
+    assert!(
+        file.size <= limit,
+        "Fixture exceeds explicit download limit"
+    );
+    assert!(
+        file.sha256.is_some(),
+        "Use an authoritative SHA-256 fixture"
+    );
+    let temp = tempfile::tempdir().unwrap();
+    let mut downloads = Controller::new(temp.path().join("queue.toml")).unwrap();
+    downloads.add(vec![file], temp.path().into()).unwrap();
+    downloads.start().unwrap();
+    let deadline = Instant::now() + Duration::from_secs(180);
+    while downloads.busy() {
+        downloads.tick();
+        assert!(Instant::now() < deadline, "Authorized transfer timeout");
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    assert_eq!(
+        downloads.queue.items[0].state,
+        State::Complete,
+        "{}",
+        downloads.status
+    );
+    assert!(downloads.queue.items[0].receipt.is_some());
+    let scan = models::scan(vec![temp.path().into()], &AtomicBool::new(false)).unwrap();
+    assert_eq!(scan.candidates.len(), 1);
+    println!("Authorized metadata, checksum-verified download and GGUF indexing passed.");
+}
