@@ -21,3 +21,9 @@
 - Added real CPU router integration coverage, optional foreground supervisor and systemd unit, paginated Hub discovery, bounded retries, transfer rates and ETA, and configurable Kitty agent launch plans.
 
 - Added exclusive TUI locking, bounded local diagnostics and ordered download shutdown; single-file imports, invalid-model reporting, hide/restore, KV-cache estimates; private-file API authentication and external endpoint backoff; improved range and checksum recovery.
+
+- Updated the terminal stack and checked Rust 1.88 support; added repeatable release benchmarks, RustSec and dependency license inventory workflows.
+- Hardened descriptor-anchored download publication and owned process-group cleanup; added interruption, external reconnect and multipart recovery tests.
+- Added recoverable managed-file quarantine with ownership receipts, checksums, Linux write leases and explicit restore.
+- Added mouse row selection, textual selection markers and a high-contrast theme.
+- Validated real systemd user-service start/restart/stop, isolated Arch x86_64 package installation, installed OMP/Pi authenticated streaming and read-tool round trips, and real single-model/router CPU image inference on both native architectures.

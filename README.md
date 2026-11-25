@@ -19,7 +19,7 @@ Llamancer brings local GGUF model discovery, inference preferences, server contr
 
 ## Status
 
-Early development. The core workflows are implemented but are not yet a stable release. Synthetic fixtures, native Linux CI, and a live Hugging Face GGUF download and checksum test are the current validation baseline. Real CPU inference has been validated against llama.cpp b12721 on ARM64. GPU, OMP and Pi compatibility is still being verified.
+Pre-release development. Native Linux x86_64 and aarch64 CI, real CPU text and image inference against llama.cpp b12721, checksum-verified Hub downloads and restoration, a real systemd user-service lifecycle, isolated Arch package installation, and installed-agent protocol smoke tests are passing. Desktop GPU inference, graphical Kitty integration, gated Hub access and final release review remain outstanding. See [verified status](docs/STATUS.md) for the precise validation boundaries.
 
 | Workspace | Current functionality |
 | --- | --- |
@@ -51,12 +51,16 @@ OMP uses the documented LLAMA_CPP_BASE_URL runtime override. Pi uses a Llamancer
 
 | View | Keys |
 | --- | --- |
-| Global | 1–5 or Tab / Shift+Tab, mouse tabs, ? help, q / Ctrl+C quit |
-| Library | r scan, x cancel, / search, s sort, f favorite, v favorites only, Enter details, p profile, l load, i invalid files, h hide |
+| Global | 1–5 or Tab / Shift+Tab, mouse tabs and rows, ? help, q / Ctrl+C quit |
+| Library | r scan, x cancel, / search, s sort, f favorite, v favorites only, Enter details, p profile, l load, i invalid files, h hide, t quarantine |
 | Discover | / search, Enter submit/open repo, Backspace back, n next page, d queue file or shard bundle |
-| Downloads | r resume, R run queue, x pause, z remove queue entry (keeps files) |
+| Downloads | r resume, R run queue, x pause, z remove queue entry (keeps files), t quarantine, T restore |
 | Server | r refresh, D detach, i probe backend, s router, x stop owned, l/u load/unload, a agent, A current terminal, g logs, w Web UI, b btop |
 | Profile | Up/Down, Enter edit, a advanced/basic, s save, Esc discard, Ctrl+U clear input |
+
+## Terminal accessibility
+
+Click a tab or a visible list row to select it; use the mouse wheel or Up/Down to move the selection. Actions retain their contextual keyboard shortcuts. Selected entries have a textual marker as well as a color highlight. Choose the built-in `high-contrast` theme in Settings for increased contrast.
 
 ## Local-first by design
 
@@ -78,6 +82,12 @@ In Discover, use a query such as `qwen license:apache-2.0 quant:Q4_K_M`, or `@ow
 - For authenticated inference, create a private file (mode 0600) containing one API token and set its absolute path in Settings. The token is not written to TOML or command-line arguments. Remote authenticated endpoints require HTTPS; managed servers bind to loopback. Use A for authenticated agent launches in the current terminal; Kitty remote launch is deliberately unavailable for these credentials.
 - One TUI at a time may write a configuration directory. Local bounded diagnostics.jsonl records event codes and counters, not prompts, paths or credentials.
 
+### Recoverable model quarantine
+
+Press `t` in Library or Downloads to quarantine a complete managed model bundle, and `T` in Downloads to restore it. Confirm explicitly after stopping all inference servers. Only files newly published by Llamancer with an authoritative SHA-256 and persisted inode receipt are eligible; imported files, legacy queue entries, changed files and files without a checksum are refused. Linux write leases reject files currently open by other processes and fail closed on unsupported filesystems. The configured local endpoint must be idle. Llamancer cannot detect unloaded paths registered in arbitrary external servers, so stop them before confirming.
+
+Quarantine renames the files in place with a `.llamancer-quarantine` suffix; no bytes are deleted and no disk space is reclaimed. Restoring never overwrites an existing path. If interrupted during a multipart move, queue state is reconciled on restart and the same operation or restore can resume. Ownership records are retained. Do not manually rename or replace quarantined files unless recovering outside Llamancer.
+
 ## Persistent router (optional)
 
 Run `llamancer serve` to supervise a router using your saved model roots and profiles without a terminal UI. Stop it with Ctrl+C when running interactively. A sample systemd user unit is included in [packaging/systemd](packaging/systemd/README.md); installation and enablement are explicit user actions. The TUI can attach to that endpoint with r. Restart the supervisor when changing model roots, profiles or device settings.
@@ -96,22 +106,12 @@ cargo build --locked --release
 python3 tests/terminal_smoke.py target/release/llamancer
 ```
 
-CI runs on native Linux x86_64 and aarch64. The optional Live CPU smoke tests workflow checks a pinned upstream llama-server and a tiny checksum-verified GGUF fixture, plus live Hub download/resume. Release builds produce tarballs and SHA-256 files as workflow artifacts; no registry publication or stable release is automatic.
+CI runs on native Linux x86_64 and aarch64. The optional Live CPU smoke tests workflow checks a pinned upstream llama-server and a tiny checksum-verified GGUF fixture, plus live Hub download/resume and managed quarantine/restore. Its optional multimodal input runs real single-model and router image inference with a checksum-pinned SmolVLM model and projector. The Arch package workflow builds and installs the VCS package in an isolated Arch x86_64 container. Release builds produce tarballs and SHA-256 files as workflow artifacts; no registry publication or stable release is automatic.
 
-Read [Architecture](docs/ARCHITECTURE.md), [Implementation specification](docs/IMPLEMENTATION.md), [GGUF indexing](docs/GGUF.md), [Integrations](docs/INTEGRATIONS.md), [Roadmap](docs/ROADMAP.md), [Status](docs/STATUS.md) and [Contributing](CONTRIBUTING.md).
+Read [Architecture](docs/ARCHITECTURE.md), [Implementation specification](docs/IMPLEMENTATION.md), [GGUF indexing](docs/GGUF.md), [Integrations](docs/INTEGRATIONS.md), [Roadmap](docs/ROADMAP.md), [Status](docs/STATUS.md), [Release validation](docs/RELEASE-VALIDATION.md) and [Contributing](CONTRIBUTING.md).
 
 Meet [Hex](assets/hex-mascot.webp), our llama sorcerer and project mascot. The default palette is Dracula-inspired.
 
 ## License
 
 MIT. Llamancer is an independent project and is not affiliated with llama.cpp, Oh My Pi, Pi or Hugging Face.
-
-### Terminal accessibility
-
-Click a tab or a visible list row to select it; use the mouse wheel or Up/Down to move the selection. Actions retain their contextual keyboard shortcuts. Selected entries have a textual marker as well as a color highlight. Choose the built-in `high-contrast` theme in Settings for increased contrast.
-
-### Recoverable model quarantine
-
-Press `t` in Library or Downloads to quarantine a complete managed model bundle, and `T` in Downloads to restore it. Confirm explicitly after stopping all inference servers. Only files newly published by Llamancer with an authoritative SHA-256 and persisted inode receipt are eligible; imported files, legacy queue entries, changed files and files without a checksum are refused. Linux write leases reject files currently open by other processes and fail closed on unsupported filesystems. The configured local endpoint must be idle. Llamancer cannot detect unloaded paths registered in arbitrary external servers, so stop them before confirming.
-
-Quarantine renames the files in place with a `.llamancer-quarantine` suffix; no bytes are deleted and no disk space is reclaimed. Restoring never overwrites an existing path. If interrupted during a multipart move, queue state is reconciled on restart and the same operation or restore can resume. Ownership records are retained. Do not manually rename or replace quarantined files unless recovering outside Llamancer.
