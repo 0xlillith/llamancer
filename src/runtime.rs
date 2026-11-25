@@ -488,6 +488,7 @@ impl Runtime {
             KeyCode::Char('D') => s.disconnect()?,
             KeyCode::Char('i') => s.probe(c)?,
             KeyCode::Char('s') => s.start(c, self.app.candidates.clone(), None)?,
+            KeyCode::Char('R') => s.restart(c, self.app.candidates.clone())?,
             KeyCode::Char('x') => s.stop()?,
             KeyCode::Char('l' | 'u') => s.set_loaded(c, key == KeyCode::Char('l'))?,
             KeyCode::Char('g') => s.show_logs = !s.show_logs,
