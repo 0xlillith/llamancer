@@ -47,3 +47,12 @@ jobs:
           name: benchmark-${{ matrix.arch }}
           path: benchmark.json
           if-no-files-found: error
+
+  msrv:
+    name: Minimum supported Rust version
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.88.0
+      - run: cargo check --locked --all-targets

@@ -31,7 +31,7 @@ Early development. The core workflows are implemented but are not yet a stable r
 
 ## Quick start
 
-Requirements: Linux, a terminal, a recent stable Rust toolchain to build from source, and a separately installed compatible llama-server for inference. OMP or Pi is optional. Install external software from its official source; Llamancer does not install or upgrade it.
+Requirements: Linux, a terminal, Rust 1.88 or newer to build from source, and a separately installed compatible llama-server for inference. OMP or Pi is optional. Install external software from its official source; Llamancer does not install or upgrade it.
 
 ```sh
 git clone https://github.com/0xlillith/llamancer.git
