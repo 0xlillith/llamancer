@@ -37,7 +37,7 @@ package() {
   cd llamancer
   install -Dm755 target/release/llamancer "$pkgdir/usr/bin/llamancer"
   install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
-  install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
+  python scripts/stage-documentation.py "$pkgdir/usr/share/doc/$pkgname"
   python scripts/collect-notices.py "$pkgdir/usr/share/licenses/$pkgname/third-party-notices"
   install -Dm644 packaging/systemd/llamancer.service "$pkgdir/usr/lib/systemd/user/llamancer.service"
   sed -i "s|%h/.cargo/bin/llamancer|/usr/bin/llamancer|" "$pkgdir/usr/lib/systemd/user/llamancer.service"

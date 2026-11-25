@@ -36,11 +36,18 @@ jobs:
           package="llamancer-linux-${ARCH}"
           mkdir -p "dist/${package}"
           install -m 755 target/release/llamancer "dist/${package}/llamancer"
-          cp LICENSE README.md "dist/${package}/"
+          python3 scripts/stage-documentation.py "dist/${package}"
+          python3 tests/package_documentation.py "dist/${package}"
           python3 scripts/collect-notices.py "dist/${package}/third-party-notices"
           cd dist
           tar -czf "${package}.tar.gz" "${package}"
           sha256sum "${package}.tar.gz" > "${package}.tar.gz.sha256"
+          sha256sum -c "${package}.tar.gz.sha256"
+          unpack="$(mktemp -d)"
+          trap 'rm -rf -- "$unpack"' EXIT
+          tar -xzf "${package}.tar.gz" -C "$unpack"
+          "$unpack/${package}/llamancer" --version
+          python3 ../tests/package_documentation.py "$unpack/${package}"
       - uses: actions/upload-artifact@v4
         with:
           name: llamancer-linux-${{ matrix.arch }}

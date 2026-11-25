@@ -8,6 +8,8 @@ on:
       - .github/workflows/arch-package.yml
       - Cargo.toml
       - Cargo.lock
+      - scripts/stage-documentation.py
+      - tests/package_documentation.py
 
 permissions:
   contents: read
@@ -42,6 +44,7 @@ jobs:
           test -f /usr/share/licenses/llamancer-git/LICENSE
           test -s /usr/share/licenses/llamancer-git/third-party-notices/inventory.json
           test -f /usr/share/icons/hicolor/scalable/apps/llamancer.svg
+          python tests/package_documentation.py /usr/share/doc/llamancer-git
           grep -Fx 'ExecStart=/usr/bin/llamancer serve' /usr/lib/systemd/user/llamancer.service
           python tests/terminal_smoke.py /usr/bin/llamancer
       - uses: actions/upload-artifact@v4
