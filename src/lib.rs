@@ -18,3 +18,5 @@ pub mod diagnostics;
 pub mod backends;
 
 pub mod doctor;
+
+pub mod workspace;

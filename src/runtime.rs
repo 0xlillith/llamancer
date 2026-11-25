@@ -177,6 +177,7 @@ impl Runtime {
     }
     pub fn modal(&self) -> bool {
         self.app.backend_open
+            || self.app.projects.is_some()
             || self.app.show_invalid
             || self.app.profile_editor.is_some()
             || self.app.edit.is_some()
@@ -187,6 +188,12 @@ impl Runtime {
             || self.app.quarantine_confirmation.is_some()
     }
     pub fn select_row(&mut self, index: usize) {
+        if let Some(projects) = &self.app.projects {
+            if index < projects.len() {
+                self.app.project_cursor = index;
+            }
+            return;
+        }
         if self.app.backend_open {
             if !self.app.backend_busy
                 && self.app.backend_confirmation.is_none()
@@ -233,6 +240,47 @@ impl Runtime {
     pub fn handle_key(&mut self, key: KeyEvent) -> io::Result<Effect> {
         if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
             self.app.dispatch(Action::Quit);
+            return Ok(Effect::None);
+        }
+        if let Some(projects) = &self.app.projects {
+            match key.code {
+                KeyCode::Esc => self.app.projects = None,
+                KeyCode::Up => self.app.project_cursor = self.app.project_cursor.saturating_sub(1),
+                KeyCode::Down => {
+                    self.app.project_cursor =
+                        (self.app.project_cursor + 1).min(projects.len().saturating_sub(1))
+                }
+                KeyCode::Enter => {
+                    let root = self
+                        .app
+                        .config
+                        .workspace_root
+                        .as_ref()
+                        .ok_or_else(|| io::Error::other("Set workspace root first"))?;
+                    let candidate = projects
+                        .get(self.app.project_cursor)
+                        .ok_or_else(|| io::Error::other("No project selected"))?;
+                    let mut next = self.app.config.clone();
+                    next.project_dir = Some(crate::workspace::select(root, candidate)?);
+                    self.persist(next)?;
+                    self.app.projects = None;
+                    self.app.notice = "Active project selected".into();
+                }
+                _ => {}
+            }
+            return Ok(Effect::None);
+        }
+        if key.code == KeyCode::Char('P') && matches!(self.app.tab, 3 | 4) && !self.modal() {
+            let root = self.app.config.workspace_root.as_ref().ok_or_else(|| {
+                io::Error::other("Set workspace parent directory in Settings first")
+            })?;
+            let projects = crate::workspace::projects(root)?;
+            self.app.project_cursor = projects
+                .iter()
+                .position(|p| Some(p) == self.app.config.project_dir.as_ref())
+                .unwrap_or(0);
+            self.app.projects = Some(projects);
+            self.app.notice.clear();
             return Ok(Effect::None);
         }
         if self.app.backend_open {
@@ -897,7 +945,18 @@ impl Runtime {
                         "Pi native integration requires router mode",
                     ));
                 }
-                let cwd = c.project_dir.clone().unwrap_or(std::env::current_dir()?);
+                let cwd = match &c.project_dir {
+                    Some(p) if p.is_dir() => p.clone(),
+                    Some(_) => {
+                        return Err(io::Error::other(
+                            "Active project no longer exists; select P",
+                        ))
+                    }
+                    None if c.workspace_root.is_some() => {
+                        return Err(io::Error::other("Select an active project with P"))
+                    }
+                    None => std::env::current_dir()?,
+                };
                 let mut plan = match c.default_agent.as_str() {
                     "omp" => Native("omp").prepare(&c.endpoint, &model.id, cwd)?,
                     "pi" => {

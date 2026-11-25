@@ -23,6 +23,7 @@ pub struct Config {
     pub custom_agent: String,
     pub custom_agent_args: Vec<String>,
     pub project_dir: Option<PathBuf>,
+    pub workspace_root: Option<PathBuf>,
     pub favorites: BTreeSet<PathBuf>,
     pub profiles: BTreeMap<PathBuf, crate::models::profile::Profile>,
 }
@@ -44,6 +45,7 @@ impl Default for Config {
             custom_agent: String::new(),
             custom_agent_args: Vec::new(),
             project_dir: None,
+            workspace_root: None,
             favorites: BTreeSet::new(),
             profiles: BTreeMap::new(),
         }

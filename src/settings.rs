@@ -15,6 +15,7 @@ pub enum Field {
     ServerBinary,
     Device,
     ProjectDir,
+    WorkspaceRoot,
     CustomAgent,
     AddRoot,
     RemoveRoot,
@@ -23,7 +24,7 @@ pub enum Field {
     RemoveImport,
 }
 impl Field {
-    pub const ALL: [Self; 14] = [
+    pub const ALL: [Self; 15] = [
         Self::Theme,
         Self::Agent,
         Self::AgentTerminal,
@@ -38,6 +39,7 @@ impl Field {
         Self::ImportModel,
         Self::RestoreModel,
         Self::RemoveImport,
+        Self::WorkspaceRoot,
     ];
     pub fn label(self) -> &'static str {
         match self {
@@ -48,7 +50,8 @@ impl Field {
             Self::ApiKeyFile => "API key file (absolute private path or none)",
             Self::ServerBinary => "llama-server executable",
             Self::Device => "GPU device (auto/none/device IDs)",
-            Self::ProjectDir => "Agent project directory",
+            Self::ProjectDir => "Active project directory (or none)",
+            Self::WorkspaceRoot => "Workspace parent directory (or none)",
             Self::CustomAgent => "Custom agent executable",
             Self::AddRoot => "Add model root",
             Self::RemoveRoot => "Remove model root (exact path)",
@@ -70,11 +73,16 @@ impl Field {
                 .unwrap_or_else(|| "none".into()),
             Self::ServerBinary => config.server_binary.clone(),
             Self::Device => config.device.clone(),
+            Self::WorkspaceRoot => config
+                .workspace_root
+                .as_ref()
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|| "none".into()),
             Self::ProjectDir => config
                 .project_dir
                 .as_ref()
                 .map(|p| p.display().to_string())
-                .unwrap_or_default(),
+                .unwrap_or_else(|| "none".into()),
             Self::CustomAgent => config.custom_agent.clone(),
             Self::RemoveImport => config
                 .model_imports
@@ -141,12 +149,21 @@ pub fn apply(
             draft.device = value.into();
         }
         Field::CustomAgent => draft.custom_agent = value.into(),
-        Field::ProjectDir => {
-            let path = PathBuf::from(value);
-            if !path.is_absolute() || !path.is_dir() {
-                return Err(invalid("Enter an existing absolute project directory"));
+        Field::ProjectDir | Field::WorkspaceRoot => {
+            let selected = if value == "none" {
+                None
+            } else {
+                let path = PathBuf::from(value);
+                if !path.is_absolute() || !path.is_dir() {
+                    return Err(invalid("Enter an existing absolute directory or none"));
+                }
+                Some(path.canonicalize()?)
+            };
+            if field == Field::WorkspaceRoot {
+                draft.workspace_root = selected;
+            } else {
+                draft.project_dir = selected;
             }
-            draft.project_dir = Some(path.canonicalize()?);
         }
         Field::AddRoot => {
             let path = PathBuf::from(value);

@@ -33,3 +33,5 @@
 - Added upstream release discovery, pinned source-build helper, gated Hub credential validation, actual GPU vision, real agent tool selection and graphical handoff, scoped authenticated OMP profiles and daemon cleanup, bounded local state, narrow modal navigation, and owned-router shutdown on terminal hangup.
 
 - Added an offline, redacted `llamancer doctor` setup report.
+
+- Added workspace parent directories and an active-project picker for agent launches.
