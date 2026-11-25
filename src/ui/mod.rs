@@ -159,18 +159,11 @@ pub fn draw_themed(frame: &mut Frame, app: &App, theme: &Theme) {
         } else {
             base
         };
-        let label = if rect.width >= 12 {
-            TABS[index]
-        } else if rect.width >= 6 {
-            ["Lib", "Find", "DL", "Srv", "Cfg"][index]
-        } else {
-            ["1", "2", "3", "4", "5"][index]
-        };
         frame.render_widget(
-            Paragraph::new(if index == app.tab && rect.width >= 4 {
-                format!(">{label}")
+            Paragraph::new(if index == app.tab {
+                format!(">{}", TABS[index])
             } else {
-                label.into()
+                TABS[index].into()
             })
             .style(style)
             .block(
