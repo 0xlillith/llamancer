@@ -14,6 +14,6 @@ The real PTY test exercised CPU and Vulkan selection and benchmarks, selected-ba
 python3 tests/backend_ui_live.py target/release/llamancer /path/to/small.gguf
 ```
 
-The initial manager deliberately ships a reviewed, pinned catalog, not an auto-updater. Multiple pinned release selection and rollback are supported with v/u or an optional CLI version argument. Live upstream release discovery and reproducible source builds are follow-up work. No automatic driver changes, system services, PATH modification or model downloads.
+The initial manager deliberately ships a reviewed, pinned catalog, not an auto-updater. Multiple pinned release selection and rollback are supported with v/u or an optional CLI version argument. The c key or backend check command queries eight recent official releases without credentials or redirects, reports newer compatible builds with published SHA-256 metadata, and never changes the reviewed install catalog. Reproducible source builds are separate work. No automatic driver changes, system services, PATH modification or model downloads.
 
 Version management regression: fresh isolated b12721 and b12726 CPU installs, TUI switching and rollback, rejection of removal while a separately configured supervisor was running, and removal after stopping the supervisor passed on Andromeda. Run `python3 tests/backend_versions_live.py target/release/llamancer /path/to/small.gguf`. Both b12726 CPU and Vulkan archives also installed in the desktop managed store; Vulkan device discovery passed.

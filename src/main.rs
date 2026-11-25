@@ -37,11 +37,21 @@ fn backend_cli(mut args: impl Iterator<Item = std::ffi::OsString>) -> io::Result
         atomic::{AtomicBool, AtomicU64},
         Arc,
     };
-    let root = backends::root()?;
     let action = args
         .next()
         .and_then(|s| s.into_string().ok())
         .unwrap_or_default();
+    if action == "check" {
+        if args.next().is_some() {
+            return Err(io::Error::other("Unexpected backend check argument"));
+        }
+        let cancel = Arc::new(AtomicBool::new(false));
+        signal_hook::flag::register(libc::SIGINT, cancel.clone())?;
+        signal_hook::flag::register(libc::SIGTERM, cancel.clone())?;
+        println!("{}", backends::discovery::check(&cancel)?);
+        return Ok(());
+    }
+    let root = backends::root()?;
     if action == "list" && args.next().is_none() {
         for release in backends::RELEASES {
             println!("Official llama.cpp {release}");
@@ -99,7 +109,7 @@ fn backend_cli(mut args: impl Iterator<Item = std::ffi::OsString>) -> io::Result
         }
         _ => {
             return Err(io::Error::other(
-                "Use backend list, install KIND or probe KIND",
+                "Use backend list, check, install KIND or probe KIND",
             ))
         }
     }
@@ -124,7 +134,7 @@ fn main() -> io::Result<()> {
                 return Ok(());
             }
             Some("--help" | "-h") => {
-                println!("Llamancer — Summon your models.\n\nUsage: llamancer [serve|backend|--help|--version]\n  serve   Supervise a local router without a TUI\n  backend list | install KIND [VERSION] | probe KIND [VERSION]");
+                println!("Llamancer — Summon your models.\n\nUsage: llamancer [serve|backend|--help|--version]\n  serve   Supervise a local router without a TUI\n  backend list | check | install KIND [VERSION] | probe KIND [VERSION]");
                 return Ok(());
             }
             _ => {
