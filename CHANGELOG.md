@@ -47,3 +47,5 @@
 - Added guided setup and bounded comparable benchmark history.
 
 - Optional auto/nerd/plain icon modes, responsive contextual sidebars, polished theme-aware visual chrome and expandable model inspector.
+
+- Pin new queued model destination directory identities and reject replaced/redirected roots. Add opt-in multi-root/hybrid and bounded memory-failure acceptance tests.

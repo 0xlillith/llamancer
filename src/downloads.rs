@@ -103,9 +103,40 @@ pub enum State {
 pub struct Item {
     pub file: File,
     pub root: PathBuf,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    root_identity: Option<RootIdentity>,
     pub state: State,
     #[serde(default)]
     pub receipt: Option<Receipt>,
+}
+// Directory identity, not mtime: adding files must not invalidate a queued root.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct RootIdentity {
+    device: String,
+    inode: String,
+}
+impl RootIdentity {
+    fn from_metadata(m: &fs::Metadata) -> Self {
+        Self {
+            device: format!("{:x}", m.dev()),
+            inode: format!("{:x}", m.ino()),
+        }
+    }
+}
+fn open_root(root: &Path, expected: Option<&RootIdentity>) -> io::Result<fs::File> {
+    if !root.is_absolute() || root.canonicalize()? != root {
+        return Err(io::Error::other("Queued download root moved or redirected"));
+    }
+    let opened = Destination::open_directory(root)?;
+    let metadata = opened.metadata()?;
+    if !same_inode(&metadata, &fs::symlink_metadata(root)?)
+        || expected.is_some_and(|id| *id != RootIdentity::from_metadata(&metadata))
+    {
+        return Err(io::Error::other(
+            "Queued download root was replaced; restore the original directory",
+        ));
+    }
+    Ok(opened)
 }
 /// Ownership evidence is recorded only after publishing a newly downloaded file.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -176,8 +207,8 @@ struct Destination {
 impl Destination {
     fn open(item: &Item) -> io::Result<Self> {
         huggingface::validate(&item.file)?;
-        let mut visible = item.root.canonicalize()?;
-        let mut parent = Self::open_directory(&visible)?;
+        let mut visible = item.root.clone();
+        let mut parent = open_root(&visible, item.root_identity.as_ref())?;
         let mut parts: Vec<_> = item.file.repo.split('/').collect();
         parts.push(&item.file.revision);
         let mut name: Vec<_> = item.file.name.split('/').collect();
@@ -662,6 +693,7 @@ impl Controller {
         for file in &files {
             huggingface::validate(file)?;
         }
+        let root_identity = RootIdentity::from_metadata(&open_root(&root, None)?.metadata()?);
         let old = self.queue.items.len();
         for file in files {
             if !self
@@ -673,6 +705,7 @@ impl Controller {
                 self.queue.items.push(Item {
                     file,
                     root: root.clone(),
+                    root_identity: Some(root_identity.clone()),
                     state: State::Queued,
                     receipt: None,
                 });
@@ -962,6 +995,7 @@ mod tests {
                 sha256: Some(format!("{:x}", Sha256::digest(b"abcdef"))),
             },
             root: root.into(),
+            root_identity: None,
             state: State::Queued,
             receipt: None,
         }
@@ -1339,6 +1373,7 @@ mod tests {
                 sha256: Some(format!("{:x}", Sha256::digest(b"abc"))),
             },
             root: temp.path().into(),
+            root_identity: None,
             state: State::Queued,
             receipt: None,
         };
@@ -1374,6 +1409,32 @@ mod tests {
         assert!(check_destination(&root, u64::MAX).is_err());
         assert!(check_destination(&root, 0).is_ok());
         assert_eq!(fs::read_dir(root).unwrap().count(), 0);
+    }
+    #[test]
+    fn queued_root_replacement_is_rejected_after_restart() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("models");
+        let moved = tmp.path().join("original");
+        fs::create_dir(&root).unwrap();
+        let path = tmp.path().join("queue.toml");
+        let mut q = Controller::new(path.clone()).unwrap();
+        q.add(vec![fixture(&root).file], root.clone()).unwrap();
+        drop(q);
+        fs::rename(&root, &moved).unwrap();
+        let outside = tmp.path().join("outside");
+        fs::create_dir(&outside).unwrap();
+        std::os::unix::fs::symlink(&outside, &root).unwrap();
+        let q = Controller::new(path).unwrap();
+        let item = &q.queue.items[0];
+        assert!(Destination::open(item).is_err());
+        assert_eq!(fs::read_dir(&outside).unwrap().count(), 0);
+        fs::remove_file(&root).unwrap();
+        fs::create_dir(&root).unwrap();
+        assert!(Destination::open(item).is_err());
+        assert_eq!(fs::read_dir(&root).unwrap().count(), 0);
+        fs::remove_dir(&root).unwrap();
+        fs::rename(&moved, &root).unwrap();
+        assert!(Destination::open(item).is_ok());
     }
     #[test]
     fn queue_roundtrip_and_non_destructive_removal() {

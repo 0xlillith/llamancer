@@ -379,6 +379,7 @@ mod tests {
                 sha256: Some(format!("{:x}", Sha256::digest(b"abcdef"))),
             },
             root: root.into(),
+            root_identity: None,
             state: State::Complete,
             receipt: None,
         };
