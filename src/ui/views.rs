@@ -19,6 +19,22 @@ pub fn content(app: &App, body: Rect) -> (&'static str, String) {
             "Run model + open coding agent",
             "Run model only",
             "Inspect model details",
+            &format!(
+                "Context for this model: {}  ←/→ presets · Enter custom",
+                app.config
+                    .effective_profile(g)
+                    .engine
+                    .context_size
+                    .map(|n| n.to_string())
+                    .unwrap_or_else(|| "auto".into())
+            ),
+            &format!(
+                "Default context (all models): {}  ←/→ presets · Enter custom",
+                app.config
+                    .default_context
+                    .map(|n| n.to_string())
+                    .unwrap_or_else(|| "auto".into())
+            ),
         ]
         .iter()
         .enumerate()
@@ -29,6 +45,30 @@ pub fn content(app: &App, body: Rect) -> (&'static str, String) {
             ));
         }
         lines.push(String::new());
+        if let Some(input) = &app.context_input {
+            lines.push(format!(
+                "Enter tokens (e.g. 65536) or auto: {}▏",
+                super::safe(input)
+            ));
+        }
+        lines.push(
+            "Saved immediately. Higher context increases KV memory; auto inherits model/default."
+                .into(),
+        );
+        if let Some(e) = crate::models::estimate::estimate(g, &app.config.effective_profile(g)) {
+            lines.push(format!("Advisory: {:.2} GiB weights + {:.2} GiB KV at {} tokens (excludes runtime overhead)",e.weights as f64/1073741824.0,e.kv as f64/1073741824.0,e.context));
+        } else {
+            lines.push("Memory estimate unavailable for this model architecture.".into());
+        }
+        if app.server.is_single_model(g)
+            && app.server.active_context != app.config.effective_profile(g).engine.context_size
+        {
+            lines.push("Context changed: confirm Run to restart this managed model.".into());
+        }
+        if app.server.snapshot.as_ref().is_some_and(|s| s.router) {
+            lines
+                .push("Router context changes require restarting the router (R in Server).".into());
+        }
         if app.server.owns_server()
             && app.server.snapshot.as_ref().is_some_and(|s| !s.router)
             && !app.server.is_single_model(g)
@@ -382,8 +422,19 @@ pub fn content(app: &App, body: Rect) -> (&'static str, String) {
                             .map(|c| if c.is_control() { '�' } else { c })
                             .collect::<String>()
                     };
-                    let mut lines=vec![format!("Endpoint: {}",safe(&app.config.endpoint)),format!("{} | {}",if server.owns_server(){"Managed session"}else{"External / stopped"},safe(&server.status)),
-                    "s Start router | B choose backend | x Stop | a Launch agent | w Web UI | g logs".into()];
+                    let mut lines = vec![
+                        format!("Endpoint: {}", safe(&app.config.endpoint)),
+                        format!(
+                            "{} | {}",
+                            if server.owns_server() {
+                                "Managed session"
+                            } else {
+                                "External / stopped"
+                            },
+                            safe(&server.status)
+                        ),
+                        super::server_actions(app),
+                    ];
                     if server.show_logs {
                         lines.extend(
                             server

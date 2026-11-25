@@ -54,6 +54,7 @@ pub struct App {
     pub details: bool,
     pub launch_menu: Option<Group>,
     pub launch_cursor: usize,
+    pub context_input: Option<String>,
     pub launching_agent: bool,
     pub inspector_scroll: u16,
     pub fit_report: Option<String>,

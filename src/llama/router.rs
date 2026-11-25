@@ -59,11 +59,7 @@ pub fn prepare(
     let mut count = 0;
     for group in groups.iter().filter(|g| g.complete && !g.projector) {
         let path = &group.files[0].path;
-        let profile = config
-            .profiles
-            .get(&identity(group))
-            .cloned()
-            .unwrap_or_default();
+        let profile = config.effective_profile(group);
         let args = process::profile_args(&profile, help)?;
         writeln!(
             file,

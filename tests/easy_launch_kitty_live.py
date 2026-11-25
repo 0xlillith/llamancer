@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Real two-Enter Library -> llama-server -> independent Kitty OMP window test."""
-import json, os, socket, subprocess as sp, tempfile, time, urllib.request, signal, sys
+import json, os, socket, subprocess as sp, tempfile, time, urllib.request, signal, sys, tomllib
 from pathlib import Path
 binary,server,model=(Path(x).resolve(strict=True) for x in sys.argv[1:])
 gui=dict(os.environ)
@@ -43,7 +43,15 @@ with tempfile.TemporaryDirectory(prefix="llamancer-two-enter-") as tmp:
  try:
   wait(lambda:screen("Scan complete"),"model scan")
   rc("send-key","enter");wait(lambda:screen("Launch model"),"launch menu")
-  rc("send-key","enter")
+  # Save a preferred global context and a model override from the launch menu.
+  rc("send-key","down","down","down","down");rc("send-key","enter");rc("send-text","4096");rc("send-key","enter")
+  wait(lambda:screen("Default context (all models): 4096"),"saved default context")
+  rc("send-key","up");rc("send-key","enter");rc("send-text","2048");rc("send-key","enter")
+  wait(lambda:screen("Context for this model: 2048"),"saved override")
+  config=tomllib.loads((cfg/"config.toml").read_text())
+  assert config["default_context"]==4096
+  assert config["profiles"][str(model)]["engine"]["context_size"]==2048
+  rc("send-key","up","up","up");rc("send-key","enter")
   pids=wait(find_agent,"real OMP launched with exact endpoint",60)
   assert pids
   with urllib.request.urlopen(endpoint+"/health",timeout=3) as r:assert r.status==200
@@ -55,9 +63,26 @@ with tempfile.TemporaryDirectory(prefix="llamancer-two-enter-") as tmp:
    try:os.kill(pid,signal.SIGTERM)
    except ProcessLookupError:pass
   wait(lambda:not find_agent(),"agent exit")
+  def port_closed():
+   with socket.socket() as s:s.settimeout(.5);return s.connect_ex(("127.0.0.1",port))!=0
+  wait(port_closed,"agent exit releases owned server",25)
+  print("Closing OMP releases its managed inference before Llamancer exits",flush=True)
+  # A model-only session is independent and must survive the agent window.
+  rc("send-text","1");wait(lambda:screen("Library"),"library")
+  rc("send-key","enter");wait(lambda:screen("Launch model"),"launch menu")
+  rc("send-key","down");rc("send-key","enter")
+  wait(lambda:screen("Connected"),"manual model ready",35)
+  rc("send-key","enter")
+  pids=wait(find_agent,"agent on independently started server")
+  for pid in pids:
+   try:os.kill(pid,signal.SIGTERM)
+   except ProcessLookupError:pass
+  wait(lambda:not find_agent(),"second agent exit")
+  time.sleep(2)
+  assert not port_closed(),"independent server must stay running"
+  rc("send-text","x");wait(port_closed,"manual stop")
   rc("send-text","q");app.wait(timeout=20)
-  with socket.socket() as s:s.settimeout(1);assert s.connect_ex(("127.0.0.1",port))!=0
-  print("Owned inference cleanup passed",flush=True)
+  print("Independent server survives agent close; explicit stop and context persistence passed",flush=True)
  finally:
   for pid in matches():
    try:os.kill(pid,signal.SIGTERM)

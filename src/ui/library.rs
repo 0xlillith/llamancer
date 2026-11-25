@@ -324,12 +324,7 @@ fn inspector_widget(app: &App, p: &Palette, expanded: bool) -> Paragraph<'static
         ));
         lines.push(Line::raw(""));
         lines.push(section("INFERENCE"));
-        let profile = app
-            .config
-            .profiles
-            .get(&identity(group))
-            .cloned()
-            .unwrap_or_default();
+        let profile = app.config.effective_profile(group);
         lines.push(field(
             "GPU layers",
             profile
