@@ -16,4 +16,8 @@ Start the TUI separately and refresh Server to attach to the configured endpoint
     systemctl --user restart llamancer.service
     systemctl --user stop llamancer.service
 
-To opt into startup at login, use systemctl --user enable llamancer.service. No service is installed or enabled by Llamancer. The supervisor is tested independently of systemd; the actual user-manager unit must still be validated on a desktop with an active user bus.
+To opt into startup at login, use systemctl --user enable llamancer.service. No service is installed or enabled by Llamancer. The supervisor is tested independently of systemd, and the sample unit passed an isolated real systemd user-manager lifecycle test on Debian ARM64. To reproduce this test with a running user bus:
+
+    python3 tests/systemd_smoke.py /path/to/llamancer /path/to/llama-server /path/to/tiny.gguf
+
+The test installs a uniquely named temporary runtime unit, starts and restarts it, confirms shutdown and port release, and removes the test unit. It does not enable or change your normal service. Desktop installation and the Arch package are still separate validation targets.
