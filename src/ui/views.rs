@@ -290,7 +290,7 @@ pub fn content(app: &App, body: Rect) -> (&'static str, String) {
                             d.queue.items.iter().enumerate().skip(offset).take(capacity)
                         {
                             let status = d
-                                .progress(i)
+                                .known_bytes(i)
                                 .map(|n| {
                                     format!(
                                         "{:.1}% ({:.2}/{:.2} GiB)",
@@ -300,7 +300,9 @@ pub fn content(app: &App, body: Rect) -> (&'static str, String) {
                                     )
                                 })
                                 .unwrap_or_else(|| format!("{:?}", item.state));
-                            let status = if let Some((speed, eta)) = d.speed_eta(i) {
+                            let status = if d.is_verifying(i) {
+                                format!("Verifying SHA-256 | {status}")
+                            } else if let Some((speed, eta)) = d.speed_eta(i) {
                                 format!(
                                     "{status} | {:.1} MiB/s | ETA {}m {:02}s",
                                     speed / 1048576.0,
@@ -311,10 +313,20 @@ pub fn content(app: &App, body: Rect) -> (&'static str, String) {
                                 status
                             };
                             lines.push(format!(
-                                "{} {} | {}",
+                                "{} {:<12} {} | {} | {}",
                                 if i == d.cursor { ">" } else { " " },
-                                safe(&item.file.name),
-                                status
+                                if d.is_verifying(i) {
+                                    "Verifying".into()
+                                } else if d.progress(i).is_some() {
+                                    "Downloading".into()
+                                } else {
+                                    format!("{:?}", item.state)
+                                },
+                                d.known_bytes(i)
+                                    .map(|n| super::chrome::meter(n, item.file.size, 12))
+                                    .unwrap_or_else(|| "────────────".into()),
+                                status,
+                                safe(&item.file.name)
                             ));
                         }
                         if d.queue.items.is_empty() {

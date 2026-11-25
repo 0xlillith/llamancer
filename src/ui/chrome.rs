@@ -212,7 +212,12 @@ fn key_lines(hints: &str, p: &Palette, width: u16, max: usize) -> Vec<Line<'stat
     result
 }
 pub fn footer(frame: &mut Frame, area: Rect, hints: &str, app: &App, p: &Palette) {
-    let notice = if !app.notice.is_empty() {
+    let notice = if app.tab == 2 && app.downloads.as_ref().is_some_and(|d| d.busy()) {
+        app.downloads
+            .as_ref()
+            .map(|d| safe(&d.status))
+            .unwrap_or_default()
+    } else if !app.notice.is_empty() {
         safe(&app.notice)
     } else if let Some((n, t)) = app.backend_progress {
         format!(
@@ -430,8 +435,23 @@ pub fn aside(frame: &mut Frame, area: Rect, app: &App, p: &Palette) {
                             item.state,
                             item.file.size as f64 / 1073741824.0
                         )));
-                        if let Some(n) = d.progress(d.cursor) {
-                            lines.push(Line::styled(meter(n, item.file.size, 20), p.heading));
+                        if let Some(n) = d.known_bytes(d.cursor) {
+                            lines.push(Line::styled(meter(n, item.file.size, 28), p.heading));
+                            lines.push(Line::raw(format!(
+                                "{:.2}/{:.2} GiB · {:.1}%",
+                                n as f64 / 1073741824.0,
+                                item.file.size as f64 / 1073741824.0,
+                                n as f64 / item.file.size as f64 * 100.0
+                            )));
+                        }
+                        if d.is_verifying(d.cursor) {
+                            lines.push(Line::styled("Verifying SHA-256", p.heading));
+                        }
+                        if let Some((graph, peak)) = d.speed_history(d.cursor) {
+                            lines.push(Line::raw(""));
+                            lines.push(Line::styled("Recent transfer rate", p.muted));
+                            lines.push(Line::styled(graph, p.heading));
+                            lines.push(Line::raw(format!("Peak {:.1} MiB/s", peak / 1048576.0)));
                         }
                         if let Some((speed, eta)) = d.speed_eta(d.cursor) {
                             lines.push(Line::raw(format!(
