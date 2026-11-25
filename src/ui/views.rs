@@ -7,13 +7,15 @@ pub fn content(app: &App, body: Rect) -> (&'static str, String) {
         let mut lines = vec![
             format!(
                 "Official llama.cpp {} | {}",
-                backends::RELEASE,
+                backends::RELEASES[app.backend_version],
                 super::safe(&app.backend_hardware)
             ),
             String::new(),
         ];
         for (i, kind) in Kind::ALL.into_iter().enumerate() {
-            let status = if let Some(asset) = backends::catalog(kind) {
+            let status = if let Some(asset) =
+                backends::catalog_version(kind, backends::RELEASES[app.backend_version])
+            {
                 let installed = app
                     .backend_root
                     .as_ref()
@@ -40,6 +42,11 @@ pub fn content(app: &App, body: Rect) -> (&'static str, String) {
                 kind.name()
             ));
         }
+        lines.push(format!(
+            "v/u: switch catalog version ({}/{})",
+            app.backend_version + 1,
+            backends::RELEASES.len()
+        ));
         lines.push(String::new());
         if let Some(action) = app.backend_confirmation {
             let label = match action {

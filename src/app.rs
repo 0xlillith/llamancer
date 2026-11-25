@@ -21,6 +21,7 @@ pub struct App {
     pub tab: usize,
     pub backend_open: bool,
     pub backend_cursor: usize,
+    pub backend_version: usize,
     pub backend_confirmation: Option<char>,
     pub backend_busy: bool,
     pub backend_hardware: String,

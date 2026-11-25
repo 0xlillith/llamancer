@@ -43,21 +43,23 @@ fn backend_cli(mut args: impl Iterator<Item = std::ffi::OsString>) -> io::Result
         .and_then(|s| s.into_string().ok())
         .unwrap_or_default();
     if action == "list" && args.next().is_none() {
-        println!("Official llama.cpp {}", backends::RELEASE);
-        for kind in Kind::ALL {
-            if let Some(asset) = backends::catalog(kind) {
-                println!(
-                    "{}: {} ({} bytes)",
-                    kind.name(),
-                    if asset.installed(&root) {
-                        "installed"
-                    } else {
-                        "not installed"
-                    },
-                    asset.size
-                );
-            } else {
-                println!("{}: unavailable on this architecture", kind.name());
+        for release in backends::RELEASES {
+            println!("Official llama.cpp {release}");
+            for kind in Kind::ALL {
+                if let Some(asset) = backends::catalog_version(kind, release) {
+                    println!(
+                        "{}: {} ({} bytes)",
+                        kind.name(),
+                        if asset.installed(&root) {
+                            "installed"
+                        } else {
+                            "not installed"
+                        },
+                        asset.size
+                    );
+                } else {
+                    println!("{}: unavailable on this architecture", kind.name());
+                }
             }
         }
         return Ok(());
@@ -68,11 +70,17 @@ fn backend_cli(mut args: impl Iterator<Item = std::ffi::OsString>) -> io::Result
             .and_then(|s| s.into_string().ok())
             .unwrap_or_default(),
     )?;
+    let version = match args.next() {
+        Some(value) => value
+            .into_string()
+            .map_err(|_| io::Error::other("Invalid release tag"))?,
+        None => backends::RELEASE.into(),
+    };
     if args.next().is_some() {
         return Err(io::Error::other("Unexpected backend argument"));
     }
-    let asset = backends::catalog(kind)
-        .ok_or_else(|| io::Error::other("No pinned release asset for this architecture"))?;
+    let asset = backends::catalog_version(kind, &version)
+        .ok_or_else(|| io::Error::other("No pinned release asset for this architecture/version"))?;
     match action.as_str() {
         "install" => {
             let cancel = Arc::new(AtomicBool::new(false));
@@ -116,7 +124,7 @@ fn main() -> io::Result<()> {
                 return Ok(());
             }
             Some("--help" | "-h") => {
-                println!("Llamancer — Summon your models.\n\nUsage: llamancer [serve|backend|--help|--version]\n  serve   Supervise a local router without a TUI\n  backend list | install KIND | probe KIND");
+                println!("Llamancer — Summon your models.\n\nUsage: llamancer [serve|backend|--help|--version]\n  serve   Supervise a local router without a TUI\n  backend list | install KIND [VERSION] | probe KIND [VERSION]");
                 return Ok(());
             }
             _ => {
