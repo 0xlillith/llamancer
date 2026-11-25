@@ -110,15 +110,13 @@ impl Client {
     }
     pub fn snapshot(&self) -> io::Result<Snapshot> {
         self.get("health")?;
-        let router = self
-            .get("props")
-            .ok()
-            .and_then(|v| {
-                v.get("role")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s == "router")
-            })
-            .unwrap_or(false);
+        // A failed or denied props request is not evidence of a single-model server.
+        let props = self.get("props")?;
+        let router = match props.get("role").and_then(|v| v.as_str()) {
+            Some("router") => true,
+            Some("model" | "server" | "single") | None if props.is_object() => false,
+            _ => return Err(io::Error::other("Unrecognized server role")),
+        };
         let data = self.get(if router { "models" } else { "v1/models" })?;
         let list = data.get("data").cloned().unwrap_or(data);
         let models =

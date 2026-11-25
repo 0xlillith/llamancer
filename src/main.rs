@@ -154,23 +154,25 @@ fn main() -> io::Result<()> {
                     match runtime.handle_key(key) {
                         Ok(Effect::None) => {}
                         Ok(Effect::Launch(plan, mode)) => {
-                            runtime.app.notice =
-                                match run_child(&mut terminal, plan.terminal_command(mode)) {
-                                    Ok(()) => {
-                                        if mode == llamancer::agents::TerminalMode::Current {
-                                            "Agent session ended".into()
-                                        } else {
-                                            "Kitty launch accepted".into()
-                                        }
+                            runtime.app.notice = match plan
+                                .terminal_command(mode)
+                                .and_then(|command| run_child(&mut terminal, command))
+                            {
+                                Ok(()) => {
+                                    if mode == llamancer::agents::TerminalMode::Current {
+                                        "Agent session ended".into()
+                                    } else {
+                                        "Kitty launch accepted".into()
                                     }
-                                    Err(e) => {
-                                        if mode == llamancer::agents::TerminalMode::Current {
-                                            e.to_string()
-                                        } else {
-                                            format!("{e}; press A for current terminal")
-                                        }
+                                }
+                                Err(e) => {
+                                    if mode == llamancer::agents::TerminalMode::Current {
+                                        e.to_string()
+                                    } else {
+                                        format!("{e}; press A for current terminal")
                                     }
-                                };
+                                }
+                            };
                         }
                         Ok(Effect::Monitor) => {
                             runtime.app.notice =
