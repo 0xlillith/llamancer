@@ -11,25 +11,31 @@ pub enum Field {
     Agent,
     AgentTerminal,
     Endpoint,
+    ApiKeyFile,
     ServerBinary,
     Device,
     ProjectDir,
     CustomAgent,
     AddRoot,
     RemoveRoot,
+    ImportModel,
+    RestoreModel,
 }
 impl Field {
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 13] = [
         Self::Theme,
         Self::Agent,
         Self::AgentTerminal,
         Self::Endpoint,
+        Self::ApiKeyFile,
         Self::ServerBinary,
         Self::Device,
         Self::ProjectDir,
         Self::CustomAgent,
         Self::AddRoot,
         Self::RemoveRoot,
+        Self::ImportModel,
+        Self::RestoreModel,
     ];
     pub fn label(self) -> &'static str {
         match self {
@@ -37,12 +43,15 @@ impl Field {
             Self::Agent => "Default agent",
             Self::AgentTerminal => "Agent terminal (current/kitty-tab/kitty-window)",
             Self::Endpoint => "Endpoint",
+            Self::ApiKeyFile => "API key file (absolute private path or none)",
             Self::ServerBinary => "llama-server executable",
             Self::Device => "GPU device (auto/none/device IDs)",
             Self::ProjectDir => "Agent project directory",
             Self::CustomAgent => "Custom agent executable",
             Self::AddRoot => "Add model root",
             Self::RemoveRoot => "Remove model root (exact path)",
+            Self::ImportModel => "Import GGUF by reference (absolute path)",
+            Self::RestoreModel => "Restore hidden model (exact identity path)",
         }
     }
     pub fn initial(self, config: &Config) -> String {
@@ -51,6 +60,11 @@ impl Field {
             Self::Agent => config.default_agent.clone(),
             Self::AgentTerminal => config.agent_terminal.label().into(),
             Self::Endpoint => config.endpoint.clone(),
+            Self::ApiKeyFile => config
+                .api_key_file
+                .as_ref()
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|| "none".into()),
             Self::ServerBinary => config.server_binary.clone(),
             Self::Device => config.device.clone(),
             Self::ProjectDir => config
@@ -87,6 +101,17 @@ pub fn apply(
         Field::Endpoint => {
             draft.endpoint = crate::llama::client::endpoint(value)?.to_string();
         }
+        Field::ApiKeyFile => {
+            draft.api_key_file = if value == "none" {
+                None
+            } else {
+                Some(PathBuf::from(value))
+            };
+            crate::llama::auth::Key::for_endpoint(
+                draft.api_key_file.as_deref(),
+                &crate::llama::client::endpoint(&draft.endpoint)?,
+            )?;
+        }
         Field::ServerBinary => draft.server_binary = value.into(),
         Field::Device => {
             if !value
@@ -115,10 +140,37 @@ pub fn apply(
                 draft.model_roots.push(path);
             }
         }
+        Field::ImportModel => {
+            let path = PathBuf::from(value);
+            if !path.is_absolute()
+                || !path.is_file()
+                || !path
+                    .extension()
+                    .is_some_and(|s| s.eq_ignore_ascii_case("gguf"))
+            {
+                return Err(invalid("Enter an existing absolute GGUF file path"));
+            }
+            let path = path.canonicalize()?;
+            if !draft.model_imports.contains(&path) {
+                draft.model_imports.push(path);
+            }
+        }
+        Field::RestoreModel => {
+            let path = PathBuf::from(value);
+            if !draft.hidden_models.remove(&path) {
+                return Err(invalid("No hidden model with this identity"));
+            }
+        }
         Field::RemoveRoot => {
             let path = PathBuf::from(value);
             draft.model_roots.retain(|p| p != &path);
         }
+    }
+    if draft.api_key_file.is_some() {
+        crate::llama::auth::Key::for_endpoint(
+            draft.api_key_file.as_deref(),
+            &crate::llama::client::endpoint(&draft.endpoint)?,
+        )?;
     }
     let theme = Theme::load(root, &draft.theme)?;
     Ok((draft, theme))

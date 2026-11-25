@@ -31,6 +31,7 @@ pub struct Snapshot {
 pub struct Client {
     base: Url,
     http: ureq::Agent,
+    key: Option<std::sync::Arc<super::auth::Key>>,
 }
 pub fn endpoint(value: &str) -> io::Result<Url> {
     let mut url = Url::parse(value)
@@ -72,19 +73,31 @@ impl Client {
     pub fn new(value: &str) -> io::Result<Self> {
         Ok(Self {
             base: endpoint(value)?,
+            key: None,
             http: ureq::AgentBuilder::new()
                 .timeout(Duration::from_secs(5))
                 .redirects(0)
                 .build(),
         })
     }
+    pub fn from_config(config: &crate::config::Config) -> io::Result<Self> {
+        let mut client = Self::new(&config.endpoint)?;
+        client.key = super::auth::Key::for_endpoint(config.api_key_file.as_deref(), &client.base)?
+            .map(std::sync::Arc::new);
+        Ok(client)
+    }
+    fn request(&self, method: &str, path: &str) -> io::Result<ureq::Request> {
+        let request = self.http.request(
+            method,
+            self.base.join(path).map_err(io::Error::other)?.as_str(),
+        );
+        Ok(match &self.key {
+            Some(key) => request.set("Authorization", &format!("Bearer {}", key.expose())),
+            None => request,
+        })
+    }
     fn get(&self, path: &str) -> io::Result<serde_json::Value> {
-        json(
-            self.http
-                .get(self.base.join(path).map_err(io::Error::other)?.as_str())
-                .call()
-                .map_err(http_error)?,
-        )
+        json(self.request("GET", path)?.call().map_err(http_error)?)
     }
     pub fn snapshot(&self) -> io::Result<Snapshot> {
         self.get("health")?;
@@ -106,8 +119,7 @@ impl Client {
     pub fn set_loaded(&self, model: &str, load: bool) -> io::Result<()> {
         let route = if load { "models/load" } else { "models/unload" };
         let result = json(
-            self.http
-                .post(self.base.join(route).map_err(io::Error::other)?.as_str())
+            self.request("POST", route)?
                 .send_json(serde_json::json!({"model":model}))
                 .map_err(http_error)?,
         )?;

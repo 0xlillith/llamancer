@@ -1,4 +1,5 @@
 //! Read-only model discovery.
+pub mod estimate;
 pub mod gguf;
 pub mod group;
 pub mod library;
@@ -21,11 +22,43 @@ pub struct Candidate {
 pub struct Scan {
     pub candidates: Vec<Candidate>,
     pub skipped: usize,
+    pub invalid: Vec<(PathBuf, io::ErrorKind)>,
 }
 
 pub fn scan(roots: Vec<PathBuf>, cancel: &AtomicBool) -> io::Result<Scan> {
     let mut result = Scan::default();
-    let mut pending = roots;
+    let mut pending = Vec::new();
+    for root in roots {
+        // For explicitly imported shards, include matching siblings only.
+        let canonical = root.canonicalize().unwrap_or(root);
+        if canonical.is_file() {
+            if let Some((base, _, total)) = group::shard(&canonical) {
+                if let Some(parent) = canonical.parent() {
+                    if let Ok(entries) = fs::read_dir(parent) {
+                        for entry in entries.flatten() {
+                            if cancel.load(Ordering::Acquire) {
+                                return Err(io::Error::new(
+                                    io::ErrorKind::Interrupted,
+                                    "Scan cancelled",
+                                ));
+                            }
+                            let path = entry.path();
+                            if entry.file_type().is_ok_and(|t| t.is_file())
+                                && path
+                                    .extension()
+                                    .is_some_and(|s| s.eq_ignore_ascii_case("gguf"))
+                                && group::shard(&path)
+                                    .is_some_and(|(b, _, t)| b == base && t == total)
+                            {
+                                pending.push(path);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        pending.push(canonical);
+    }
     let mut seen = HashSet::new();
     while let Some(path) = pending.pop() {
         if cancel.load(Ordering::Acquire) {
@@ -77,7 +110,12 @@ pub fn scan(roots: Vec<PathBuf>, cancel: &AtomicBool) -> io::Result<Scan> {
                     metadata,
                 }),
                 Err(e) if e.kind() == io::ErrorKind::Interrupted => return Err(e),
-                Err(_) => result.skipped += 1,
+                Err(e) => {
+                    result.skipped += 1;
+                    if result.invalid.len() < 1000 {
+                        result.invalid.push((path, e.kind()));
+                    }
+                }
             }
         }
     }
@@ -100,6 +138,20 @@ mod tests {
         let result = scan(vec![dir.path().into(), p], &AtomicBool::new(false)).unwrap();
         assert_eq!(result.candidates.len(), 1);
         assert_eq!(result.skipped, 1);
+        assert_eq!(result.invalid.len(), 1);
+    }
+    #[test]
+    fn explicit_shard_import_does_not_scan_unrelated_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut bytes = [0u8; 24];
+        bytes[..4].copy_from_slice(b"GGUF");
+        bytes[4..8].copy_from_slice(&3u32.to_le_bytes());
+        let a = dir.path().join("model-00001-of-00002.gguf");
+        fs::write(&a, bytes).unwrap();
+        fs::write(dir.path().join("model-00002-of-00002.gguf"), bytes).unwrap();
+        fs::write(dir.path().join("unrelated.gguf"), bytes).unwrap();
+        let result = scan(vec![a], &AtomicBool::new(false)).unwrap();
+        assert_eq!(result.candidates.len(), 2);
     }
     #[test]
     fn cancels_before_traversal() {

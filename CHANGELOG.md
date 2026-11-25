@@ -19,3 +19,5 @@
 - Hardened partial downloads with exclusive locks and free-space checks, added sequential queue execution, backend/device probing, explicit projector paths, and known GGUF tensor extent validation.
 
 - Added real CPU router integration coverage, optional foreground supervisor and systemd unit, paginated Hub discovery, bounded retries, transfer rates and ETA, and configurable Kitty agent launch plans.
+
+- Added exclusive TUI locking, bounded local diagnostics and ordered download shutdown; single-file imports, invalid-model reporting, hide/restore, KV-cache estimates; private-file API authentication and external endpoint backoff; improved range and checksum recovery.

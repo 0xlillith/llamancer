@@ -101,15 +101,19 @@ fn cancelled(cancel: &AtomicBool) -> io::Result<()> {
     }
 }
 fn verify(path: &Path, item: &Item, cancel: &AtomicBool) -> io::Result<()> {
-    let meta = fs::symlink_metadata(path)?;
+    let mut file = fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(path)?;
+    verify_file(&mut file, item, cancel)
+}
+fn verify_file(file: &mut fs::File, item: &Item, cancel: &AtomicBool) -> io::Result<()> {
+    let meta = file.metadata()?;
     if !meta.is_file() || meta.len() != item.file.size {
         return Err(io::Error::other("Downloaded size mismatch"));
     }
     if let Some(expected) = &item.file.sha256 {
-        let mut file = fs::OpenOptions::new()
-            .read(true)
-            .custom_flags(libc::O_NOFOLLOW)
-            .open(path)?;
+        file.seek(SeekFrom::Start(0))?;
         let mut hash = Sha256::new();
         let mut buffer = [0u8; 65536];
         loop {
@@ -121,8 +125,9 @@ fn verify(path: &Path, item: &Item, cancel: &AtomicBool) -> io::Result<()> {
             hash.update(&buffer[..n]);
         }
         if format!("{:x}", hash.finalize()) != expected.to_ascii_lowercase() {
-            return Err(io::Error::other(
-                "SHA-256 mismatch; partial retained for inspection",
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "SHA-256 mismatch; resume to restart the partial file",
             ));
         }
     }
@@ -175,6 +180,18 @@ fn transfer(item: &Item, cancel: &AtomicBool, progress: &AtomicU64) -> io::Resul
         return Err(io::Error::other("Unsafe partial file link count"));
     }
     let mut offset = file.metadata()?.len();
+    // A full corrupted partial cannot be repaired by appending. A subsequent explicit resume
+    // starts over, while the original failed attempt retains the staging file.
+    if offset == item.file.size && item.file.sha256.is_some() {
+        match verify_file(&mut file, item, cancel) {
+            Ok(()) => {}
+            Err(e) if e.kind() == io::ErrorKind::InvalidData => {
+                file.set_len(0)?;
+                offset = 0;
+            }
+            Err(e) => return Err(e),
+        }
+    }
     // Without an authoritative checksum, restart instead of trusting an old prefix.
     if item.file.sha256.is_none() && offset > 0 {
         file.set_len(0)?;
@@ -200,7 +217,31 @@ fn transfer(item: &Item, cancel: &AtomicBool, progress: &AtomicU64) -> io::Resul
             if offset > 0 {
                 req = req.set("Range", &format!("bytes={offset}-"));
             }
-            let r = req.call().map_err(huggingface::error)?;
+            let r = match req.call() {
+                Ok(response) => response,
+                Err(ureq::Error::Status(416, response)) if offset > 0 => {
+                    // Only restart on an explicit total matching the pinned file metadata.
+                    if response
+                        .header("Content-Range")
+                        .and_then(|v| v.strip_prefix("bytes */"))
+                        .and_then(|v| v.parse::<u64>().ok())
+                        != Some(item.file.size)
+                    {
+                        return Err(io::Error::other(
+                            "Server range total differs from pinned model size",
+                        ));
+                    }
+                    file.set_len(0)?;
+                    offset = 0;
+                    progress.store(0, Ordering::Relaxed);
+                    if fs2::available_space(parent)? < item.file.size {
+                        return Err(io::Error::other("Insufficient free disk space"));
+                    }
+                    url = huggingface::resolve(&item.file)?;
+                    continue;
+                }
+                Err(e) => return Err(huggingface::error(e)),
+            };
             if matches!(r.status(), 301 | 302 | 303 | 307 | 308) {
                 let location = r
                     .header("Location")
@@ -228,6 +269,9 @@ fn transfer(item: &Item, cancel: &AtomicBool, progress: &AtomicU64) -> io::Resul
                 file.set_len(0)?;
                 offset = 0;
                 progress.store(0, Ordering::Relaxed);
+                if fs2::available_space(parent)? < item.file.size {
+                    return Err(io::Error::other("Insufficient free disk space"));
+                }
             }
             _ => return Err(io::Error::other("Unexpected download range response")),
         }
@@ -258,7 +302,12 @@ fn transfer(item: &Item, cancel: &AtomicBool, progress: &AtomicU64) -> io::Resul
             "Incomplete transfer",
         ));
     }
-    verify(&partial, item, cancel)?;
+    verify_file(&mut file, item, cancel)?;
+    let current = fs::symlink_metadata(&partial)?;
+    let opened = file.metadata()?;
+    if !current.is_file() || current.ino() != opened.ino() || current.dev() != opened.dev() {
+        return Err(io::Error::other("Partial file changed during transfer"));
+    }
     cancelled(cancel)?;
     // Atomic publication without overwriting an existing model.
     fs::hard_link(&partial, &dest)?;
@@ -447,12 +496,26 @@ impl Controller {
             self.status = "Pausing…".into();
         }
     }
+    pub fn shutdown(&mut self) -> io::Result<()> {
+        self.pause();
+        if let Some((index, job, _)) = self.active.take() {
+            self.queue.items[index].state = match job.finish_result() {
+                Ok(()) => State::Complete,
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => State::Paused,
+                Err(_) => State::Failed,
+            };
+            self.queue.save(&self.path)?;
+        }
+        Ok(())
+    }
     pub fn tick(&mut self) {
         let Some((_, job, progress)) = &mut self.active else {
             return;
         };
-        self.rate
-            .update(Instant::now(), progress.load(Ordering::Relaxed));
+        let bytes = progress.load(Ordering::Relaxed);
+        if bytes != u64::MAX {
+            self.rate.update(Instant::now(), bytes);
+        }
         if let Some(result) = job.poll() {
             if let Some((index, job, _)) = self.active.take() {
                 job.finish();
@@ -505,6 +568,35 @@ mod tests {
         assert!(content_range("bytes 20-99/100", 20, 100));
         assert!(!content_range("bytes 0-99/100", 20, 100));
         assert!(!content_range("bytes 20-99/200", 20, 100));
+    }
+    #[test]
+    fn checksums_and_existing_files_are_not_overwritten() {
+        let temp = tempfile::tempdir().unwrap();
+        let item = Item {
+            file: File {
+                repo: "owner/repo".into(),
+                revision: "a".repeat(40),
+                name: "test.gguf".into(),
+                size: 3,
+                sha256: Some(format!("{:x}", Sha256::digest(b"abc"))),
+            },
+            root: temp.path().into(),
+            state: State::Queued,
+        };
+        let dest = destination(&item).unwrap();
+        fs::write(&dest, b"bad").unwrap();
+        assert_eq!(
+            transfer(&item, &AtomicBool::new(false), &AtomicU64::new(0))
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::InvalidData
+        );
+        assert_eq!(fs::read(&dest).unwrap(), b"bad");
+        fs::write(&dest, b"abc").unwrap();
+        assert!(verify(&dest, &item, &AtomicBool::new(false)).is_ok());
+        fs::remove_file(&dest).unwrap();
+        std::os::unix::fs::symlink("/dev/null", &dest).unwrap();
+        assert!(verify(&dest, &item, &AtomicBool::new(false)).is_err());
     }
     #[test]
     fn queue_roundtrip_and_non_destructive_removal() {

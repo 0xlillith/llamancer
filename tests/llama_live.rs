@@ -52,6 +52,13 @@ fn real_cpu_router_lifecycle() {
         device: "none".into(),
         ..Config::default()
     };
+    let mut key = tempfile::NamedTempFile::new().unwrap();
+    use std::io::Write;
+    writeln!(key, "llamancer-test-key").unwrap();
+    let config = Config {
+        api_key_file: Some(key.path().to_path_buf()),
+        ..config
+    };
     let mut controller = Controller::default();
     controller.start(&config, groups.clone(), None).unwrap();
     wait(&mut controller, &config, |c| {
@@ -60,19 +67,21 @@ fn real_cpu_router_lifecycle() {
                 .as_ref()
                 .is_some_and(|s| s.router && !s.models.is_empty())
     });
+    assert!(Client::new(&config.endpoint).unwrap().snapshot().is_err());
     controller.select_id(&id).unwrap();
     controller.set_loaded(&config, true).unwrap();
     wait(&mut controller, &config, |c| {
         !c.busy() && c.selected().is_some_and(|m| m.state() == "loaded")
     });
     assert!(
-        Client::new(&config.endpoint)
+        Client::from_config(&config)
             .unwrap()
             .snapshot()
             .unwrap()
             .router
     );
     let response:serde_json::Value=ureq::post(&format!("{}/completion",config.endpoint))
+        .set("Authorization","Bearer llamancer-test-key")
         .timeout(Duration::from_secs(15))
         .send_json(serde_json::json!({"model":id,"prompt":"Once upon a time","n_predict":4,"temperature":0.0})).unwrap().into_json().unwrap();
     assert!(response["content"].as_str().is_some_and(|s| !s.is_empty()));
@@ -82,7 +91,9 @@ fn real_cpu_router_lifecycle() {
         !c.busy() && c.snapshot.is_some()
     });
     assert!(external.stop().is_err());
-    assert!(Client::new(&config.endpoint).unwrap().snapshot().is_ok());
+    assert!(Client::from_config(&config).unwrap().snapshot().is_ok());
+    external.disconnect().unwrap();
+    assert!(!external.polling());
     controller.set_loaded(&config, false).unwrap();
     wait(&mut controller, &config, |c| {
         !c.busy() && c.selected().is_some_and(|m| m.state() == "unloaded")
@@ -99,6 +110,7 @@ fn real_cpu_router_lifecycle() {
                 .is_some_and(|s| !s.router && !s.models.is_empty())
     });
     let response: serde_json::Value = ureq::post(&format!("{}/completion", config.endpoint))
+        .set("Authorization", "Bearer llamancer-test-key")
         .timeout(Duration::from_secs(15))
         .send_json(serde_json::json!({"prompt":"Once upon a time","n_predict":4,"temperature":0.0}))
         .unwrap()
@@ -117,7 +129,7 @@ fn real_cpu_router_lifecycle() {
     let settings = config.clone();
     let supervisor = std::thread::spawn(move || llamancer::service::run(settings, token));
     let deadline = Instant::now() + Duration::from_secs(30);
-    let client = Client::new(&config.endpoint).unwrap();
+    let client = Client::from_config(&config).unwrap();
     while client.snapshot().is_err() {
         if Instant::now() >= deadline {
             stop.store(true, std::sync::atomic::Ordering::Release);

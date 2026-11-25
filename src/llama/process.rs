@@ -143,6 +143,7 @@ pub fn profile_args(profile: &Profile, help: &str) -> io::Result<Vec<OsString>> 
 pub struct Owned {
     child: Child,
     preset: Option<tempfile::NamedTempFile>,
+    key_file: Option<tempfile::NamedTempFile>,
     logs: Arc<Mutex<VecDeque<String>>>,
 }
 impl Owned {
@@ -160,6 +161,7 @@ impl Owned {
                 cmd.env_remove(key);
             }
         }
+        cmd.env_remove("LLAMA_API_KEY");
         let mut child = cmd.spawn()?;
         let logs = Arc::new(Mutex::new(VecDeque::new()));
         fn drain(stream: impl Read + Send + 'static, logs: Arc<Mutex<VecDeque<String>>>) {
@@ -196,7 +198,11 @@ impl Owned {
             child,
             logs,
             preset: None,
+            key_file: None,
         })
+    }
+    pub fn keep_key_file(&mut self, file: tempfile::NamedTempFile) {
+        self.key_file = Some(file);
     }
     pub fn keep_preset(&mut self, file: tempfile::NamedTempFile) {
         self.preset = Some(file);

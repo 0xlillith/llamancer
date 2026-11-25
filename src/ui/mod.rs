@@ -111,10 +111,10 @@ pub fn draw_themed(frame: &mut Frame, app: &App, theme: &Theme) {
     }
     let footer_text = if app.notice.is_empty() {
         match app.tab {
-            0 => "r scan  / search  f favorite  s sort  p profile  l load  ? help",
+            0 => "r scan  / search  f favorite  s sort  p profile  l load  i invalid  h hide  ? help",
             1 => "/ search  Enter open  d queue  n next page  Backspace back  ? help",
             2 => "r resume  R run queue  x pause  z remove entry  ? help",
-            3 => "r refresh  s router  i probe  x stop  l/u load/unload  a agent  A current  w web  b btop  g logs",
+            3 => "r refresh  D detach  s router  i probe  x stop  l/u load/unload  a agent  A current  w web  b btop  g logs",
             _ => "↑↓ select  Enter edit  ? help  q quit",
         }
     } else {

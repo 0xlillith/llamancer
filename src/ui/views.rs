@@ -59,7 +59,7 @@ pub fn content(app: &App, body: Rect) -> (&'static str, String) {
             ),
         )
     } else if app.help {
-        ("Help", "Tab / arrows / 1–5: navigate\nLibrary: r scan, x cancel, Up/Down select, Enter details\n/: search, s: sort, f: favorite, v: favorites only, p: inference profile, l: start single model\nDiscover: / search, Enter open, d queue, n next page\nDownloads: r resume, R run queue, x pause, z remove entry\nServer: r refresh, s router, i probe, x stop, l/u load/unload, a agent, A current terminal, g logs\nSettings: Up/Down select, Enter edit\n?: toggle help\nEsc: close help or quit\nq / Ctrl+C: quit".into())
+        ("Help", "Tab / arrows / 1–5: navigate\nLibrary: r scan, x cancel, Up/Down select, Enter details\n/: search, s: sort, f: favorite, v: favorites only, p: inference profile, l: start single model, i: invalid files, h: hide model\nDiscover: / search, Enter open, d queue, n next page\nDownloads: r resume, R run queue, x pause, z remove entry\nServer: r refresh, D detach, s router, i probe, x stop, l/u load/unload, a agent, A current terminal, g logs\nSettings: Up/Down select, Enter edit\n?: toggle help\nEsc: close help or quit\nq / Ctrl+C: quit".into())
     } else {
         (
             TABS[app.tab],
@@ -170,7 +170,7 @@ pub fn content(app: &App, body: Rect) -> (&'static str, String) {
                             .collect::<String>()
                     };
                     let mut lines=vec![format!("Endpoint: {}",safe(&app.config.endpoint)),format!("{} | {}",if server.owns_server(){"Managed session"}else{"External / stopped"},safe(&server.status)),
-                    "r refresh | s router | i probe | x stop | l/u load/unload | a agent | g logs".into()];
+                    "r refresh | D detach | s router | i probe | x stop | l/u load/unload | a agent | g logs".into()];
                     if server.show_logs {
                         lines.extend(
                             server

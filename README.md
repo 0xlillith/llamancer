@@ -52,10 +52,10 @@ For Pi, use router mode. OMP uses the documented LLAMA_CPP_BASE_URL runtime over
 | View | Keys |
 | --- | --- |
 | Global | 1–5 or Tab / Shift+Tab, mouse tabs, ? help, q / Ctrl+C quit |
-| Library | r scan, x cancel, / search, s sort, f favorite, v favorites only, Enter details, p profile, l load |
+| Library | r scan, x cancel, / search, s sort, f favorite, v favorites only, Enter details, p profile, l load, i invalid files, h hide |
 | Discover | / search, Enter submit/open repo, Backspace back, n next page, d queue file or shard bundle |
 | Downloads | r resume, R run queue, x pause, z remove queue entry (keeps files) |
-| Server | r refresh, i probe backend, s router, x stop owned, l/u load/unload, a agent, A current terminal, g logs, w Web UI, b btop |
+| Server | r refresh, D detach, i probe backend, s router, x stop owned, l/u load/unload, a agent, A current terminal, g logs, w Web UI, b btop |
 | Profile | Up/Down, Enter edit, a advanced/basic, s save, Esc discard, Ctrl+U clear input |
 
 ## Local-first by design
@@ -66,6 +66,13 @@ For Pi, use router mode. OMP uses the documented LLAMA_CPP_BASE_URL runtime over
 - Managed servers bind to loopback and are session-scoped. They stop when Llamancer exits. External servers remain independent.
 - Downloaded files are stored under the first model root, by repository and pinned revision. Partial files use a .part suffix and are not indexed. Set HF_TOKEN in the environment if a repository requires authentication. Llamancer never sends that token to redirect hosts outside huggingface.co.
 - Profiles separate engine options from generation defaults. Auto inherits backend defaults; unsupported CLI flags are rejected during launch. Advanced profiles accept an explicit multimodal projector path; Settings accepts a supported device identifier or automatic selection.
+
+## Library and endpoint safety
+
+- Import a single GGUF by absolute path in Settings without copying weights; matching multipart siblings are indexed automatically. The Library inspector estimates weight and KV-cache sizes for conventional supported attention architectures. This is not a VRAM fit guarantee.
+- Press i to inspect invalid GGUF paths, or h to hide a selected model after confirmation. Hidden models are excluded from future indexing and managed router presets. Restore by exact identity path in Settings. Files are never deleted by this operation.
+- For authenticated inference, create a private file (mode 0600) containing one API token and set its absolute path in Settings. The token is not written to TOML or command-line arguments. Remote authenticated endpoints require HTTPS; managed servers bind to loopback. Use A for authenticated agent launches in the current terminal; Kitty remote launch is deliberately unavailable for these credentials.
+- One TUI at a time may write a configuration directory. Local bounded diagnostics.jsonl records event codes and counters, not prompts, paths or credentials.
 
 ## Persistent router (optional)
 

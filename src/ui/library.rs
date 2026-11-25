@@ -13,7 +13,7 @@ use ratatui::{
     widgets::{Block, BorderType, Cell, Paragraph, Row, Table, Wrap},
     Frame,
 };
-pub fn details(group: &Group) -> String {
+pub fn details(group: &Group, config: &crate::config::Config) -> String {
     let m = &group.files[0].metadata;
     let text = |v: &Option<String>| v.as_deref().map(safe).unwrap_or_else(|| "Unknown".into());
     let num = |v: Option<u64>| v.map(|n| n.to_string()).unwrap_or_else(|| "Unknown".into());
@@ -51,18 +51,56 @@ pub fn details(group: &Group) -> String {
         "p profile | l load | Enter / Esc close".into(),
         String::new(),
     ];
+    let profile = config
+        .profiles
+        .get(&identity(group))
+        .cloned()
+        .unwrap_or_default();
+    if let Some(estimate) = crate::models::estimate::estimate(group, &profile) {
+        lines.push(format!(
+            "Weights ~{:.2} GiB + KV ~{:.2} GiB at {} tokens",
+            estimate.weights as f64 / 1073741824.0,
+            estimate.kv as f64 / 1073741824.0,
+            estimate.context
+        ));
+        lines.push("Approximate (auto cache assumes F16); excludes compute buffers, projector and overhead.".into());
+    } else {
+        lines.push("KV estimate unavailable for this architecture/metadata.".into());
+    }
     lines.extend(group.files.iter().map(|f| safe(&f.path.to_string_lossy())));
     lines.join("\n")
 }
 pub fn draw(frame: &mut Frame, area: Rect, app: &App, p: &Palette) {
+    if let Some(id) = &app.hide_confirmation {
+        frame.render_widget(Paragraph::new(format!("Hide this model from the library?\n{}\n\nFiles and profiles will be retained.\ny confirm | n/Esc cancel",safe(&id.to_string_lossy()))).wrap(Wrap{trim:false}).style(p.base).block(p.panel(" Confirm hide ")),area);
+        return;
+    }
+    if app.show_invalid {
+        let mut lines =
+            vec!["Invalid GGUF files (up to 1000). Press i or Esc to return.".to_string()];
+        lines.extend(
+            app.invalid
+                .iter()
+                .map(|(path, kind)| format!("{} | {}", safe(&path.to_string_lossy()), kind)),
+        );
+        frame.render_widget(
+            Paragraph::new(lines.join("\n"))
+                .style(p.base)
+                .wrap(Wrap { trim: false })
+                .block(p.panel(" Invalid files ")),
+            area,
+        );
+        return;
+    }
     let indices = app.visible();
     let [summary, table_area] =
-        Layout::vertical([Constraint::Length(3), Constraint::Min(1)]).areas(area);
+        Layout::vertical([Constraint::Length(4), Constraint::Min(1)]).areas(area);
     let summary_text = format!(
-        "{} / {} models  ·  {} roots  ·  {}\nSearch: {}{}   Sort: {}   {}",
+        "{} / {} models  ·  {} roots/imports  ·  {} invalid  ·  {}\nSearch: {}{}   Sort: {}   {}",
         indices.len(),
         app.candidates.len(),
-        app.config.model_roots.len(),
+        app.config.model_roots.len() + app.config.model_imports.len(),
+        app.invalid.len(),
         if app.scanning { "Scanning" } else { "Idle" },
         safe(&app.query),
         if app.searching { "▏" } else { "" },
@@ -85,7 +123,7 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App, p: &Palette) {
     if app.details && area.width < 100 {
         let text = app
             .selected()
-            .map(details)
+            .map(|g| details(g, &app.config))
             .unwrap_or_else(|| "No model selected".into());
         frame.render_widget(
             Paragraph::new(text)
@@ -182,7 +220,7 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App, p: &Palette) {
     if let Some(inspector) = inspector {
         let text = app
             .selected()
-            .map(details)
+            .map(|g| details(g, &app.config))
             .unwrap_or_else(|| "Select a model to inspect metadata.".into());
         frame.render_widget(
             Paragraph::new(text)

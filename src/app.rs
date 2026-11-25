@@ -27,6 +27,9 @@ pub struct App {
     pub notice: String,
     pub scanning: bool,
     pub candidates: Vec<Group>,
+    pub invalid: Vec<(std::path::PathBuf, std::io::ErrorKind)>,
+    pub show_invalid: bool,
+    pub hide_confirmation: Option<std::path::PathBuf>,
     pub model_cursor: usize,
     pub details: bool,
     pub query: String,
@@ -66,6 +69,7 @@ impl App {
             Action::Select(index) if !self.help && index < TABS.len() => self.tab = index,
             Action::ToggleHelp => self.help = !self.help,
             Action::Escape if self.help => self.help = false,
+            Action::Escape if self.show_invalid && self.tab == 0 => self.show_invalid = false,
             Action::Escape if self.details && self.tab == 0 => self.details = false,
             Action::Escape | Action::Quit => self.quit = true,
             _ => {}

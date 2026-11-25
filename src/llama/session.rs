@@ -26,6 +26,9 @@ pub struct Controller {
     owned: Option<Owned>,
     pending: Option<Job<Outcome>>,
     last_refresh: Option<Instant>,
+    attached: bool,
+    failures: u32,
+    selected_id: Option<String>,
     pub snapshot: Option<Snapshot>,
     pub cursor: usize,
     pub status: String,
@@ -43,6 +46,21 @@ impl Controller {
     }
     pub fn active(&self) -> bool {
         self.busy() || self.owns_server()
+    }
+    pub fn polling(&self) -> bool {
+        self.active() || self.attached
+    }
+    pub fn disconnect(&mut self) -> io::Result<()> {
+        if self.active() {
+            return Err(io::Error::other(
+                "Stop owned server or wait for current request",
+            ));
+        }
+        self.attached = false;
+        self.snapshot = None;
+        self.status = "Detached from external endpoint".into();
+        self.selected_id = None;
+        Ok(())
     }
     pub fn selected(&self) -> Option<&super::client::Model> {
         self.snapshot.as_ref()?.models.get(self.cursor)
@@ -82,8 +100,9 @@ impl Controller {
         Ok(())
     }
     pub fn refresh(&mut self, config: &Config) -> io::Result<()> {
-        let client = Client::new(&config.endpoint)?;
+        let client = Client::from_config(config)?;
         self.submit(move |_| client.snapshot().map(Outcome::Snapshot))?;
+        self.attached = true;
         self.last_refresh = Some(Instant::now());
         self.status = "Checking server…".into();
         Ok(())
@@ -156,6 +175,23 @@ impl Controller {
                 }
                 args.extend(["--device".into(), config.device.clone().into()]);
             }
+            let key = super::auth::Key::for_endpoint(config.api_key_file.as_deref(), &client_url)?;
+            let key_file = if let Some(key) = key {
+                if !help.contains("--api-key-file") {
+                    return Err(io::Error::other(
+                        "Installed backend does not support API key files",
+                    ));
+                }
+                let file = key.temporary_file()?;
+                args.extend(["--api-key-file".into(), file.path().as_os_str().to_owned()]);
+                Some(file)
+            } else {
+                None
+            };
+            // Disable verbose request/prompt logging for managed inference where available.
+            if help.contains("--log-verbosity") {
+                args.extend(["--log-verbosity".into(), "2".into()]);
+            }
             if cancel.load(Ordering::Acquire) {
                 return Err(io::Error::new(
                     io::ErrorKind::Interrupted,
@@ -164,11 +200,16 @@ impl Controller {
             }
             drop(listener);
             let mut server = Owned::start(&config.server_binary, &args)?;
+            if let Some(file) = key_file {
+                server.keep_key_file(file);
+            }
             if let Some(file) = preset {
                 server.keep_preset(file);
             }
             Ok(Outcome::Started(server, version))
         })?;
+        self.attached = false;
+        self.failures = 0;
         self.snapshot = None;
         self.status = "Probing llama-server and starting…".into();
         Ok(())
@@ -186,11 +227,13 @@ impl Controller {
             .ok_or_else(|| io::Error::other("Select a router model"))?
             .id
             .clone();
-        let client = Client::new(&config.endpoint)?;
+        let client = Client::from_config(config)?;
+        let selected = model.clone();
         self.submit(move |_| {
             client.set_loaded(&model, load)?;
             Ok(Outcome::Changed)
         })?;
+        self.selected_id = Some(selected);
         self.status = if load {
             "Requesting model load…"
         } else {
@@ -206,6 +249,7 @@ impl Controller {
         if let Some(mut server) = self.owned.take() {
             server.stop()?;
             self.logs = server.logs();
+            self.attached = false;
             self.snapshot = None;
             self.status = "Managed server stopped".into();
             Ok(())
@@ -240,7 +284,16 @@ impl Controller {
                         self.last_refresh = None;
                     }
                     Ok(Outcome::Snapshot(snapshot)) => {
-                        self.cursor = self.cursor.min(snapshot.models.len().saturating_sub(1));
+                        let selected = self
+                            .selected()
+                            .map(|m| m.id.clone())
+                            .or_else(|| self.selected_id.take());
+                        self.cursor = selected
+                            .and_then(|id| snapshot.models.iter().position(|m| m.id == id))
+                            .unwrap_or_else(|| {
+                                self.cursor.min(snapshot.models.len().saturating_sub(1))
+                            });
+                        self.failures = 0;
                         self.snapshot = Some(snapshot);
                         self.status = "Connected".into();
                     }
@@ -256,6 +309,7 @@ impl Controller {
                         let _ = self.refresh(config);
                     }
                     Err(error) => {
+                        self.failures = self.failures.saturating_add(1);
                         self.snapshot = None;
                         self.status = error.to_string();
                     }
@@ -266,17 +320,22 @@ impl Controller {
             self.logs = server.logs();
             if !server.running().unwrap_or(false) {
                 self.owned = None;
+                self.attached = false;
                 self.snapshot = None;
                 self.status = "Managed server exited; inspect logs".into();
             }
         }
-        if self.owned.is_some()
+        if (self.owned.is_some() || self.attached)
             && !self.busy()
-            && self
-                .last_refresh
-                .is_none_or(|last| last.elapsed() >= Duration::from_secs(2))
+            && self.last_refresh.is_none_or(|last| {
+                last.elapsed() >= Duration::from_secs(2u64.pow(self.failures.min(4) + 1))
+            })
         {
-            let _ = self.refresh(config);
+            if let Err(error) = self.refresh(config) {
+                self.last_refresh = Some(Instant::now());
+                self.failures = self.failures.saturating_add(1);
+                self.status = error.to_string();
+            }
         }
     }
 }

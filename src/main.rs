@@ -60,7 +60,7 @@ fn main() -> io::Result<()> {
     }
 
     let mut runtime = Runtime::new()?;
-    if !runtime.app.config.model_roots.is_empty() {
+    if !runtime.app.config.scan_roots().is_empty() {
         runtime.scan()?;
     }
     let mut terminal = ratatui::init();
@@ -119,7 +119,10 @@ fn main() -> io::Result<()> {
                                 Err(e) => e.to_string(),
                             };
                         }
-                        Err(e) => runtime.app.notice = e.to_string(),
+                        Err(e) => {
+                            runtime.input_failed();
+                            runtime.app.notice = e.to_string();
+                        }
                     }
                 }
                 Event::Mouse(mouse)
@@ -142,6 +145,6 @@ fn main() -> io::Result<()> {
     })();
     let mouse_result = execute!(io::stdout(), DisableMouseCapture);
     ratatui::restore();
-    let shutdown = runtime.app.server.shutdown();
+    let shutdown = runtime.shutdown();
     result.and(mouse_result).and(shutdown)
 }
