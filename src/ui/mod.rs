@@ -57,7 +57,54 @@ pub fn draw_themed(frame: &mut Frame, app: &App, theme: &Theme) {
             rect,
         );
     }
-    let (title, content) = if let Some((field, draft)) = &app.edit {
+    let (title, content) = if let Some(editor) = &app.profile_editor {
+        let selected = editor.selected();
+        let filename = editor
+            .id
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .chars()
+            .map(|c| if c.is_control() { '�' } else { c })
+            .collect::<String>();
+        let mut lines = vec![
+            filename,
+            format!(
+                "{} mode | auto = inherit backend default",
+                if editor.advanced { "Advanced" } else { "Basic" }
+            ),
+        ];
+        if let Some(input) = &editor.input {
+            lines.extend([
+                selected.label().into(),
+                format!("{input}▏"),
+                selected.hint().into(),
+                "Enter: apply to draft | Esc: back | Ctrl+U: clear".into(),
+            ]);
+        } else {
+            let capacity = usize::from(body.height.saturating_sub(7)).max(1);
+            let offset = editor.cursor.saturating_sub(capacity.saturating_sub(1));
+            for (index, field) in editor
+                .fields()
+                .iter()
+                .enumerate()
+                .skip(offset)
+                .take(capacity)
+            {
+                lines.push(format!(
+                    "{} {}: {}",
+                    if index == editor.cursor { ">" } else { " " },
+                    field.label(),
+                    field.value(&editor.draft)
+                ));
+            }
+            lines.extend([
+                selected.hint().into(),
+                "Up/Down select | Enter edit | a mode | s save | Esc cancel".into(),
+            ]);
+        }
+        ("Inference profile", lines.join("\n"))
+    } else if let Some((field, draft)) = &app.edit {
         (
             "Edit settings",
             format!(
@@ -67,7 +114,7 @@ pub fn draw_themed(frame: &mut Frame, app: &App, theme: &Theme) {
             ),
         )
     } else if app.help {
-        ("Help", "Tab / arrows / 1–5: navigate\nLibrary: r scan, x cancel, Up/Down select, Enter details\n/: search, s: sort, f: favorite, v: favorites only\nSettings: Up/Down select, Enter edit\n?: toggle help\nEsc: close help or quit\nq / Ctrl+C: quit".into())
+        ("Help", "Tab / arrows / 1–5: navigate\nLibrary: r scan, x cancel, Up/Down select, Enter details\n/: search, s: sort, f: favorite, v: favorites only, p: inference profile\nSettings: Up/Down select, Enter edit\n?: toggle help\nEsc: close help or quit\nq / Ctrl+C: quit".into())
     } else {
         (
             TABS[app.tab],
@@ -118,7 +165,7 @@ pub fn draw_themed(frame: &mut Frame, app: &App, theme: &Theme) {
                                     }
                                 ),
                                 "Metadata only; loadability not verified.".into(),
-                                "Enter / Esc: close".into(),
+                                "p: inference profile | Enter / Esc: close".into(),
                             ];
                             lines.extend(g.files.iter().map(|f| safe(&f.path.to_string_lossy())));
                             lines.join("\n")
@@ -146,7 +193,8 @@ pub fn draw_themed(frame: &mut Frame, app: &App, theme: &Theme) {
                                     "All"
                                 }
                             ),
-                            "r scan / search s sort f favorite v filter Enter details".into(),
+                            "r scan / search s sort f favorite v filter p profile Enter details"
+                                .into(),
                         ];
                         if app.candidates.is_empty() {
                             lines.push("Add a model directory in Settings, then press r.".into());
@@ -249,6 +297,24 @@ mod tests {
         assert_eq!(tab_at(area, 1, 3), Some(0));
         assert_eq!(tab_at(area, 79, 3), Some(4));
         assert_eq!(tab_at(area, 10, 10), None);
+    }
+    #[test]
+    fn renders_profile_editor() {
+        let mut editor =
+            crate::models::profile::Editor::new("/models/example.gguf".into(), Default::default());
+        editor.advanced = true;
+        editor.cursor = editor.fields().len() - 1;
+        let mut app = App {
+            profile_editor: Some(editor),
+            ..App::default()
+        };
+        for (w, h) in [(1, 1), (20, 5), (80, 24)] {
+            let mut terminal = Terminal::new(TestBackend::new(w, h)).unwrap();
+            terminal.draw(|frame| draw(frame, &app)).unwrap();
+        }
+        app.profile_editor.as_mut().unwrap().input = Some("42".into());
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
     }
     #[test]
     fn renders_small_terminal() {

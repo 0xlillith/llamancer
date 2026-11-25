@@ -2,6 +2,7 @@
 pub mod gguf;
 pub mod group;
 pub mod library;
+pub mod profile;
 use std::{
     collections::HashSet,
     fs, io,

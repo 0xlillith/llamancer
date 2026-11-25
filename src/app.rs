@@ -33,6 +33,7 @@ pub struct App {
     pub searching: bool,
     pub only_favorites: bool,
     pub sort: Sort,
+    pub profile_editor: Option<crate::models::profile::Editor>,
 }
 impl App {
     pub fn visible(&self) -> Vec<usize> {

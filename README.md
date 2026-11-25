@@ -50,3 +50,9 @@ Open Settings (5), select Add model root, enter an existing absolute directory a
 Press / to search by name, path, architecture or quantization (all search terms must match). Enter or Esc leaves search mode; Ctrl+U clears the query while editing. Press s to cycle name/size ordering, f to toggle a favorite and v to display favorites only. Favorites persist in the configuration file. A multipart group's identity is its expected first shard path, even when that shard is missing.
 
 Quantization labels use the GGUF general.file_type / llama_ftype identifiers, not individual tensor type IDs. Unknown identifiers remain numeric.
+
+### Inference profiles
+
+Select a complete model group in Library and press p. The editor starts in Basic mode; press a to switch to Advanced. Use Up/Down to choose a parameter and Enter to edit it. Enter applies the value to the draft, not to disk. Press s to save the full profile or Esc to discard it. An empty value or auto inherits the eventual backend default; zero GPU layers explicitly requests CPU-only model placement.
+
+Profiles are stored by model identity in the versioned TOML configuration. Engine parameters and generation defaults are independent. Validation catches invalid numeric ranges, non-finite values, unrecognized cache types and inconsistent batch sizes. The editor does not yet apply settings to llama-server or verify backend-specific capabilities.

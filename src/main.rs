@@ -65,6 +65,76 @@ fn main() -> io::Result<()> {
                         app.dispatch(Action::Quit);
                         continue;
                     }
+                    if let Some(editor) = app.profile_editor.as_mut() {
+                        let field = editor.selected();
+                        if let Some(input) = editor.input.as_mut() {
+                            match key.code {
+                                KeyCode::Esc => editor.input = None,
+                                KeyCode::Backspace => {
+                                    input.pop();
+                                }
+                                KeyCode::Char('u')
+                                    if key.modifiers.contains(KeyModifiers::CONTROL) =>
+                                {
+                                    input.clear()
+                                }
+                                KeyCode::Enter => {
+                                    let value = input.clone();
+                                    match field.set(&mut editor.draft, &value) {
+                                        Ok(()) => {
+                                            editor.input = None;
+                                            app.notice = "Draft updated; press s to save".into();
+                                        }
+                                        Err(error) => app.notice = error.to_string(),
+                                    }
+                                }
+                                KeyCode::Char(c) if !c.is_control() && input.len() < 128 => {
+                                    input.push(c)
+                                }
+                                _ => {}
+                            }
+                        } else {
+                            match key.code {
+                                KeyCode::Esc => {
+                                    app.profile_editor = None;
+                                    app.notice = "Profile edit cancelled".into();
+                                }
+                                KeyCode::Up => {
+                                    editor.cursor = (editor.cursor + editor.fields().len() - 1)
+                                        % editor.fields().len()
+                                }
+                                KeyCode::Down => {
+                                    editor.cursor = (editor.cursor + 1) % editor.fields().len()
+                                }
+                                KeyCode::Char('a') => {
+                                    editor.advanced = !editor.advanced;
+                                    editor.cursor = 0;
+                                }
+                                KeyCode::Enter => {
+                                    editor.input = Some(editor.selected().value(&editor.draft))
+                                }
+                                KeyCode::Char('s') => {
+                                    let mut next = config.clone();
+                                    next.profiles
+                                        .insert(editor.id.clone(), editor.draft.clone());
+                                    match next.save(&path) {
+                                        Ok(()) => {
+                                            config = next;
+                                            app.config = config.clone();
+                                            app.profile_editor = None;
+                                            app.notice = "Inference profile saved".into();
+                                        }
+                                        Err(_) => {
+                                            app.notice =
+                                                "Could not save profile; draft retained".into()
+                                        }
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                        continue;
+                    }
                     if app.searching {
                         match key.code {
                             KeyCode::Enter | KeyCode::Esc => app.searching = false,
@@ -164,6 +234,21 @@ fn main() -> io::Result<()> {
                                 (app.model_cursor + 1).min(app.visible().len().saturating_sub(1));
                             continue;
                         }
+                        KeyCode::Char('p') if !app.help && app.tab == 0 => {
+                            if let Some(group) = app.selected() {
+                                if group.projector || !group.complete {
+                                    app.notice =
+                                        "Select a complete model group, not a projector".into();
+                                } else {
+                                    let id = models::library::identity(group);
+                                    let draft =
+                                        config.profiles.get(&id).cloned().unwrap_or_default();
+                                    app.profile_editor =
+                                        Some(models::profile::Editor::new(id, draft));
+                                }
+                            }
+                            continue;
+                        }
                         KeyCode::Char('/') if !app.help && app.tab == 0 => {
                             app.searching = true;
                             app.details = false;
@@ -227,7 +312,8 @@ fn main() -> io::Result<()> {
                 Event::Mouse(mouse)
                     if mouse.kind == MouseEventKind::Down(MouseButton::Left)
                         && app.edit.is_none()
-                        && !app.searching =>
+                        && !app.searching
+                        && app.profile_editor.is_none() =>
                 {
                     let size = terminal.size()?;
                     if let Some(index) = ui::tab_at(

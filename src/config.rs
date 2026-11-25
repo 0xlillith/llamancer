@@ -1,12 +1,12 @@
 //! Versioned application settings and atomic persistence.
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     fs, io,
     path::{Path, PathBuf},
 };
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
     pub schema_version: u32,
@@ -15,6 +15,7 @@ pub struct Config {
     pub default_agent: String,
     pub endpoint: String,
     pub favorites: BTreeSet<PathBuf>,
+    pub profiles: BTreeMap<PathBuf, crate::models::profile::Profile>,
 }
 
 impl Default for Config {
@@ -26,6 +27,7 @@ impl Default for Config {
             default_agent: "omp".into(),
             endpoint: "http://127.0.0.1:8080".into(),
             favorites: BTreeSet::new(),
+            profiles: BTreeMap::new(),
         }
     }
 }
@@ -59,11 +61,17 @@ impl Config {
                 "Unsupported configuration schema",
             ));
         }
+        for profile in config.profiles.values() {
+            profile.validate()?;
+        }
         Ok(config)
     }
 
     pub fn save(&self, path: &Path) -> io::Result<()> {
         use std::io::Write;
+        for profile in self.profiles.values() {
+            profile.validate()?;
+        }
         let parent = path
             .parent()
             .filter(|p| !p.as_os_str().is_empty())
@@ -90,6 +98,10 @@ mod tests {
         let mut c = Config::load(&path).unwrap();
         c.model_roots.push("/models".into());
         c.favorites.insert("/models/favorite.gguf".into());
+        let mut profile = crate::models::profile::Profile::default();
+        profile.engine.context_size = Some(32768);
+        profile.generation.temperature = Some(0.2);
+        c.profiles.insert("/models/favorite.gguf".into(), profile);
         c.save(&path).unwrap();
         assert_eq!(Config::load(&path).unwrap(), c);
     }
