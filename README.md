@@ -45,7 +45,7 @@ cargo run --locked --release
 4. In the Server view, select a router model and press l to load it. Once ready, press a to launch the configured agent in the current terminal. Return to Llamancer by exiting the agent.
 5. Press x in Server to stop an owned session. External servers are never stopped by Llamancer.
 
-For Pi, use router mode. OMP uses the documented LLAMA_CPP_BASE_URL runtime override; Pi uses LLAMA_BASE_URL. Existing agent settings remain untouched. The configured custom agent receives LLAMANCER_ENDPOINT and LLAMANCER_MODEL.
+OMP uses the documented LLAMA_CPP_BASE_URL runtime override. Pi uses a Llamancer-owned session extension with the selected endpoint and model; choose pi-native for the upstream router provider (LLAMA_BASE_URL). Existing agent settings remain untouched. The compatibility extension supports text only and requires an advertised or configured context size. The configured custom agent receives LLAMANCER_ENDPOINT and LLAMANCER_MODEL.
 
 ## Controls
 

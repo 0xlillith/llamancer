@@ -20,10 +20,10 @@ The OMP launch adapter selects the native llama.cpp provider using the documente
 
 Reference: https://docs.pi.dev/latest/llama-cpp
 
-The Pi adapter targets its native router integration. It passes LLAMA_BASE_URL and the model selector. A model must be loaded (or sleeping) before launch. Older versions without the native provider are not supported by this adapter.
+The default Pi adapter registers a text-only OpenAI-compatible provider through the documented extension API. The selected endpoint and model determine a stable provider ID. The extension is written only under Llamancer configuration, not Pi configuration. The context comes from server metadata or an explicitly configured model profile. The optional pi-native adapter retains the upstream llama.cpp router integration and LLAMA_BASE_URL. A router model must be loaded or sleeping before launch.
 
 ## Custom agents
 
 A custom executable and explicit argument array are configured in TOML. Llamancer passes LLAMANCER_ENDPOINT and LLAMANCER_MODEL through the environment, not shell interpolation. Agents can run in the current terminal or use Kitty remote-control launch plans for a tab or OS window; actual graphical launches require a supported terminal environment. Real agent smoke tests remain a release gate.
 
-Pi 1.6.0 on ARM64 has not passed discovery or CLI login validation. Existing stored provider credentials can take precedence over the environment. Do not assume a successful launch proves endpoint selection; verify the active provider and model.
+Pi 1.6.0 on ARM64 successfully discovered an explicit extension provider, whereas native discovery and CLI login failed. Existing stored native-provider credentials can take precedence over the environment; the separate Llamancer provider avoids the native credential namespace. Full interactive generation, tool use and Kitty validation remain separate release gates.

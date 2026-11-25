@@ -1,6 +1,6 @@
 //! Application orchestration. Terminal I/O stays in the binary; workers own long operations.
 use crate::{
-    agents::{AgentAdapter, Custom, LaunchPlan, Native},
+    agents::{AgentAdapter, Custom, LaunchPlan, Native, Pi},
     app::{Action, App},
     config::{self, Config},
     jobs::Job,
@@ -512,7 +512,7 @@ impl Runtime {
                 if snapshot.router && !matches!(model.state(), "loaded" | "sleeping") {
                     return Err(io::Error::other("Load the model first"));
                 }
-                if c.default_agent == "pi" && !snapshot.router {
+                if c.default_agent == "pi-native" && !snapshot.router {
                     return Err(io::Error::other(
                         "Pi native integration requires router mode",
                     ));
@@ -520,7 +520,15 @@ impl Runtime {
                 let cwd = c.project_dir.clone().unwrap_or(std::env::current_dir()?);
                 let mut plan = match c.default_agent.as_str() {
                     "omp" => Native("omp").prepare(&c.endpoint, &model.id, cwd)?,
-                    "pi" => Native("pi").prepare(&c.endpoint, &model.id, cwd)?,
+                    "pi" => {
+                        let context=model.context_limit().or_else(||self.app.candidates.iter().find(|group|crate::llama::router::id(group)==model.id).and_then(|group|c.profiles.get(&models::library::identity(group)).and_then(|p|p.engine.context_size).map(u64::from))).ok_or_else(||io::Error::other("Server did not report an active context size; use a configured model profile or pi-native"))?;
+                        Pi {
+                            root: &self.root,
+                            context,
+                        }
+                        .prepare(&c.endpoint, &model.id, cwd)?
+                    }
+                    "pi-native" => Native("pi").prepare(&c.endpoint, &model.id, cwd)?,
                     "custom" => Custom {
                         executable: &c.custom_agent,
                         args: &c.custom_agent_args,
@@ -542,14 +550,8 @@ impl Runtime {
                     }
                     plan.with_key(&key, &c.default_agent);
                 }
-                return Ok(Effect::Launch(
-                    plan,
-                    if key == KeyCode::Char('A') {
-                        crate::agents::TerminalMode::Current
-                    } else {
-                        c.agent_terminal
-                    },
-                ));
+                plan.validate(mode)?;
+                return Ok(Effect::Launch(plan, mode));
             }
             _ => {}
         }

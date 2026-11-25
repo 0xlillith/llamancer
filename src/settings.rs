@@ -92,8 +92,8 @@ pub fn apply(
     match field {
         Field::Theme => draft.theme = value.into(),
         Field::Agent => {
-            if !matches!(value, "omp" | "pi" | "custom") {
-                return Err(invalid("Choose omp, pi or custom"));
+            if !matches!(value, "omp" | "pi" | "pi-native" | "custom") {
+                return Err(invalid("Choose omp, pi, pi-native or custom"));
             }
             draft.default_agent = value.into();
         }
