@@ -36,6 +36,7 @@ pub struct Runtime {
     root: PathBuf,
     path: PathBuf,
     scan: Option<Job<Scan>>,
+    rescan_pending: bool,
     backend: Option<(Job<BackendResult>, Arc<AtomicU64>, u64)>,
     _lock: crate::diagnostics::SessionLock,
     diagnostics: crate::diagnostics::Diagnostics,
@@ -64,6 +65,7 @@ impl Runtime {
             root,
             path,
             scan: None,
+            rescan_pending: false,
             backend: None,
             _lock: lock,
             diagnostics,
@@ -118,7 +120,20 @@ impl Runtime {
         self.app.server.tick(&self.app.config);
         self.app.discovery.tick();
         if let Some(d) = self.app.downloads.as_mut() {
+            let before = d
+                .queue
+                .items
+                .iter()
+                .filter(|i| i.state == crate::downloads::State::Complete)
+                .count();
             d.tick();
+            let after = d
+                .queue
+                .items
+                .iter()
+                .filter(|i| i.state == crate::downloads::State::Complete)
+                .count();
+            self.rescan_pending |= after > before;
         }
         if let Some(job) = self.scan.as_mut() {
             if let Some(outcome) = job.poll() {
@@ -161,6 +176,12 @@ impl Runtime {
                         self.app.notice = format!("Scan ended: {}", e.kind());
                     }
                 }
+            }
+        }
+        if self.rescan_pending && self.scan.is_none() {
+            self.rescan_pending = false;
+            if let Err(e) = self.scan() {
+                self.app.notice = format!("Library refresh: {e}");
             }
         }
     }
@@ -339,9 +360,9 @@ impl Runtime {
                         .downloads
                         .as_mut()
                         .ok_or_else(|| io::Error::other("Queue unavailable"))?
-                        .add(choice.files.clone(), root)?;
+                        .enqueue_and_start(choice.files.clone(), root)?;
                     self.app.download_destination = None;
-                    self.app.notice = "Queued; press r to start".into();
+                    self.app.notice = "Download added to queue; starts automatically".into();
                     self.app.tab = 2;
                 }
                 _ => {}
@@ -1078,8 +1099,8 @@ impl Runtime {
                     .downloads
                     .as_mut()
                     .ok_or_else(|| io::Error::other("Queue unavailable"))?;
-                downloads.add(files, root)?;
-                self.app.notice = "Queued; press r to start".into();
+                downloads.enqueue_and_start(files, root)?;
+                self.app.notice = "Download added to queue; starts automatically".into();
                 self.app.tab = 2;
             }
             _ => {}

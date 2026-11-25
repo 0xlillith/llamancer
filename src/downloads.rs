@@ -108,6 +108,8 @@ pub struct Item {
     pub state: State,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_bytes: Option<u64>,
     #[serde(default)]
     pub receipt: Option<Receipt>,
 }
@@ -626,6 +628,7 @@ fn retry<T>(
 struct Rate {
     sample: Option<(Instant, u64)>,
     bytes_per_second: f64,
+    history: std::collections::VecDeque<f64>,
 }
 impl Rate {
     fn update(&mut self, now: Instant, bytes: u64) {
@@ -633,6 +636,7 @@ impl Rate {
             if bytes < old {
                 self.sample = Some((now, bytes));
                 self.bytes_per_second = 0.0;
+                self.history.clear();
                 return;
             }
             let seconds = now.duration_since(last).as_secs_f64();
@@ -640,6 +644,10 @@ impl Rate {
                 return;
             }
             let rate = (bytes - old) as f64 / seconds;
+            if self.history.len() == 60 {
+                self.history.pop_front();
+            }
+            self.history.push_back(rate);
             self.bytes_per_second = if self.bytes_per_second == 0.0 {
                 rate
             } else {
@@ -685,6 +693,45 @@ impl Controller {
             .map(|(_, _, p)| p.load(Ordering::Relaxed))
             .filter(|&n| n != u64::MAX)
     }
+    pub fn known_bytes(&self, index: usize) -> Option<u64> {
+        let item = self.queue.items.get(index)?;
+        self.progress(index).or({
+            if matches!(item.state, State::Complete | State::Quarantined) {
+                Some(item.file.size)
+            } else {
+                item.last_bytes
+            }
+        })
+    }
+    pub fn speed_history(&self, index: usize) -> Option<(String, f64)> {
+        if self.active.as_ref().is_none_or(|(i, _, _)| *i != index) || self.rate.history.is_empty()
+        {
+            return None;
+        }
+        let peak = self.rate.history.iter().copied().fold(0.0, f64::max);
+        let bars = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+        let graph = self
+            .rate
+            .history
+            .iter()
+            .rev()
+            .take(28)
+            .rev()
+            .map(|v| {
+                if peak == 0.0 {
+                    '▁'
+                } else {
+                    bars[((v / peak) * 7.0).round().clamp(0.0, 7.0) as usize]
+                }
+            })
+            .collect();
+        Some((graph, peak))
+    }
+    pub fn is_verifying(&self, index: usize) -> bool {
+        self.progress(index)
+            .zip(self.queue.items.get(index))
+            .is_some_and(|(n, item)| n >= item.file.size)
+    }
     pub fn speed_eta(&self, index: usize) -> Option<(f64, u64)> {
         let bytes = self.progress(index)?;
         let speed = self.rate.bytes_per_second;
@@ -710,6 +757,7 @@ impl Controller {
                     root_identity: Some(root_identity.clone()),
                     state: State::Queued,
                     error: None,
+                    last_bytes: None,
                     receipt: None,
                 });
             }
@@ -717,6 +765,26 @@ impl Controller {
         if let Err(e) = self.queue.save(&self.path) {
             self.queue.items.truncate(old);
             return Err(e);
+        }
+        Ok(())
+    }
+    /// User explicitly added a new bundle. Do not resume failed/paused files,
+    /// and do not auto-start an old queue merely because the application opened.
+    pub fn enqueue_and_start(&mut self, files: Vec<File>, root: PathBuf) -> io::Result<()> {
+        let old = self.queue.items.len();
+        self.add(files, root)?;
+        if self.queue.items.len() == old {
+            self.status = "Already queued; select resume if paused or failed".into();
+            return Ok(());
+        }
+        if let Some((_, job, _)) = &self.active {
+            if !job.is_cancelled() {
+                self.run_queue = true;
+            }
+            return Ok(());
+        }
+        if !self.busy() {
+            self.start_queue()?;
         }
         Ok(())
     }
@@ -918,7 +986,7 @@ impl Controller {
             job.finish();
             self.reconcile_mutation()?;
         }
-        if let Some((index, job, _)) = self.active.take() {
+        if let Some((index, job, progress)) = self.active.take() {
             self.queue.items[index].state = match job.finish_result() {
                 Ok(receipt) => {
                     self.queue.items[index].receipt = receipt;
@@ -930,6 +998,10 @@ impl Controller {
                     State::Failed
                 }
             };
+            let bytes = progress.load(Ordering::Relaxed);
+            if bytes != u64::MAX {
+                self.queue.items[index].last_bytes = Some(bytes);
+            }
             self.queue.save(&self.path)?;
         }
         Ok(())
@@ -958,8 +1030,12 @@ impl Controller {
             self.rate.update(Instant::now(), bytes);
         }
         if let Some(result) = job.poll() {
-            if let Some((index, job, _)) = self.active.take() {
+            if let Some((index, job, progress)) = self.active.take() {
                 job.finish();
+                let bytes = progress.load(Ordering::Relaxed);
+                if bytes != u64::MAX {
+                    self.queue.items[index].last_bytes = Some(bytes);
+                }
                 let (state, status) = match result {
                     Ok(receipt) => {
                         self.queue.items[index].receipt = receipt;
@@ -1006,6 +1082,7 @@ mod tests {
             root_identity: None,
             state: State::Queued,
             error: None,
+            last_bytes: None,
             receipt: None,
         }
     }
@@ -1089,6 +1166,31 @@ mod tests {
             assert_eq!(fs::read(&dest).unwrap(), b"abcdef");
             assert!(!partial.exists());
         }
+    }
+    #[test]
+    fn auto_queue_starts_only_queued_entries_and_keeps_failed_ones() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().canonicalize().unwrap();
+        let mut q = Controller::new(root.join("queue.toml")).unwrap();
+        let mut old = fixture(&root).file;
+        old.name = "old.gguf".into();
+        q.add(vec![old], root.clone()).unwrap();
+        q.queue.items[0].state = State::Failed;
+        let item = fixture(&root);
+        let dest = destination(&item).unwrap();
+        fs::write(dest.with_file_name("model.gguf.part"), b"abcdef").unwrap();
+        q.enqueue_and_start(vec![item.file], root).unwrap();
+        assert!(q.busy());
+        assert_eq!(q.cursor, 1);
+        let until = Instant::now() + Duration::from_secs(3);
+        while q.busy() {
+            q.tick();
+            assert!(Instant::now() < until);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(q.queue.items[0].state, State::Failed);
+        assert_eq!(q.queue.items[1].state, State::Complete);
+        assert_eq!(q.known_bytes(1), Some(6));
     }
     #[test]
     fn full_invalid_partial_is_preserved_on_repeated_resume() {
@@ -1418,6 +1520,7 @@ mod tests {
             root_identity: None,
             state: State::Queued,
             error: None,
+            last_bytes: None,
             receipt: None,
         };
         let dest = destination(&item).unwrap();
