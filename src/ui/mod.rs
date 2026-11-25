@@ -374,7 +374,7 @@ pub fn draw_themed(frame: &mut Frame, app: &App, theme: &Theme) {
     } else {
         match app.tab {
             0 => "r scan  / search  f favorite  s sort  p profile  m fit  l load  i invalid  h hide  t quarantine  ? help",
-            1 => "/ search  Enter open  d queue  D destination  n next page  Backspace back  ? help",
+            1 => "/ search/filter  s sort  Enter open  d download  D destination  n next page  Backspace back  ? help",
             2 => "r resume  R run queue  x pause  t quarantine  T restore  z remove entry  ? help",
             3 => "r refresh  D detach  s router  R restart  i probe  x stop  l/u load/unload  a agent  A current  w web  b btop  g logs  B backends  P project",
             _ => "↑↓ select  Enter edit  T theme  I icons  B backends  P project  G setup  ? help  q quit",

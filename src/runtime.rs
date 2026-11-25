@@ -487,11 +487,20 @@ impl Runtime {
         }
         if self.app.discovery.editing {
             if key.code == KeyCode::Enter {
-                self.app.discovery.search()?;
+                if self.app.discovery.repo.is_some() {
+                    self.app.discovery.rebuild_variants();
+                    self.app.discovery.editing = false;
+                } else {
+                    self.app.discovery.search()?;
+                }
             } else if key.code == KeyCode::Esc {
                 self.app.discovery.editing = false;
             } else {
-                edit_text(&mut self.app.discovery.query, key, 512);
+                if self.app.discovery.repo.is_some() {
+                    edit_text(&mut self.app.discovery.variant_filter, key, 512);
+                } else {
+                    edit_text(&mut self.app.discovery.query, key, 512);
+                }
             }
             return Ok(Effect::None);
         }
@@ -1020,6 +1029,16 @@ impl Runtime {
     }
     fn discovery_key(&mut self, key: KeyCode) -> io::Result<()> {
         match key {
+            KeyCode::Char('s') if !self.app.discovery.busy() => {
+                let d = &mut self.app.discovery;
+                if d.repo.is_some() {
+                    d.variant_sort = d.variant_sort.next();
+                    d.rebuild_variants();
+                } else {
+                    d.ranking = d.ranking.next();
+                    d.search()?;
+                }
+            }
             KeyCode::Char('n') => self.app.discovery.more()?,
             KeyCode::Char('/') => self.app.discovery.editing = true,
             KeyCode::Up => self.app.discovery.move_cursor(false),
@@ -1027,10 +1046,7 @@ impl Runtime {
             KeyCode::Backspace => self.app.discovery.back(),
             KeyCode::Enter if self.app.discovery.repo.is_none() => self.app.discovery.open()?,
             KeyCode::Char('d' | 'D') if !self.app.discovery.busy() => {
-                let files = crate::huggingface::bundle(
-                    &self.app.discovery.files,
-                    self.app.discovery.cursor,
-                );
+                let files = self.app.discovery.selected_bundle();
                 if files.is_empty() {
                     return Err(io::Error::other("Select a file or complete shard bundle"));
                 }
