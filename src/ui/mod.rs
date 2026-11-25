@@ -189,7 +189,7 @@ pub fn draw_themed(frame: &mut Frame, app: &App, theme: &Theme) {
         frame.render_widget(paragraph, body);
     }
     let footer_text = if app.backend_open && app.notice.is_empty() {
-        "↑↓ select  i install  Enter use  v version  p probe  b benchmark  d remove  x cancel  Esc back"
+        "↑↓ select  i install  Enter use  v version  c check  p probe  b benchmark  d remove  x cancel  Esc back"
     } else if app.notice.is_empty() {
         match app.tab {
             0 => "r scan  / search  f favorite  s sort  p profile  l load  i invalid  h hide  t quarantine  ? help",
