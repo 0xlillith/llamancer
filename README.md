@@ -49,6 +49,10 @@ Keyless OMP launches use the documented LLAMA_CPP_BASE_URL runtime override; che
 
 For Arch-based systems, see the [experimental VCS package](packaging/arch/README.md). Binary tarballs and checksums are available as [workflow artifacts](https://github.com/0xlillith/llamancer/actions/workflows/release.yml) until a stable release is published.
 
+## Troubleshooting
+
+Run `llamancer doctor` for an offline local setup report. It checks configured executables, model paths, optional agent/terminal tools and managed backend receipts without starting processes, making network requests, or printing paths, endpoint addresses or tokens. Use Backend Manager or `llamancer backend probe KIND` to check actual runtime device compatibility.
+
 ## Managed inference backends
 
 Llamancer can install official llama.cpp distributions itself. No Unsloth, package manager, sudo, shell configuration or service is required. In **Server** or **Settings**, press `B` to open Backend Manager:

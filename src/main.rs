@@ -152,12 +152,13 @@ fn main() -> io::Result<()> {
         }
         match arg.to_str() {
             Some("serve") => return llamancer::service::from_config(),
+            Some("doctor") => return llamancer::doctor::run(),
             Some("--version" | "-V") => {
                 println!("llamancer {}", env!("CARGO_PKG_VERSION"));
                 return Ok(());
             }
             Some("--help" | "-h") => {
-                println!("Llamancer — Summon your models.\n\nUsage: llamancer [serve|backend|--help|--version]\n  serve   Supervise a local router without a TUI\n  backend list | check | install KIND [VERSION] | probe KIND [VERSION]");
+                println!("Llamancer — Summon your models.\n\nUsage: llamancer [serve|backend|doctor|--help|--version]\n  serve   Supervise a local router without a TUI\n  doctor  Check local setup offline without exposing paths or tokens\n  backend list | check | install KIND [VERSION] | probe KIND [VERSION]");
                 return Ok(());
             }
             _ => {
