@@ -125,17 +125,32 @@ fn main() -> io::Result<()> {
                         }
                     }
                 }
-                Event::Mouse(mouse)
-                    if mouse.kind == MouseEventKind::Down(MouseButton::Left)
-                        && !runtime.modal() =>
-                {
+                Event::Mouse(mouse) if !runtime.modal() => {
                     let size = terminal.size()?;
-                    if let Some(index) = ui::tab_at(
-                        ratatui::layout::Rect::new(0, 0, size.width, size.height),
-                        mouse.column,
-                        mouse.row,
-                    ) {
-                        runtime.app.dispatch(Action::Select(index));
+                    let area = ratatui::layout::Rect::new(0, 0, size.width, size.height);
+                    match mouse.kind {
+                        MouseEventKind::Down(MouseButton::Left) => {
+                            if let Some(index) = ui::tab_at(area, mouse.column, mouse.row) {
+                                runtime.app.dispatch(Action::Select(index));
+                            } else if let Some(index) =
+                                ui::row_at(area, &runtime.app, mouse.column, mouse.row)
+                            {
+                                runtime.select_row(index);
+                            }
+                        }
+                        MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
+                            let code = if mouse.kind == MouseEventKind::ScrollUp {
+                                event::KeyCode::Up
+                            } else {
+                                event::KeyCode::Down
+                            };
+                            if let Err(e) = runtime
+                                .handle_key(event::KeyEvent::new(code, event::KeyModifiers::NONE))
+                            {
+                                runtime.app.notice = e.to_string();
+                            }
+                        }
+                        _ => {}
                     }
                 }
                 _ => {}

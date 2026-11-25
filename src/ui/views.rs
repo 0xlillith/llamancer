@@ -59,7 +59,7 @@ pub fn content(app: &App, body: Rect) -> (&'static str, String) {
             ),
         )
     } else if app.help {
-        ("Help", "Tab / arrows / 1–5: navigate\nLibrary: r scan, x cancel, Up/Down select, Enter details\n/: search, s: sort, f: favorite, v: favorites only, p: inference profile, l: start single model, i: invalid files, h: hide model\nDiscover: / search, Enter open, d queue, n next page\nDownloads: r resume, R run queue, x pause, z remove entry\nServer: r refresh, D detach, s router  R restart, i probe, x stop, l/u load/unload, a agent, A current terminal, g logs\nSettings: Up/Down select, Enter edit\n?: toggle help\nEsc: close help or quit\nq / Ctrl+C: quit".into())
+        ("Help", "Tab / arrows / 1–5: navigate; click tab or row, scroll to select\nLibrary: r scan, x cancel, Up/Down select, Enter details\n/: search, s: sort, f: favorite, v: favorites only, p: inference profile, l: start single model, i: invalid files, h: hide model\nDiscover: / search, Enter open, d queue, n next page\nDownloads: r resume, R run queue, x pause, z remove entry\nServer: r refresh, D detach, s router  R restart, i probe, x stop, l/u load/unload, a agent, A current terminal, g logs\nSettings: Up/Down select, Enter edit\n?: toggle help\nEsc: close help or quit\nq / Ctrl+C: quit".into())
     } else {
         (
             TABS[app.tab],
@@ -82,8 +82,7 @@ pub fn content(app: &App, body: Rect) -> (&'static str, String) {
                         "/ search | @owner/repo | license:mit | quant:Q4_K_M | d queue | n next"
                             .into(),
                     ];
-                    let capacity = usize::from(body.height.saturating_sub(6)).max(1);
-                    let offset = d.cursor.saturating_sub(capacity.saturating_sub(1));
+                    let (offset, capacity) = super::viewport(d.cursor, body.height, 6);
                     if let Some(repo) = &d.repo {
                         lines.push(safe(repo));
                         for (i, f) in d.files.iter().enumerate().skip(offset).take(capacity) {
@@ -122,8 +121,7 @@ pub fn content(app: &App, body: Rect) -> (&'static str, String) {
                             safe(&d.status),
                             "r resume | R run queue | x pause | z remove entry".into(),
                         ];
-                        let capacity = usize::from(body.height.saturating_sub(5)).max(1);
-                        let offset = d.cursor.saturating_sub(capacity.saturating_sub(1));
+                        let (offset, capacity) = super::viewport(d.cursor, body.height, 5);
                         for (i, item) in
                             d.queue.items.iter().enumerate().skip(offset).take(capacity)
                         {
@@ -191,8 +189,7 @@ pub fn content(app: &App, body: Rect) -> (&'static str, String) {
                                 "Single model"
                             }
                         ));
-                        let capacity = usize::from(body.height.saturating_sub(7)).max(1);
-                        let offset = server.cursor.saturating_sub(capacity.saturating_sub(1));
+                        let (offset, capacity) = super::viewport(server.cursor, body.height, 7);
                         for (i, model) in snapshot
                             .models
                             .iter()
@@ -219,8 +216,7 @@ pub fn content(app: &App, body: Rect) -> (&'static str, String) {
                 }
                 _ => {
                     let mut lines = Vec::new();
-                    let capacity = usize::from(body.height.saturating_sub(5)).max(1);
-                    let offset = app.setting.saturating_sub(capacity.saturating_sub(1));
+                    let (offset, capacity) = super::viewport(app.setting, body.height, 5);
                     for (i, field) in crate::settings::Field::ALL
                         .into_iter()
                         .enumerate()
@@ -231,7 +227,7 @@ pub fn content(app: &App, body: Rect) -> (&'static str, String) {
                             "{} {}: {}",
                             if i == app.setting { ">" } else { " " },
                             field.label(),
-                            field.initial(&app.config)
+                            super::safe(&field.initial(&app.config))
                         ));
                     }
                     lines.push("Up/Down: select   Enter: edit".into());
@@ -240,7 +236,7 @@ pub fn content(app: &App, body: Rect) -> (&'static str, String) {
                         app.config
                             .model_roots
                             .iter()
-                            .map(|p| format!("  {}", p.display())),
+                            .map(|p| format!("  {}", super::safe(&p.to_string_lossy()))),
                     );
                     lines.join("\n")
                 }

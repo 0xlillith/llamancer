@@ -66,6 +66,64 @@ pub fn tab_at(area: Rect, column: u16, row: u16) -> Option<usize> {
         .position(|r| column >= r.x && column < r.right() && row >= r.y && row < r.bottom())
 }
 
+/// The viewport used by both row rendering and pointer hit testing.
+pub(super) fn viewport(cursor: usize, height: u16, reserved: u16) -> (usize, usize) {
+    let capacity = usize::from(height.saturating_sub(reserved)).max(1);
+    (cursor.saturating_sub(capacity.saturating_sub(1)), capacity)
+}
+pub fn row_at(area: Rect, app: &App, column: u16, row: u16) -> Option<usize> {
+    let body = regions(area)[2];
+    if app.help
+        || app.show_invalid
+        || app.hide_confirmation.is_some()
+        || app.profile_editor.is_some()
+        || app.edit.is_some()
+        || app.searching
+        || app.discovery.editing
+    {
+        return None;
+    }
+    let (rect, header, reserved, cursor, len) = match app.tab {
+        0 => {
+            if app.details && body.width < 100 {
+                return None;
+            }
+            let list = library::list_area(body);
+            (list, 2, 3, app.model_cursor, app.visible().len())
+        }
+        1 => (
+            body,
+            if app.discovery.repo.is_some() { 5 } else { 4 },
+            6,
+            app.discovery.cursor,
+            app.discovery.len(),
+        ),
+        2 => {
+            let d = app.downloads.as_ref()?;
+            (body, 3, 5, d.cursor, d.queue.items.len())
+        }
+        3 => {
+            if app.server.show_logs {
+                return None;
+            }
+            let s = app.server.snapshot.as_ref()?;
+            (body, 5, 7, app.server.cursor, s.models.len())
+        }
+        4 => (body, 1, 5, app.setting, crate::settings::Field::ALL.len()),
+        _ => return None,
+    };
+    let inner_row = row.checked_sub(rect.y.checked_add(header)?)?;
+    if rect.width < 3
+        || column <= rect.x
+        || column >= rect.right().saturating_sub(1)
+        || row >= rect.bottom().saturating_sub(1)
+    {
+        return None;
+    }
+    let (offset, capacity) = viewport(cursor, rect.height, reserved);
+    let index = offset.checked_add(usize::from(inner_row))?;
+    (usize::from(inner_row) < capacity && index < len).then_some(index)
+}
 pub fn draw(frame: &mut Frame, app: &App) {
     draw_themed(frame, app, &Theme::default());
 }
@@ -89,7 +147,13 @@ pub fn draw_themed(frame: &mut Frame, app: &App, theme: &Theme) {
             base
         };
         frame.render_widget(
-            Paragraph::new(TABS[index]).style(style).block(
+            Paragraph::new(if index == app.tab {
+                format!(">{}", TABS[index])
+            } else {
+                TABS[index].into()
+            })
+            .style(style)
+            .block(
                 Block::bordered()
                     .border_type(BorderType::Rounded)
                     .border_style(palette.muted),
@@ -101,13 +165,16 @@ pub fn draw_themed(frame: &mut Frame, app: &App, theme: &Theme) {
         library::draw(frame, body, app, &palette);
     } else {
         let (title, content) = views::content(app, body);
-        frame.render_widget(
-            Paragraph::new(content)
-                .style(base)
-                .wrap(Wrap { trim: false })
-                .block(palette.panel(title)),
-            body,
-        );
+        let paragraph = Paragraph::new(content)
+            .style(base)
+            .block(palette.panel(title));
+        // Keep list rows on one terminal line, so cursor and pointer geometry agree.
+        let paragraph = if app.help || app.profile_editor.is_some() || app.edit.is_some() {
+            paragraph.wrap(Wrap { trim: false })
+        } else {
+            paragraph
+        };
+        frame.render_widget(paragraph, body);
     }
     let footer_text = if app.notice.is_empty() {
         match app.tab {
@@ -136,6 +203,24 @@ mod tests {
         assert_eq!(tab_at(area, 1, 3), Some(0));
         assert_eq!(tab_at(area, 79, 3), Some(4));
         assert_eq!(tab_at(area, 10, 10), None);
+    }
+    #[test]
+    fn pointer_rows_match_rendered_viewports() {
+        let area = Rect::new(0, 0, 80, 24);
+        let mut app = App {
+            tab: 4,
+            setting: 12,
+            ..App::default()
+        };
+        let body = regions(area)[2];
+        let (offset, _) = viewport(app.setting, body.height, 5);
+        assert_eq!(row_at(area, &app, 5, body.y + 1), Some(offset));
+        assert_eq!(row_at(area, &app, body.x, body.y + 1), None);
+        app.help = true;
+        assert_eq!(row_at(area, &app, 5, body.y + 1), None);
+        app.help = false;
+        app.tab = 1;
+        assert_eq!(row_at(area, &app, 5, body.y + 4), None);
     }
     #[test]
     fn renders_profile_editor() {

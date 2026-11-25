@@ -40,6 +40,17 @@ impl Theme {
         if name == "dracula" {
             return Ok(Self::default());
         }
+        if name == "high-contrast" {
+            return Ok(Self {
+                background: "#000000".into(),
+                foreground: "#ffffff".into(),
+                purple: "#d4bfff".into(),
+                pink: "#ffffff".into(),
+                cyan: "#80ffff".into(),
+                green: "#80ff80".into(),
+                selection: "#303030".into(),
+            });
+        }
         if name.is_empty()
             || !name
                 .bytes()

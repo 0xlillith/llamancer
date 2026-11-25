@@ -70,6 +70,17 @@ pub fn details(group: &Group, config: &crate::config::Config) -> String {
     lines.extend(group.files.iter().map(|f| safe(&f.path.to_string_lossy())));
     lines.join("\n")
 }
+pub(super) fn list_area(area: Rect) -> Rect {
+    let [_, table] = Layout::vertical([Constraint::Length(4), Constraint::Min(1)]).areas(area);
+    if area.width >= 100 {
+        let [list, _] =
+            Layout::horizontal([Constraint::Percentage(58), Constraint::Percentage(42)])
+                .areas(table);
+        list
+    } else {
+        table
+    }
+}
 pub fn draw(frame: &mut Frame, area: Rect, app: &App, p: &Palette) {
     if let Some(id) = &app.hide_confirmation {
         frame.render_widget(Paragraph::new(format!("Hide this model from the library?\n{}\n\nFiles and profiles will be retained.\ny confirm | n/Esc cancel",safe(&id.to_string_lossy()))).wrap(Wrap{trim:false}).style(p.base).block(p.panel(" Confirm hide ")),area);
@@ -155,9 +166,8 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App, p: &Palette) {
             list,
         );
     } else {
-        let capacity = usize::from(list.height.saturating_sub(3)).max(1);
         let cursor = app.model_cursor.min(indices.len().saturating_sub(1));
-        let offset = cursor.saturating_sub(capacity.saturating_sub(1));
+        let (offset, capacity) = super::viewport(cursor, list.height, 3);
         let rows = indices
             .iter()
             .enumerate()
@@ -179,7 +189,12 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App, p: &Palette) {
                 } else {
                     p.base
                 };
-                let name = format!("{} {}", if fav { "★" } else { " " }, safe(&group.name));
+                let name = format!(
+                    "{}{} {}",
+                    if i == cursor { ">" } else { " " },
+                    if fav { "★" } else { " " },
+                    safe(&group.name)
+                );
                 let cells = if list.width >= 55 {
                     vec![
                         Cell::from(name),
