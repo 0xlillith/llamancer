@@ -43,4 +43,4 @@ Development checks: `cargo fmt --all -- --check`, `cargo test --locked`, `cargo 
 
 ## Local model discovery preview
 
-Open Settings (5), select Add model root, enter an existing absolute directory and save with Enter. Switch to Library (1) and press r to scan or x to cancel. The read-only scan checks the GGUF magic and version and reports candidate file names and sizes. It does not validate tensors, metadata, split completeness or model loadability yet. Nested symlinks are skipped. No model files are modified.
+Open Settings (5), select Add model root, enter an existing absolute directory and save with Enter. Switch to Library (1) and press r to scan or x to cancel. The read-only scan parses bounded little-endian GGUF v2/v3 metadata and tensor descriptors without reading tensor payloads. It groups conventional multipart names and checks shard numbering against split metadata. Press Enter for model details and Esc to close them. Shard presence and readable metadata do not establish loadability or payload integrity. Projector recognition is a filename heuristic; pairing is not yet implemented. Nested symlinks are skipped. No model files are modified.

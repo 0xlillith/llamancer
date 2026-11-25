@@ -1,4 +1,4 @@
-use crate::{config::Config, models::Candidate, settings::Field};
+use crate::{config::Config, models::group::Group, settings::Field};
 pub const TABS: [&str; 5] = ["Library", "Discover", "Downloads", "Server", "Settings"];
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Action {
@@ -19,8 +19,9 @@ pub struct App {
     pub edit: Option<(Field, String)>,
     pub notice: String,
     pub scanning: bool,
-    pub candidates: Vec<Candidate>,
+    pub candidates: Vec<Group>,
     pub model_cursor: usize,
+    pub details: bool,
 }
 impl App {
     pub fn dispatch(&mut self, action: Action) {
@@ -30,6 +31,7 @@ impl App {
             Action::Select(index) if !self.help && index < TABS.len() => self.tab = index,
             Action::ToggleHelp => self.help = !self.help,
             Action::Escape if self.help => self.help = false,
+            Action::Escape if self.details && self.tab == 0 => self.details = false,
             Action::Escape | Action::Quit => self.quit = true,
             _ => {}
         }

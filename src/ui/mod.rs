@@ -67,44 +67,100 @@ pub fn draw_themed(frame: &mut Frame, app: &App, theme: &Theme) {
             ),
         )
     } else if app.help {
-        ("Help", "Tab / arrows / 1–5: navigate\nLibrary: r scan, x cancel, Up/Down select\nSettings: Up/Down select, Enter edit\n?: toggle help\nEsc: close help or quit\nq / Ctrl+C: quit".into())
+        ("Help", "Tab / arrows / 1–5: navigate\nLibrary: r scan, x cancel, Up/Down select, Enter details\nSettings: Up/Down select, Enter edit\n?: toggle help\nEsc: close help or quit\nq / Ctrl+C: quit".into())
     } else {
         (
             TABS[app.tab],
             match app.tab {
                 0 => {
-                    let mut lines = vec![
-                        format!(
-                            "{} GGUF candidates | {} roots | {}",
-                            app.candidates.len(),
-                            app.config.model_roots.len(),
-                            if app.scanning { "Scanning" } else { "Idle" }
-                        ),
-                        "r: scan   x: cancel".into(),
-                    ];
-                    if app.candidates.is_empty() {
-                        lines.push("Add a model directory in Settings, then press r.".into());
+                    if app.details {
+                        if let Some(g) = app.candidates.get(app.model_cursor) {
+                            let m = &g.files[0].metadata;
+                            let safe = |s: &str| {
+                                s.chars()
+                                    .map(|c| if c.is_control() { '�' } else { c })
+                                    .collect::<String>()
+                            };
+                            let text = |v: &Option<String>| {
+                                v.as_deref().map(safe).unwrap_or_else(|| "Unknown".into())
+                            };
+                            let num = |v: Option<u64>| {
+                                v.map(|n| n.to_string()).unwrap_or_else(|| "Unknown".into())
+                            };
+                            let mut lines = vec![
+                                safe(&g.name),
+                                format!("Name: {}", text(&m.name)),
+                                format!("Architecture: {}", text(&m.architecture)),
+                                format!("File type ID: {}", num(m.file_type)),
+                                format!("Context: {} | Layers: {}", num(m.context), num(m.layers)),
+                                format!(
+                                    "Tokenizer: {} | Vocabulary: {}",
+                                    text(&m.tokenizer),
+                                    num(m.vocabulary)
+                                ),
+                                format!(
+                                    "Tensor elements: {} | Size: {:.2} GiB",
+                                    g.elements(),
+                                    g.bytes() as f64 / 1073741824.0
+                                ),
+                                format!(
+                                    "Shards: {}/{} | {}",
+                                    g.files.len(),
+                                    g.expected,
+                                    if g.complete {
+                                        "Present"
+                                    } else {
+                                        "Incomplete or inconsistent"
+                                    }
+                                ),
+                                "Metadata only; loadability not verified.".into(),
+                                "Enter / Esc: close".into(),
+                            ];
+                            lines.extend(g.files.iter().map(|f| safe(&f.path.to_string_lossy())));
+                            lines.join("\n")
+                        } else {
+                            "No selection".into()
+                        }
+                    } else {
+                        let mut lines = vec![
+                            format!(
+                                "{} GGUF groups | {} roots | {}",
+                                app.candidates.len(),
+                                app.config.model_roots.len(),
+                                if app.scanning { "Scanning" } else { "Idle" }
+                            ),
+                            "r: scan   x: cancel   Enter: details".into(),
+                        ];
+                        if app.candidates.is_empty() {
+                            lines.push("Add a model directory in Settings, then press r.".into());
+                        }
+                        let cursor = app.model_cursor.min(app.candidates.len().saturating_sub(1));
+                        let visible = usize::from(body.height.saturating_sub(5)).max(1);
+                        let offset = cursor.saturating_sub(visible.saturating_sub(1));
+                        for (index, candidate) in
+                            app.candidates.iter().enumerate().skip(offset).take(visible)
+                        {
+                            let name: String = candidate
+                                .name
+                                .chars()
+                                .map(|c| if c.is_control() { '�' } else { c })
+                                .collect();
+                            lines.push(format!(
+                                "{} {} | {:.2} GiB | {}",
+                                if index == cursor { ">" } else { " " },
+                                name,
+                                candidate.bytes() as f64 / 1073741824.0,
+                                if candidate.projector {
+                                    "Projector"
+                                } else if candidate.complete {
+                                    "Metadata read"
+                                } else {
+                                    "Incomplete"
+                                }
+                            ));
+                        }
+                        lines.join("\n")
                     }
-                    let cursor = app.model_cursor.min(app.candidates.len().saturating_sub(1));
-                    let visible = usize::from(body.height.saturating_sub(5)).max(1);
-                    let offset = cursor.saturating_sub(visible.saturating_sub(1));
-                    for (index, candidate) in
-                        app.candidates.iter().enumerate().skip(offset).take(visible)
-                    {
-                        let name = candidate
-                            .path
-                            .file_name()
-                            .unwrap_or_default()
-                            .to_string_lossy();
-                        lines.push(format!(
-                            "{} {} | {} MiB | GGUF v{}",
-                            if index == cursor { ">" } else { " " },
-                            name,
-                            candidate.bytes / 1048576,
-                            candidate.version
-                        ));
-                    }
-                    lines.join("\n")
                 }
                 1 => "Hugging Face discovery — planned.".into(),
                 2 => "Download queue — planned.".into(),

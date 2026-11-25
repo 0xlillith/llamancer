@@ -45,7 +45,8 @@ fn main() -> io::Result<()> {
                                 scan.candidates.len(),
                                 scan.skipped
                             );
-                            app.candidates = scan.candidates;
+                            app.candidates = models::group::group(scan.candidates);
+                            app.details = false;
                             app.model_cursor = 0;
                         }
                         Err(e) => app.notice = format!("Scan ended: {}", e.kind()),
@@ -83,6 +84,7 @@ fn main() -> io::Result<()> {
                                     Ok((next, next_theme)) => {
                                         if next.model_roots != config.model_roots {
                                             app.candidates.clear();
+                                            app.details = false;
                                             app.model_cursor = 0;
                                             if let Some(active) = &job {
                                                 active.cancel();
@@ -128,6 +130,12 @@ fn main() -> io::Result<()> {
                         KeyCode::Enter if !app.help && app.tab == 4 => {
                             let field = Field::ALL[app.setting];
                             app.edit = Some((field, field.initial(&config)));
+                            continue;
+                        }
+                        KeyCode::Enter
+                            if !app.help && app.tab == 0 && !app.candidates.is_empty() =>
+                        {
+                            app.details = !app.details;
                             continue;
                         }
                         KeyCode::Up if !app.help && app.tab == 0 => {

@@ -1,8 +1,9 @@
-//! Read-only model discovery. Metadata and multipart grouping follow in Phase 1.
+//! Read-only model discovery.
+pub mod gguf;
+pub mod group;
 use std::{
     collections::HashSet,
-    fs,
-    io::{self, Read},
+    fs, io,
     path::PathBuf,
     sync::atomic::{AtomicBool, Ordering},
 };
@@ -12,6 +13,7 @@ pub struct Candidate {
     pub path: PathBuf,
     pub bytes: u64,
     pub version: u32,
+    pub metadata: gguf::Metadata,
 }
 #[derive(Debug, Default)]
 pub struct Scan {
@@ -19,25 +21,6 @@ pub struct Scan {
     pub skipped: usize,
 }
 
-fn header(path: &std::path::Path) -> io::Result<u32> {
-    let mut f = fs::File::open(path)?;
-    let mut bytes = [0u8; 24];
-    f.read_exact(&mut bytes)?;
-    if &bytes[..4] != b"GGUF" {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "Invalid GGUF magic",
-        ));
-    }
-    let version = u32::from_le_bytes(bytes[4..8].try_into().unwrap());
-    if !matches!(version, 2 | 3) {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "Unsupported GGUF version",
-        ));
-    }
-    Ok(version)
-}
 pub fn scan(roots: Vec<PathBuf>, cancel: &AtomicBool) -> io::Result<Scan> {
     let mut result = Scan::default();
     let mut pending = roots;
@@ -76,6 +59,7 @@ pub fn scan(roots: Vec<PathBuf>, cancel: &AtomicBool) -> io::Result<Scan> {
                         }
                     }
                 }
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => return Err(e),
                 Err(_) => result.skipped += 1,
             }
         } else if meta.is_file()
@@ -83,12 +67,14 @@ pub fn scan(roots: Vec<PathBuf>, cancel: &AtomicBool) -> io::Result<Scan> {
                 .extension()
                 .is_some_and(|s| s.eq_ignore_ascii_case("gguf"))
         {
-            match header(&path) {
-                Ok(version) => result.candidates.push(Candidate {
+            match gguf::read(&path, cancel) {
+                Ok(metadata) => result.candidates.push(Candidate {
                     path,
                     bytes: meta.len(),
-                    version,
+                    version: metadata.version,
+                    metadata,
                 }),
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => return Err(e),
                 Err(_) => result.skipped += 1,
             }
         }
