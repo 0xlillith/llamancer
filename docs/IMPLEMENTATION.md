@@ -1,52 +1,31 @@
-# Implementation master plan
+# Implementation specification
 
-Status: proposed, not implemented. Linux-first; OMP-first, not OMP-only.
+All project documentation, UI strings, issues, commits and source comments are in English. OMP-first, not OMP-only. Linux-first; no telemetry or mandatory containers.
 
-## M0 — Foundation
-- Split library and binary; typed actions/events, reducer, bounded async worker channels, cancellation and graceful terminal restoration.
-- XDG config/data/cache, schema-versioned TOML, atomic writes, restrictive credential permissions, structured redacted logs.
-- Responsive five-view Dracula TUI, keyboard/mouse, focus, dialogs, help, error states; test with Ratatui TestBackend.
-- Commit Cargo.lock, establish fmt/clippy/test CI, verify on Arch and Debian. No performance claims until measured.
-Acceptance: clean build, tests, terminal restored on exit/error, no busy polling.
+## Phase 0 — Foundation
+Deliver a library/binary split, pure reducer, typed actions, keyboard navigation, responsive five-view layout, contextual help, terminal restoration, event-driven rendering and tests. Next add mouse/focus, bounded asynchronous workers, cancellation, XDG TOML settings, atomic persistence, theme loading and redacted logging. Use stable Rust, commit Cargo.lock and run fmt, clippy and tests. CI requires workflow authorization.
+Acceptance: navigation wraps, help is dismissible, quit restores terminal, narrow terminals do not panic, idle does not busy-poll, configuration survives restart.
 
-## M1 — Library
-- Multiple roots, bounded recursive scan, symlink cycle protection, stable identity, no automatic file moves.
-- Bounded GGUF metadata parser; validate magic/version, lengths, multipart completeness and mmproj association; never load weights for indexing.
-- Search/filter/sort/favorites, import by reference, explicit physical deletion confirmation; protect loaded files.
-- Profiles distinguish engine and request generation parameters; basic/advanced editors, capability validation.
-Acceptance: fixture tests for malformed/truncated/multipart GGUF, duplicate paths, read-only roots and safe removal.
+## Phase 1 — Model library
+Define stable model IDs, source roots, canonical paths and metadata. Scan recursively with bounded concurrency, symlink cycle detection and cancellation. Parse GGUF headers with bounded allocations and checked offsets; never read weights. Group multipart shards and associate mmproj explicitly. Track incomplete/invalid models separately. Support import by reference, favorites, search, sorting, details and explicit deletion confirmation; reject deletion of loaded models. Profiles distinguish engine and request settings, with basic/advanced editors. Estimate memory with uncertainty, including KV cache and overhead.
+Acceptance: fixtures cover malformed/truncated headers, duplicate paths, multipart gaps, read-only roots and safe removal.
 
-## M2 — Server
-- Probe installed llama-server version/help/API; maintain compatibility fixtures and capability matrix.
-- External attach (read-only lifecycle), managed child, optional systemd user service; ownership and PID identity checks; loopback default.
-- Router load/unload/switch where supported, independent server/model states, timeouts, health polling/backoff, bounded logs.
-- Backend discovery CPU/Vulkan/ROCm/CUDA, explicit binary selection, no automatic driver installation. Profile translation only for supported flags.
-- Test with mock HTTP server and real pinned llama.cpp versions; validate on Andromeda with small GGUF.
-Acceptance: start/stop/restart, attach without killing external server, model switch, failure recovery and clean shutdown.
+## Phase 2 — Inference
+Probe installed llama-server version/help and documented API; pin compatibility fixtures. Implement external attach, owned child process and optional systemd user service. External servers are never stopped implicitly. Bind loopback by default; validate endpoint and redact credentials. Independent server/model state machines, health polling with backoff, timeouts, bounded logs, graceful stop and explicit restart. Discover CPU/Vulkan/ROCm/CUDA builds without installing drivers. Translate profiles only to supported flags; router load/unload/switch only when supported. Expose web UI and btop launch.
+Acceptance: mock HTTP tests and real small-GGUF smoke tests, model switching, failure recovery, external ownership safety. Benchmark AMD backends on Andromeda.
 
-## M3 — Hugging Face and downloads
-- Search/pagination, GGUF filters, repository revision and file metadata, license/gated status, multipart and mmproj selection.
-- Optional token via secure storage or existing environment; never log or forward auth to unrelated hosts.
-- Persistent queue, bounded concurrency, partial files, Range/If-Range resume with validator checks, handle 200/206/416, retries/backoff, disk-space checks.
-- Pin revisions, verify size and authoritative digest when available, atomic final rename; sanitize paths and prevent traversal.
-Acceptance: interrupted transfer resumes, changed remote object restarts safely, incomplete files never indexed, offline recovery.
+## Phase 3 — Discovery and downloads
+HF search with pagination, filters, repository details, revision pinning, quantization and license/gated metadata. Optional authentication via existing environment or secure storage; never forward credentials to unrelated hosts. Persistent queue with bounded concurrency, pause/resume/cancel, retry/backoff, disk-space checks, progress/ETA. Use partial files and Range/If-Range validators; handle 200/206/416 correctly. Sanitize destination paths, verify size and authoritative digest when available, atomically rename complete files. Never index partial files.
+Acceptance: interrupted transfer resumes, changed object restarts safely, offline recovery, multipart completion and checksum mismatch tests.
 
-## M4 — Agents
-- AgentAdapter detect/prepare contract; LaunchContext and LaunchPlan with executable/argv/env/cwd, no shell interpolation.
-- Verify actual OMP and Pi provider schemas and versions; preserve user config, preview changes, atomic backups and rollback.
-- OMP first end-to-end; Pi next; custom adapter with explicit argv. Select project and current terminal/new tab/window; Kitty first, fallback to current terminal.
-- Ensure model is ready before launch; avoid logging prompts or credentials.
-Acceptance: real OMP and Pi smoke tests, existing configs preserved, failed launch recoverable.
+## Phase 4 — Agents
+Define AgentAdapter detect/prepare and LaunchContext/LaunchPlan (argv, cwd, env, model, endpoint). Verify upstream OMP and Pi schemas before implementation; OMP first, Pi second, custom argv adapter third. Preview config changes, preserve unrelated keys, atomic backups and rollback. Wait for model readiness. Launch current terminal or Kitty tab/window, fallback for other terminals; no shell interpolation. Avoid logging prompts or secrets.
+Acceptance: real OMP/Pi smoke tests, existing configurations preserved, failed launch recoverable.
 
-## M5 — Release
-- Accessibility, narrow terminal layouts, keyboard/mouse parity, help, docs, security review, dependency audit.
-- Benchmark startup/idle RSS/CPU on defined hardware; targets not guarantees: <100ms startup, <30MB idle RSS, 5–15MB binary.
-- Linux x86_64/aarch64 builds, checksums, release notes, Arch PKGBUILD, crates.io/AUR availability recheck before publishing.
-Acceptance: reproducible documented installation, clean CI, no critical known defects, end-to-end smoke tests.
+## Phase 5 — Beta and release
+Accessibility, narrow layouts, keyboard/mouse parity, error recovery, dependency audit, security review, documentation and benchmarks. Targets (not measured): startup <100ms, idle RSS <30MB, binary 5–15MB, near-zero idle CPU. Build Linux x86_64/aarch64, checksums, release notes, Arch PKGBUILD; verify crates.io/AUR names before publishing.
+Acceptance: clean CI, documented installation, no critical known defects, end-to-end smoke tests.
 
-## Cross-cutting decisions
-Use Rust/Ratatui/Crossterm, Tokio/Reqwest as needed, Serde/TOML, tracing, thiserror. No database initially; atomic versioned files. No telemetry, chat UI, training or detailed hardware monitor. Use btop for monitoring. No mandatory containers. Never expose server publicly by default. Never overwrite existing agent config or delete models silently.
-
-## Dependencies
-M0 -> M1 -> M2; M3 can proceed after M1; M4 requires M2; M5 requires all. Keep PRs small, each with tests and documentation. Validate upstream API contracts before committing to exact flags or schemas.
+## Delivery rules
+Phase 0 precedes 1; phase 2 and 3 depend on 1; phase 4 depends on 2; release depends on all. Small reviewable commits with tests and docs. No chat, training, RAG or detailed hardware monitoring. No automatic deletion or public server exposure. Exact upstream API contracts remain a validation gate.
 

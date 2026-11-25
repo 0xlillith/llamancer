@@ -1,11 +1,22 @@
 pub const TABS: [&str; 5] = ["Library", "Discover", "Downloads", "Server", "Settings"];
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Action { Next, Previous, ToggleHelp, Escape, Quit }
+
 #[derive(Default)]
-pub struct App { pub tab: usize }
+pub struct App { pub tab: usize, pub help: bool, pub quit: bool }
 
 impl App {
-    pub fn next(&mut self) { self.tab = (self.tab + 1) % TABS.len(); }
-    pub fn previous(&mut self) { self.tab = (self.tab + TABS.len() - 1) % TABS.len(); }
+    pub fn dispatch(&mut self, action: Action) {
+        match action {
+            Action::Next if !self.help => self.tab = (self.tab + 1) % TABS.len(),
+            Action::Previous if !self.help => self.tab = (self.tab + TABS.len() - 1) % TABS.len(),
+            Action::ToggleHelp => self.help = !self.help,
+            Action::Escape if self.help => self.help = false,
+            Action::Escape | Action::Quit => self.quit = true,
+            _ => {}
+        }
+    }
 }
 
 #[cfg(test)]
@@ -14,10 +25,21 @@ mod tests {
     #[test]
     fn navigation_wraps() {
         let mut app = App::default();
-        app.previous();
+        app.dispatch(Action::Previous);
         assert_eq!(app.tab, 4);
-        app.next();
+        app.dispatch(Action::Next);
         assert_eq!(app.tab, 0);
+    }
+    #[test]
+    fn help_is_modal() {
+        let mut app = App::default();
+        app.dispatch(Action::ToggleHelp);
+        app.dispatch(Action::Next);
+        assert_eq!(app.tab, 0);
+        app.dispatch(Action::Escape);
+        assert!(!app.help && !app.quit);
+        app.dispatch(Action::Escape);
+        assert!(app.quit);
     }
 }
 
