@@ -10,3 +10,5 @@
 - Added cancellable background jobs, an interactive settings editor and read-only GGUF candidate discovery.
 
 - Added bounded GGUF metadata and tensor descriptor parsing, multipart presence checks, and a model details view.
+
+- Added library search, size/name ordering, persistent favorites and readable quantization labels.

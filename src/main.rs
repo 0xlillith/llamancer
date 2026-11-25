@@ -65,6 +65,25 @@ fn main() -> io::Result<()> {
                         app.dispatch(Action::Quit);
                         continue;
                     }
+                    if app.searching {
+                        match key.code {
+                            KeyCode::Enter | KeyCode::Esc => app.searching = false,
+                            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                                app.query.clear();
+                                app.model_cursor = 0;
+                            }
+                            KeyCode::Backspace => {
+                                app.query.pop();
+                                app.model_cursor = 0;
+                            }
+                            KeyCode::Char(c) if !c.is_control() && app.query.len() < 512 => {
+                                app.query.push(c);
+                                app.model_cursor = 0;
+                            }
+                            _ => {}
+                        }
+                        continue;
+                    }
                     if let Some((field, draft)) = app.edit.as_mut() {
                         match key.code {
                             KeyCode::Esc => {
@@ -132,9 +151,7 @@ fn main() -> io::Result<()> {
                             app.edit = Some((field, field.initial(&config)));
                             continue;
                         }
-                        KeyCode::Enter
-                            if !app.help && app.tab == 0 && !app.candidates.is_empty() =>
-                        {
+                        KeyCode::Enter if !app.help && app.tab == 0 && app.selected().is_some() => {
                             app.details = !app.details;
                             continue;
                         }
@@ -144,7 +161,44 @@ fn main() -> io::Result<()> {
                         }
                         KeyCode::Down if !app.help && app.tab == 0 => {
                             app.model_cursor =
-                                (app.model_cursor + 1).min(app.candidates.len().saturating_sub(1));
+                                (app.model_cursor + 1).min(app.visible().len().saturating_sub(1));
+                            continue;
+                        }
+                        KeyCode::Char('/') if !app.help && app.tab == 0 => {
+                            app.searching = true;
+                            app.details = false;
+                            continue;
+                        }
+                        KeyCode::Char('s') if !app.help && app.tab == 0 => {
+                            app.sort = app.sort.next();
+                            app.model_cursor = 0;
+                            app.details = false;
+                            continue;
+                        }
+                        KeyCode::Char('v') if !app.help && app.tab == 0 => {
+                            app.only_favorites = !app.only_favorites;
+                            app.model_cursor = 0;
+                            app.details = false;
+                            continue;
+                        }
+                        KeyCode::Char('f') if !app.help && app.tab == 0 => {
+                            if let Some(g) = app.selected() {
+                                let id = models::library::identity(g);
+                                let mut next = config.clone();
+                                if !next.favorites.remove(&id) {
+                                    next.favorites.insert(id);
+                                }
+                                match next.save(&path) {
+                                    Ok(()) => {
+                                        config = next;
+                                        app.config = config.clone();
+                                        app.clamp_cursor();
+                                        app.details = false;
+                                        app.notice = "Favorites saved".into();
+                                    }
+                                    Err(_) => app.notice = "Could not save favorites".into(),
+                                }
+                            }
                             continue;
                         }
                         KeyCode::Char('r') if !app.help && app.tab == 0 && job.is_none() => {
@@ -172,7 +226,8 @@ fn main() -> io::Result<()> {
                 }
                 Event::Mouse(mouse)
                     if mouse.kind == MouseEventKind::Down(MouseButton::Left)
-                        && app.edit.is_none() =>
+                        && app.edit.is_none()
+                        && !app.searching =>
                 {
                     let size = terminal.size()?;
                     if let Some(index) = ui::tab_at(

@@ -1,4 +1,11 @@
-use crate::{config::Config, models::group::Group, settings::Field};
+use crate::{
+    config::Config,
+    models::{
+        group::Group,
+        library::{self, Sort},
+    },
+    settings::Field,
+};
 pub const TABS: [&str; 5] = ["Library", "Discover", "Downloads", "Server", "Settings"];
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Action {
@@ -22,8 +29,32 @@ pub struct App {
     pub candidates: Vec<Group>,
     pub model_cursor: usize,
     pub details: bool,
+    pub query: String,
+    pub searching: bool,
+    pub only_favorites: bool,
+    pub sort: Sort,
 }
 impl App {
+    pub fn visible(&self) -> Vec<usize> {
+        library::visible(
+            &self.candidates,
+            &self.query,
+            &self.config.favorites,
+            self.only_favorites,
+            self.sort,
+        )
+    }
+    pub fn selected(&self) -> Option<&Group> {
+        self.visible()
+            .get(self.model_cursor)
+            .and_then(|&i| self.candidates.get(i))
+    }
+    pub fn clamp_cursor(&mut self) {
+        self.model_cursor = self
+            .model_cursor
+            .min(self.visible().len().saturating_sub(1));
+    }
+
     pub fn dispatch(&mut self, action: Action) {
         match action {
             Action::Next if !self.help => self.tab = (self.tab + 1) % TABS.len(),

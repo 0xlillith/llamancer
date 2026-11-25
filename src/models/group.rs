@@ -24,7 +24,7 @@ impl Group {
             .fold(0u64, |sum, f| sum.saturating_add(f.metadata.elements))
     }
 }
-fn shard(path: &Path) -> Option<(&str, u64, u64)> {
+pub(super) fn shard(path: &Path) -> Option<(&str, u64, u64)> {
     let stem = path.file_stem()?.to_str()?;
     let (left, total) = stem.rsplit_once("-of-")?;
     let (base, index) = left.rsplit_once('-')?;

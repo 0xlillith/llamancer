@@ -1,6 +1,7 @@
 //! Versioned application settings and atomic persistence.
 use serde::{Deserialize, Serialize};
 use std::{
+    collections::BTreeSet,
     fs, io,
     path::{Path, PathBuf},
 };
@@ -13,6 +14,7 @@ pub struct Config {
     pub model_roots: Vec<PathBuf>,
     pub default_agent: String,
     pub endpoint: String,
+    pub favorites: BTreeSet<PathBuf>,
 }
 
 impl Default for Config {
@@ -23,6 +25,7 @@ impl Default for Config {
             model_roots: Vec::new(),
             default_agent: "omp".into(),
             endpoint: "http://127.0.0.1:8080".into(),
+            favorites: BTreeSet::new(),
         }
     }
 }
@@ -86,6 +89,7 @@ mod tests {
         let path = dir.path().join("config.toml");
         let mut c = Config::load(&path).unwrap();
         c.model_roots.push("/models".into());
+        c.favorites.insert("/models/favorite.gguf".into());
         c.save(&path).unwrap();
         assert_eq!(Config::load(&path).unwrap(), c);
     }

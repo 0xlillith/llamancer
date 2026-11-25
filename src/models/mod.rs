@@ -1,6 +1,7 @@
 //! Read-only model discovery.
 pub mod gguf;
 pub mod group;
+pub mod library;
 use std::{
     collections::HashSet,
     fs, io,

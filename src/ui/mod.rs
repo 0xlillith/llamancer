@@ -67,14 +67,14 @@ pub fn draw_themed(frame: &mut Frame, app: &App, theme: &Theme) {
             ),
         )
     } else if app.help {
-        ("Help", "Tab / arrows / 1–5: navigate\nLibrary: r scan, x cancel, Up/Down select, Enter details\nSettings: Up/Down select, Enter edit\n?: toggle help\nEsc: close help or quit\nq / Ctrl+C: quit".into())
+        ("Help", "Tab / arrows / 1–5: navigate\nLibrary: r scan, x cancel, Up/Down select, Enter details\n/: search, s: sort, f: favorite, v: favorites only\nSettings: Up/Down select, Enter edit\n?: toggle help\nEsc: close help or quit\nq / Ctrl+C: quit".into())
     } else {
         (
             TABS[app.tab],
             match app.tab {
                 0 => {
                     if app.details {
-                        if let Some(g) = app.candidates.get(app.model_cursor) {
+                        if let Some(g) = app.selected() {
                             let m = &g.files[0].metadata;
                             let safe = |s: &str| {
                                 s.chars()
@@ -91,7 +91,11 @@ pub fn draw_themed(frame: &mut Frame, app: &App, theme: &Theme) {
                                 safe(&g.name),
                                 format!("Name: {}", text(&m.name)),
                                 format!("Architecture: {}", text(&m.architecture)),
-                                format!("File type ID: {}", num(m.file_type)),
+                                format!(
+                                    "Quantization: {} | Type ID: {}",
+                                    crate::models::library::quantization(m.file_type),
+                                    num(m.file_type)
+                                ),
                                 format!("Context: {} | Layers: {}", num(m.context), num(m.layers)),
                                 format!(
                                     "Tokenizer: {} | Vocabulary: {}",
@@ -122,23 +126,43 @@ pub fn draw_themed(frame: &mut Frame, app: &App, theme: &Theme) {
                             "No selection".into()
                         }
                     } else {
+                        let indices = app.visible();
                         let mut lines = vec![
                             format!(
-                                "{} GGUF groups | {} roots | {}",
+                                "{} / {} GGUF groups | {} roots | {}",
+                                indices.len(),
                                 app.candidates.len(),
                                 app.config.model_roots.len(),
                                 if app.scanning { "Scanning" } else { "Idle" }
                             ),
-                            "r: scan   x: cancel   Enter: details".into(),
+                            format!(
+                                "Search: {}{} | Sort: {} | {}",
+                                app.query,
+                                if app.searching { "▏" } else { "" },
+                                app.sort.label(),
+                                if app.only_favorites {
+                                    "Favorites"
+                                } else {
+                                    "All"
+                                }
+                            ),
+                            "r scan / search s sort f favorite v filter Enter details".into(),
                         ];
                         if app.candidates.is_empty() {
                             lines.push("Add a model directory in Settings, then press r.".into());
                         }
-                        let cursor = app.model_cursor.min(app.candidates.len().saturating_sub(1));
-                        let visible = usize::from(body.height.saturating_sub(5)).max(1);
+                        if indices.is_empty() && !app.candidates.is_empty() {
+                            lines.push("No matches. Press / to edit the search.".into());
+                        }
+                        let cursor = app.model_cursor.min(indices.len().saturating_sub(1));
+                        let visible = usize::from(body.height.saturating_sub(6)).max(1);
                         let offset = cursor.saturating_sub(visible.saturating_sub(1));
-                        for (index, candidate) in
-                            app.candidates.iter().enumerate().skip(offset).take(visible)
+                        for (index, candidate) in indices
+                            .iter()
+                            .map(|&i| &app.candidates[i])
+                            .enumerate()
+                            .skip(offset)
+                            .take(visible)
                         {
                             let name: String = candidate
                                 .name
@@ -146,9 +170,21 @@ pub fn draw_themed(frame: &mut Frame, app: &App, theme: &Theme) {
                                 .map(|c| if c.is_control() { '�' } else { c })
                                 .collect();
                             lines.push(format!(
-                                "{} {} | {:.2} GiB | {}",
+                                "{}{} {} | {} | {:.2} GiB | {}",
                                 if index == cursor { ">" } else { " " },
+                                if app
+                                    .config
+                                    .favorites
+                                    .contains(&crate::models::library::identity(candidate))
+                                {
+                                    "*"
+                                } else {
+                                    " "
+                                },
                                 name,
+                                crate::models::library::quantization(
+                                    candidate.files[0].metadata.file_type
+                                ),
                                 candidate.bytes() as f64 / 1073741824.0,
                                 if candidate.projector {
                                     "Projector"

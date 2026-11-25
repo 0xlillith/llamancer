@@ -44,3 +44,9 @@ Development checks: `cargo fmt --all -- --check`, `cargo test --locked`, `cargo 
 ## Local model discovery preview
 
 Open Settings (5), select Add model root, enter an existing absolute directory and save with Enter. Switch to Library (1) and press r to scan or x to cancel. The read-only scan parses bounded little-endian GGUF v2/v3 metadata and tensor descriptors without reading tensor payloads. It groups conventional multipart names and checks shard numbering against split metadata. Press Enter for model details and Esc to close them. Shard presence and readable metadata do not establish loadability or payload integrity. Projector recognition is a filename heuristic; pairing is not yet implemented. Nested symlinks are skipped. No model files are modified.
+
+### Library navigation
+
+Press / to search by name, path, architecture or quantization (all search terms must match). Enter or Esc leaves search mode; Ctrl+U clears the query while editing. Press s to cycle name/size ordering, f to toggle a favorite and v to display favorites only. Favorites persist in the configuration file. A multipart group's identity is its expected first shard path, even when that shard is missing.
+
+Quantization labels use the GGUF general.file_type / llama_ftype identifiers, not individual tensor type IDs. Unknown identifiers remain numeric.
