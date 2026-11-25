@@ -45,7 +45,7 @@ pub fn content(app: &App, body: Rect) -> (&'static str, String) {
             }
             lines.extend([
                 selected.hint().into(),
-                "Up/Down select | Enter edit | a mode | s save | Esc cancel".into(),
+                "Up/Down select | Enter edit | a mode | m projector candidate | s save | Esc cancel".into(),
             ]);
         }
         ("Inference profile", lines.join("\n"))

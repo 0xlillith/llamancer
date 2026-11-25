@@ -243,6 +243,28 @@ impl Runtime {
                 editor.cursor = (editor.cursor + editor.fields().len() - 1) % editor.fields().len()
             }
             KeyCode::Down => editor.cursor = (editor.cursor + 1) % editor.fields().len(),
+            KeyCode::Char('m') => {
+                let group = self
+                    .app
+                    .candidates
+                    .iter()
+                    .find(|g| models::library::identity(g) == editor.id)
+                    .ok_or_else(|| io::Error::other("Rescan model library first"))?;
+                let choices = models::group::projector_candidates(group, &self.app.candidates);
+                let [projector] = choices.as_slice() else {
+                    return Err(io::Error::other(if choices.is_empty() {
+                        "No complete same-directory projector found; enter the path manually"
+                    } else {
+                        "Multiple projector candidates; choose the correct path manually"
+                    }));
+                };
+                let path = projector.files[0]
+                    .path
+                    .to_str()
+                    .ok_or_else(|| io::Error::other("Projector path is not UTF-8"))?;
+                editor.draft.engine.projector = Some(path.into());
+                self.app.notice="Projector candidate selected in draft; verify compatibility and press s to save".into();
+            }
             KeyCode::Char('a') => {
                 editor.advanced = !editor.advanced;
                 editor.cursor = 0;

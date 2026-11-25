@@ -154,6 +154,22 @@ mod tests {
         assert_eq!(result.candidates.len(), 2);
     }
     #[test]
+    fn scans_read_only_root_without_mutating_it() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("read-only.gguf");
+        let mut bytes = [0u8; 24];
+        bytes[..4].copy_from_slice(b"GGUF");
+        bytes[4..8].copy_from_slice(&3u32.to_le_bytes());
+        fs::write(&path, bytes).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o444)).unwrap();
+        fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o555)).unwrap();
+        let result = scan(vec![dir.path().into()], &AtomicBool::new(false));
+        fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        assert_eq!(result.unwrap().candidates.len(), 1);
+        assert_eq!(fs::read(path).unwrap(), bytes);
+    }
+    #[test]
     fn cancels_before_traversal() {
         assert_eq!(
             scan(vec![".".into()], &AtomicBool::new(true))
