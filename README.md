@@ -1,6 +1,10 @@
 <div align="center">
 
-<img src="assets/logo.svg" alt="Llamancer — Summon your models." width="840">
+<img src="assets/hex-mascot.webp" alt="Hex, the Llamancer mascot, wearing a purple wizard hat and holding a cyan flame staff." width="256">
+
+# Llamancer
+
+*Summon your models.*
 
 [![CI](https://github.com/0xlillith/llamancer/actions/workflows/ci.yml/badge.svg)](https://github.com/0xlillith/llamancer/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-bd93f9.svg)](LICENSE)
@@ -85,7 +89,7 @@ CI runs on native Linux x86_64 and aarch64. The optional Live CPU smoke tests wo
 
 Read [Architecture](docs/ARCHITECTURE.md), [Implementation specification](docs/IMPLEMENTATION.md), [GGUF indexing](docs/GGUF.md), [Integrations](docs/INTEGRATIONS.md), [Roadmap](docs/ROADMAP.md), [Status](docs/STATUS.md) and [Contributing](CONTRIBUTING.md).
 
-Hex, our llama sorcerer, lives in [assets/hex.svg](assets/hex.svg). The default palette is Dracula-inspired.
+Meet [Hex](assets/hex-mascot.webp), our llama sorcerer and project mascot. The default palette is Dracula-inspired.
 
 ## License
 
