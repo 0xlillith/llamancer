@@ -23,6 +23,7 @@ pub struct Scan {
     pub candidates: Vec<Candidate>,
     pub skipped: usize,
     pub invalid: Vec<(PathBuf, io::ErrorKind)>,
+    pub invalid_total: usize,
 }
 
 /// Preserve the logical filename of a file reference (including a Hub snapshot
@@ -143,6 +144,7 @@ pub fn scan(roots: Vec<PathBuf>, cancel: &AtomicBool) -> io::Result<Scan> {
                 Err(e) if e.kind() == io::ErrorKind::Interrupted => return Err(e),
                 Err(e) => {
                     result.skipped += 1;
+                    result.invalid_total += 1;
                     if result.invalid.len() < 1000 {
                         result.invalid.push((path, e.kind()));
                     }

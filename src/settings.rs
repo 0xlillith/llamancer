@@ -20,9 +20,10 @@ pub enum Field {
     RemoveRoot,
     ImportModel,
     RestoreModel,
+    RemoveImport,
 }
 impl Field {
-    pub const ALL: [Self; 13] = [
+    pub const ALL: [Self; 14] = [
         Self::Theme,
         Self::Agent,
         Self::AgentTerminal,
@@ -36,6 +37,7 @@ impl Field {
         Self::RemoveRoot,
         Self::ImportModel,
         Self::RestoreModel,
+        Self::RemoveImport,
     ];
     pub fn label(self) -> &'static str {
         match self {
@@ -52,6 +54,7 @@ impl Field {
             Self::RemoveRoot => "Remove model root (exact path)",
             Self::ImportModel => "Import GGUF by reference (absolute path)",
             Self::RestoreModel => "Restore hidden model (exact identity path)",
+            Self::RemoveImport => "Remove imported model reference (exact path)",
         }
     }
     pub fn initial(self, config: &Config) -> String {
@@ -73,6 +76,17 @@ impl Field {
                 .map(|p| p.display().to_string())
                 .unwrap_or_default(),
             Self::CustomAgent => config.custom_agent.clone(),
+            Self::RemoveImport => config
+                .model_imports
+                .first()
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+            Self::RestoreModel => config
+                .hidden_models
+                .iter()
+                .next()
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_default(),
             _ => String::new(),
         }
     }
@@ -155,6 +169,13 @@ pub fn apply(
                 draft.model_imports.push(path);
             }
         }
+        Field::RemoveImport => {
+            let path = PathBuf::from(value);
+            if !draft.model_imports.contains(&path) {
+                return Err(invalid("No imported model with this path"));
+            }
+            draft.model_imports.retain(|p| p != &path);
+        }
         Field::RestoreModel => {
             let path = PathBuf::from(value);
             if !draft.hidden_models.remove(&path) {
@@ -178,6 +199,26 @@ pub fn apply(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn removes_only_import_reference_and_prefills_restore() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("model.gguf");
+        std::fs::write(&path, b"fixture").unwrap();
+        let mut config = Config::default();
+        config.model_imports.push(path.clone());
+        config.hidden_models.insert(path.clone());
+        assert_eq!(Field::RestoreModel.initial(&config), path.to_string_lossy());
+        let (next, _) = apply(
+            &config,
+            Field::RemoveImport,
+            path.to_str().unwrap(),
+            root.path(),
+        )
+        .unwrap();
+        assert!(next.model_imports.is_empty());
+        assert!(path.is_file());
+        assert!(next.hidden_models.contains(&path));
+    }
     #[test]
     fn validates_and_preserves_original() {
         let root = tempfile::tempdir().unwrap();

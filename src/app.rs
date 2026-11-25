@@ -38,6 +38,8 @@ pub struct App {
     pub candidates: Vec<Group>,
     pub invalid: Vec<(std::path::PathBuf, std::io::ErrorKind)>,
     pub show_invalid: bool,
+    pub invalid_cursor: usize,
+    pub invalid_total: usize,
     pub quarantine_confirmation: Option<bool>,
     pub hide_confirmation: Option<std::path::PathBuf>,
     pub model_cursor: usize,

@@ -87,17 +87,37 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App, p: &Palette) {
         return;
     }
     if app.show_invalid {
-        let mut lines =
-            vec!["Invalid GGUF files (up to 1000). Press i or Esc to return.".to_string()];
+        let (offset, capacity) = super::viewport(app.invalid_cursor, area.height, 4);
+        let mut lines = vec![format!(
+            "Invalid GGUF: {} total, {} retained | ↑↓ / Home End | i/Esc back",
+            app.invalid_total,
+            app.invalid.len()
+        )];
         lines.extend(
             app.invalid
                 .iter()
-                .map(|(path, kind)| format!("{} | {}", safe(&path.to_string_lossy()), kind)),
+                .enumerate()
+                .skip(offset)
+                .take(capacity)
+                .map(|(i, (path, kind))| {
+                    format!(
+                        "{} {} | {}",
+                        if i == app.invalid_cursor { ">" } else { " " },
+                        safe(&path.to_string_lossy()),
+                        kind
+                    )
+                }),
         );
+        if let Some((path, kind)) = app.invalid.get(app.invalid_cursor) {
+            lines.push(format!(
+                "Selected: {} | {}",
+                safe(&path.to_string_lossy()),
+                kind
+            ));
+        }
         frame.render_widget(
             Paragraph::new(lines.join("\n"))
                 .style(p.base)
-                .wrap(Wrap { trim: false })
                 .block(p.panel(" Invalid files ")),
             area,
         );
@@ -111,7 +131,7 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App, p: &Palette) {
         indices.len(),
         app.candidates.len(),
         app.config.model_roots.len() + app.config.model_imports.len(),
-        app.invalid.len(),
+        app.invalid_total,
         if app.scanning { "Scanning" } else { "Idle" },
         safe(&app.query),
         if app.searching { "▏" } else { "" },

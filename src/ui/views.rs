@@ -312,6 +312,23 @@ pub fn content(app: &App, body: Rect) -> (&'static str, String) {
                             .iter()
                             .map(|p| format!("  {}", super::safe(&p.to_string_lossy()))),
                     );
+                    lines.push(format!(
+                        "Imported file references: {}",
+                        app.config.model_imports.len()
+                    ));
+                    lines.extend(
+                        app.config
+                            .model_imports
+                            .iter()
+                            .map(|p| format!("  {}", super::safe(&p.to_string_lossy()))),
+                    );
+                    lines.push(format!("Hidden models: {}", app.config.hidden_models.len()));
+                    lines.extend(
+                        app.config
+                            .hidden_models
+                            .iter()
+                            .map(|p| format!("  {}", super::safe(&p.to_string_lossy()))),
+                    );
                     lines.join("\n")
                 }
             },
