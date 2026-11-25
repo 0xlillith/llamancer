@@ -2,7 +2,9 @@ use crate::app::{App, TABS};
 use ratatui::layout::Rect;
 
 pub fn content(app: &App, body: Rect) -> (&'static str, String) {
-    if let Some(choice) = &app.download_destination {
+    if let Some(report) = &app.fit_report {
+        ("Model memory advisory", report.clone())
+    } else if let Some(choice) = &app.download_destination {
         let (offset, capacity) = super::viewport(choice.cursor, body.height, 4);
         let mut lines = vec![format!(
             "Bundle: {} files | {:.2} GiB required",
@@ -181,7 +183,7 @@ pub fn content(app: &App, body: Rect) -> (&'static str, String) {
             ),
         )
     } else if app.help {
-        ("Help", "Tab / arrows / 1–5: navigate; click tab or row, scroll to select\nLibrary: r scan, x cancel, Up/Down select, Enter details\n/: search, s: sort, f: favorite, v: favorites only, p: inference profile, l: start single model, i: invalid files, h: hide model, t: quarantine\nDiscover: / search, Enter open, d queue, n next page\nDownloads: r resume, R run queue, x pause, t quarantine, T restore, z remove entry\nServer: r refresh, D detach, s router  R restart, i probe, x stop, l/u load/unload, a agent, A current terminal, g logs\nSettings: Up/Down select, Enter edit; T next theme; B backend manager, P project picker (also Server)\n?: toggle help\nEsc: close help or quit\nq / Ctrl+C: quit".into())
+        ("Help", "Tab / arrows / 1–5: navigate; click tab or row, scroll to select\nLibrary: r scan, x cancel, Up/Down select, Enter details\n/: search, s: sort, f: favorite, v: favorites only, p: inference profile, m: memory advisory, l: start single model, i: invalid files, h: hide model, t: quarantine\nDiscover: / search, Enter open, d queue, n next page\nDownloads: r resume, R run queue, x pause, t quarantine, T restore, z remove entry\nServer: r refresh, D detach, s router  R restart, i probe, x stop, l/u load/unload, a agent, A current terminal, g logs\nSettings: Up/Down select, Enter edit; T next theme; B backend manager, P project picker (also Server)\n?: toggle help\nEsc: close help or quit\nq / Ctrl+C: quit".into())
     } else {
         (
             TABS[app.tab],

@@ -48,7 +48,7 @@ pub fn details(group: &Group, config: &crate::config::Config) -> String {
         } else {
             "Metadata read; some tensor extents unverified.".into()
         },
-        "p profile | l load | Enter / Esc close".into(),
+        "p profile | m fit | l load | Enter / Esc close".into(),
         String::new(),
     ];
     let profile = config

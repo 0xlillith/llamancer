@@ -178,6 +178,7 @@ impl Runtime {
     pub fn modal(&self) -> bool {
         self.app.backend_open
             || self.app.projects.is_some()
+            || self.app.fit_report.is_some()
             || self.app.download_destination.is_some()
             || self.app.show_invalid
             || self.app.profile_editor.is_some()
@@ -247,6 +248,12 @@ impl Runtime {
     pub fn handle_key(&mut self, key: KeyEvent) -> io::Result<Effect> {
         if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
             self.app.dispatch(Action::Quit);
+            return Ok(Effect::None);
+        }
+        if self.app.fit_report.is_some() {
+            if matches!(key.code, KeyCode::Esc | KeyCode::Enter | KeyCode::Char('m')) {
+                self.app.fit_report = None;
+            }
             return Ok(Effect::None);
         }
         if let Some(choice) = &mut self.app.download_destination {
@@ -593,6 +600,9 @@ impl Runtime {
     }
     fn persist(&mut self, next: Config) -> io::Result<()> {
         next.save(&self.path)?;
+        if next.server_binary != self.app.config.server_binary {
+            self.app.server.devices.clear();
+        }
         self.app.config = next;
         let _ = self
             .diagnostics
@@ -776,6 +786,26 @@ impl Runtime {
         }
         match key {
             KeyCode::Char('i') => self.app.show_invalid = true,
+            KeyCode::Char('m') => {
+                let group = self
+                    .app
+                    .selected()
+                    .ok_or_else(|| io::Error::other("Select a model first"))?;
+                let profile = self
+                    .app
+                    .config
+                    .profiles
+                    .get(&models::library::identity(group))
+                    .cloned()
+                    .unwrap_or_default();
+                self.app.fit_report = Some(models::fit::report(
+                    group,
+                    &profile,
+                    &self.app.config,
+                    &self.app.server.devices,
+                    models::fit::available_ram(),
+                ));
+            }
             KeyCode::Char('t') => {
                 self.ensure_quarantine_idle()?;
                 let group = self

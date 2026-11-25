@@ -113,6 +113,9 @@ impl Controller {
     }
     pub fn probe(&mut self, config: &Config) -> io::Result<()> {
         let binary = config.server_binary.clone();
+        if !self.busy() {
+            self.devices.clear();
+        }
         self.submit(move |_| {
             let version = process::command_output(&binary, &["--version"])?;
             let devices = process::command_output(&binary, &["--list-devices"])

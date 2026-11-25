@@ -47,6 +47,7 @@ pub struct App {
     pub hide_confirmation: Option<std::path::PathBuf>,
     pub model_cursor: usize,
     pub details: bool,
+    pub fit_report: Option<String>,
     pub query: String,
     pub searching: bool,
     pub only_favorites: bool,

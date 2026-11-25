@@ -55,6 +55,9 @@ Keyless OMP launches use the documented LLAMA_CPP_BASE_URL runtime override; che
 
 For Arch-based systems, see the [experimental VCS package](packaging/arch/README.md). Binary tarballs and checksums are available as [workflow artifacts](https://github.com/0xlillith/llamancer/actions/workflows/release.yml) until a stable release is published.
 
+## Model fit advisory
+Press `m` in Library to see the selected model's disk size, conventional attention KV estimate, requested GPU offload and available system RAM. Probe the configured backend with `i` in Server first to include its last reported per-device memory. Full-offload/CPU comparisons flag likely capacity pressure; partial/automatic offload and unsupported hybrid architectures remain explicitly uncertain. This is not a guarantee and does not change settings automatically.
+
 ## Model storage
 Add multiple model roots in Settings and optionally choose a Default download root. In Discover, `d` uses that default (or opens the picker when multiple roots exist without a default), and `D` always opens the destination picker. The picker shows total bundle size and free space per root. Queue entries retain their original destination across restart and default changes. New bundles require space for the full file(s); resume of already queued files still checks the actual remaining bytes.
 
