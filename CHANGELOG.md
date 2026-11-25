@@ -27,3 +27,5 @@
 - Added recoverable managed-file quarantine with ownership receipts, checksums, Linux write leases and explicit restore.
 - Added mouse row selection, textual selection markers and a high-contrast theme.
 - Validated real systemd user-service start/restart/stop, isolated Arch x86_64 package installation, installed OMP/Pi authenticated streaming and read-tool round trips, and real single-model/router CPU image inference on both native architectures.
+
+- Added checksum-pinned official CPU, Vulkan and ROCm backend installation, device probing, selection, removal and bounded small-model benchmarks in the TUI. Added CLI installation/probe commands and actual managed CPU installation in live CI. GPU runtime requirements remain external.

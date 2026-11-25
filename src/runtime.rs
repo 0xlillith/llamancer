@@ -1,4 +1,5 @@
 //! Application orchestration. Terminal I/O stays in the binary; workers own long operations.
+use crate::backends::{self, Kind};
 use crate::{
     agents::{AgentAdapter, Custom, LaunchPlan, Native, Pi},
     app::{Action, App},
@@ -9,7 +10,18 @@ use crate::{
     ui::theme::Theme,
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use std::{io, path::PathBuf};
+use std::{
+    io,
+    path::PathBuf,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
+};
+enum BackendResult {
+    Message(String),
+    Select(PathBuf, String),
+}
 
 pub enum Effect {
     None,
@@ -23,6 +35,7 @@ pub struct Runtime {
     root: PathBuf,
     path: PathBuf,
     scan: Option<Job<Scan>>,
+    backend: Option<(Job<BackendResult>, Arc<AtomicU64>, u64)>,
     _lock: crate::diagnostics::SessionLock,
     diagnostics: crate::diagnostics::Diagnostics,
 }
@@ -49,17 +62,47 @@ impl Runtime {
             root,
             path,
             scan: None,
+            backend: None,
             _lock: lock,
             diagnostics,
         })
     }
     pub fn active(&self) -> bool {
         self.scan.is_some()
+            || self.backend.is_some()
             || self.app.server.polling()
             || self.app.discovery.busy()
             || self.app.downloads.as_ref().is_some_and(|d| d.busy())
     }
     pub fn tick(&mut self) {
+        if let Some((job, progress, size)) = self.backend.as_mut() {
+            self.app.backend_progress =
+                (*size > 0).then(|| (progress.load(Ordering::Acquire), *size));
+            if let Some(outcome) = job.poll() {
+                if let Some((job, _, _)) = self.backend.take() {
+                    job.finish();
+                }
+                self.app.backend_busy = false;
+                self.app.backend_progress = None;
+                self.app.backend_status = match outcome {
+                    Ok(BackendResult::Message(message)) => message,
+                    Ok(BackendResult::Select(path, device)) => {
+                        let mut next = self.app.config.clone();
+                        next.server_binary = path.to_string_lossy().into_owned();
+                        next.device = device;
+                        match self.persist(next) {
+                            Ok(()) => {
+                                "Backend selected. Return to Server or Library to start inference."
+                                    .into()
+                            }
+                            Err(e) => e.to_string(),
+                        }
+                    }
+                    Err(e) => format!("Backend: {e}"),
+                };
+            }
+        }
+
         self.app.server.tick(&self.app.config);
         self.app.discovery.tick();
         if let Some(d) = self.app.downloads.as_mut() {
@@ -113,6 +156,11 @@ impl Runtime {
             .record(crate::diagnostics::Event::InputFailed, None);
     }
     pub fn shutdown(&mut self) -> io::Result<()> {
+        if let Some((job, _, _)) = self.backend.take() {
+            job.cancel();
+            job.finish();
+        }
+
         if let Some(job) = self.scan.take() {
             job.cancel();
             job.finish();
@@ -125,7 +173,8 @@ impl Runtime {
         result.and(downloads)
     }
     pub fn modal(&self) -> bool {
-        self.app.profile_editor.is_some()
+        self.app.backend_open
+            || self.app.profile_editor.is_some()
             || self.app.edit.is_some()
             || self.app.searching
             || self.app.discovery.editing
@@ -165,6 +214,19 @@ impl Runtime {
     pub fn handle_key(&mut self, key: KeyEvent) -> io::Result<Effect> {
         if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
             self.app.dispatch(Action::Quit);
+            return Ok(Effect::None);
+        }
+        if self.app.backend_open {
+            self.backend_key(key.code)?;
+            return Ok(Effect::None);
+        }
+        if key.code == KeyCode::Char('B') && matches!(self.app.tab, 3 | 4) && !self.modal() {
+            self.app.notice.clear();
+            self.app.backend_open = true;
+            self.app.backend_root = Some(backends::root()?);
+            self.app.backend_hardware = backends::hardware();
+            self.app.backend_status =
+                "Select a backend, install or probe it. No system packages are changed.".into();
             return Ok(Effect::None);
         }
         if let Some(restore) = self.app.quarantine_confirmation {
@@ -260,6 +322,118 @@ impl Runtime {
             _ => {}
         }
         Ok(Effect::None)
+    }
+    fn backend_key(&mut self, key: KeyCode) -> io::Result<()> {
+        self.app.notice.clear();
+        if let Some((job, _, _)) = &self.backend {
+            if matches!(key, KeyCode::Char('x') | KeyCode::Esc) {
+                job.cancel();
+                self.app.backend_status = "Cancelling…".into();
+            }
+            return Ok(());
+        }
+        let action = if let Some(confirm) = self.app.backend_confirmation.take() {
+            if key != KeyCode::Char('y') {
+                self.app.backend_status = "Cancelled".into();
+                return Ok(());
+            }
+            confirm
+        } else {
+            match key {
+                KeyCode::Esc | KeyCode::Char('q') => {
+                    self.app.backend_open = false;
+                    return Ok(());
+                }
+                KeyCode::Up => {
+                    self.app.backend_cursor = (self.app.backend_cursor + 2) % 3;
+                    return Ok(());
+                }
+                KeyCode::Down => {
+                    self.app.backend_cursor = (self.app.backend_cursor + 1) % 3;
+                    return Ok(());
+                }
+                KeyCode::Char(action @ ('i' | 'd' | 'b')) => {
+                    self.app.backend_confirmation = Some(action);
+                    return Ok(());
+                }
+                KeyCode::Char('p') => 'p',
+                KeyCode::Enter => 's',
+                _ => return Ok(()),
+            }
+        };
+        let asset = backends::catalog(Kind::ALL[self.app.backend_cursor])
+            .ok_or_else(|| io::Error::other("No official asset for this architecture"))?;
+        let root = self
+            .app
+            .backend_root
+            .clone()
+            .ok_or_else(|| io::Error::other("No backend storage directory"))?;
+        if matches!(action, 's' | 'd' | 'b')
+            && (self.app.server.polling()
+                || self.app.server.snapshot.is_some()
+                || self.mutation_active())
+        {
+            return Err(io::Error::other(
+                "Stop/detach inference before changing or benchmarking backends",
+            ));
+        }
+        if action != 'i' && !asset.installed(&root) {
+            return Err(io::Error::other("Install selected backend first"));
+        }
+        let model = if action == 'b' {
+            let group = self
+                .app
+                .selected()
+                .filter(|g| g.complete && !g.projector && g.files.len() == 1)
+                .ok_or_else(|| {
+                    io::Error::other("Select a small complete single-file model in Library first")
+                })?;
+            Some(group.files[0].path.clone())
+        } else {
+            None
+        };
+        let selected = self.app.config.server_binary.clone();
+        let progress = Arc::new(AtomicU64::new(0));
+        let counter = progress.clone();
+        let job = Job::start(move |cancel| {
+            let binary = asset.binary(&root);
+            match action {
+                'i' => {
+                    backends::install(&root, asset, &cancel, &counter)?;
+                    Ok(BackendResult::Message(
+                        "Verified archive installed. Probe and select before use.".into(),
+                    ))
+                }
+                'p' => {
+                    let output = backends::probe(&binary)?;
+                    let message = match backends::detected_device(asset.kind, &output) {
+                        Ok(_) => output,
+                        Err(e) => format!("{e}\n{output}"),
+                    };
+                    Ok(BackendResult::Message(message))
+                }
+                's' => {
+                    let output = backends::probe(&binary)?;
+                    let device = backends::detected_device(asset.kind, &output)?;
+                    Ok(BackendResult::Select(binary, device))
+                }
+                'd' => {
+                    backends::remove(&root, asset, &selected)?;
+                    Ok(BackendResult::Message("Managed backend removed".into()))
+                }
+                'b' => Ok(BackendResult::Message(backends::benchmark(
+                    &root,
+                    asset,
+                    &model.expect("benchmark model"),
+                    &cancel,
+                )?)),
+                _ => Err(io::Error::other("Unknown backend action")),
+            }
+        })?;
+        self.backend = Some((job, progress, if action == 'i' { asset.size } else { 0 }));
+        self.app.backend_busy = true;
+        self.app.backend_status = "Working…".into();
+        Ok(())
     }
     fn persist(&mut self, next: Config) -> io::Result<()> {
         next.save(&self.path)?;

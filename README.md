@@ -49,6 +49,34 @@ OMP uses the documented LLAMA_CPP_BASE_URL runtime override. Pi uses a Llamancer
 
 For Arch-based systems, see the [experimental VCS package](packaging/arch/README.md). Binary tarballs and checksums are available as [workflow artifacts](https://github.com/0xlillith/llamancer/actions/workflows/release.yml) until a stable release is published.
 
+## Managed inference backends
+
+Llamancer can install official llama.cpp distributions itself. No Unsloth, package manager, sudo, shell configuration or service is required. In **Server** or **Settings**, press `B` to open Backend Manager:
+
+| Action | Key |
+|---|---|
+| Select CPU, Vulkan or ROCm | Up / Down |
+| Download and install the pinned official build | i, then y |
+| Probe the backend and list real devices | p |
+| Select the installed backend for inference | Enter |
+| Benchmark a selected small local model | b, then y |
+| Remove an unused managed backend | d, then y |
+| Cancel a running operation / return | x / Esc |
+
+The initial catalog pins llama.cpp **b12721**, with SHA-256 and archive sizes obtained from official GitHub release metadata. CPU and Vulkan are available on x86_64 and aarch64; ROCm is available on x86_64. Installations live under `$XDG_DATA_HOME/llamancer/backends` (default `~/.local/share/llamancer/backends`). Downloads are verified before extraction and published as private versioned directories. GPU selection refuses backends that expose no compatible device. Vulkan and ROCm still require compatible system GPU runtimes; no drivers are installed automatically.
+
+Select a complete single-file GGUF of at most 512 MiB in Library before benchmarking. The quick test uses 128 prompt tokens, 32 generation tokens, two threads, two repetitions and eight GPU layers (zero for CPU). Stop all inference first. Confirm the selected GPU device in Settings, particularly on multi-GPU systems. Do not start unmanaged programs from Llamancer-owned backend directories during removal. External executable paths remain supported. The pinned catalog is updated through Llamancer releases; arbitrary release updates and source compilation are not yet implemented.
+
+Headless installation and diagnostics:
+
+```sh
+llamancer backend list
+llamancer backend install vulkan
+llamancer backend probe vulkan
+```
+
+See [Backend Manager](docs/BACKENDS.md) for verification, platform requirements and current limits.
+
 ## Controls
 
 | View | Keys |

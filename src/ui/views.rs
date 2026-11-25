@@ -2,7 +2,64 @@ use crate::app::{App, TABS};
 use ratatui::layout::Rect;
 
 pub fn content(app: &App, body: Rect) -> (&'static str, String) {
-    if let Some(restore) = app.quarantine_confirmation {
+    if app.backend_open {
+        use crate::backends::{self, Kind};
+        let mut lines = vec![
+            format!(
+                "Official llama.cpp {} | {}",
+                backends::RELEASE,
+                super::safe(&app.backend_hardware)
+            ),
+            String::new(),
+        ];
+        for (i, kind) in Kind::ALL.into_iter().enumerate() {
+            let status = if let Some(asset) = backends::catalog(kind) {
+                let installed = app
+                    .backend_root
+                    .as_ref()
+                    .is_some_and(|root| asset.installed(root));
+                let selected = app.backend_root.as_ref().is_some_and(|root| {
+                    asset.binary(root).to_string_lossy() == app.config.server_binary
+                });
+                format!(
+                    "{} | {:.1} MiB{}",
+                    if installed {
+                        "installed"
+                    } else {
+                        "not installed"
+                    },
+                    asset.size as f64 / 1048576.0,
+                    if selected { " | SELECTED" } else { "" }
+                )
+            } else {
+                "unavailable on this architecture".into()
+            };
+            lines.push(format!(
+                "{} {:7} {status}",
+                if i == app.backend_cursor { ">" } else { " " },
+                kind.name()
+            ));
+        }
+        lines.push(String::new());
+        if let Some(action) = app.backend_confirmation {
+            let label = match action {
+                'i' => "Download and install checksum-pinned archive",
+                'd' => "Delete selected managed backend (stop all inference first)",
+                _ => "Benchmark selected Library model (max 512 MiB)",
+            };
+            lines.push(format!("{label}? y confirm / n cancel"));
+        } else if let Some((bytes, total)) = app.backend_progress {
+            lines.push(format!(
+                "Download: {:.1}/{:.1} MiB ({:.0}%)",
+                bytes as f64 / 1048576.0,
+                total as f64 / 1048576.0,
+                100.0 * bytes as f64 / total as f64
+            ));
+            lines.push("Verifying and extracting after download; x cancel".into());
+        }
+        lines.extend(app.backend_status.lines().map(super::safe));
+        ("Backend Manager", lines.join("\n"))
+    } else if let Some(restore) = app.quarantine_confirmation {
         let mut lines=vec![if restore{"Restore all selected managed shards?"}else{"Quarantine all selected managed shards?"}.into(),"Stop all external inference first. Files are renamed, never deleted; disk space is retained.".into(),"y confirm | n/Esc cancel".into()];
         if let Some(d) = &app.downloads {
             if let Ok(indices) = d.quarantine_targets() {
@@ -69,7 +126,7 @@ pub fn content(app: &App, body: Rect) -> (&'static str, String) {
             ),
         )
     } else if app.help {
-        ("Help", "Tab / arrows / 1–5: navigate; click tab or row, scroll to select\nLibrary: r scan, x cancel, Up/Down select, Enter details\n/: search, s: sort, f: favorite, v: favorites only, p: inference profile, l: start single model, i: invalid files, h: hide model, t: quarantine\nDiscover: / search, Enter open, d queue, n next page\nDownloads: r resume, R run queue, x pause, t quarantine, T restore, z remove entry\nServer: r refresh, D detach, s router  R restart, i probe, x stop, l/u load/unload, a agent, A current terminal, g logs\nSettings: Up/Down select, Enter edit\n?: toggle help\nEsc: close help or quit\nq / Ctrl+C: quit".into())
+        ("Help", "Tab / arrows / 1–5: navigate; click tab or row, scroll to select\nLibrary: r scan, x cancel, Up/Down select, Enter details\n/: search, s: sort, f: favorite, v: favorites only, p: inference profile, l: start single model, i: invalid files, h: hide model, t: quarantine\nDiscover: / search, Enter open, d queue, n next page\nDownloads: r resume, R run queue, x pause, t quarantine, T restore, z remove entry\nServer: r refresh, D detach, s router  R restart, i probe, x stop, l/u load/unload, a agent, A current terminal, g logs\nSettings: Up/Down select, Enter edit; B backend manager (also Server)\n?: toggle help\nEsc: close help or quit\nq / Ctrl+C: quit".into())
     } else {
         (
             TABS[app.tab],

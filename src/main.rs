@@ -31,9 +31,78 @@ fn run_child(terminal: &mut ratatui::DefaultTerminal, mut command: Command) -> i
         Err(io::Error::other("Child process exited with an error"))
     }
 }
+fn backend_cli(mut args: impl Iterator<Item = std::ffi::OsString>) -> io::Result<()> {
+    use llamancer::backends::{self, Kind};
+    use std::sync::{
+        atomic::{AtomicBool, AtomicU64},
+        Arc,
+    };
+    let root = backends::root()?;
+    let action = args
+        .next()
+        .and_then(|s| s.into_string().ok())
+        .unwrap_or_default();
+    if action == "list" && args.next().is_none() {
+        println!("Official llama.cpp {}", backends::RELEASE);
+        for kind in Kind::ALL {
+            if let Some(asset) = backends::catalog(kind) {
+                println!(
+                    "{}: {} ({} bytes)",
+                    kind.name(),
+                    if asset.installed(&root) {
+                        "installed"
+                    } else {
+                        "not installed"
+                    },
+                    asset.size
+                );
+            } else {
+                println!("{}: unavailable on this architecture", kind.name());
+            }
+        }
+        return Ok(());
+    }
+    let kind = Kind::parse(
+        &args
+            .next()
+            .and_then(|s| s.into_string().ok())
+            .unwrap_or_default(),
+    )?;
+    if args.next().is_some() {
+        return Err(io::Error::other("Unexpected backend argument"));
+    }
+    let asset = backends::catalog(kind)
+        .ok_or_else(|| io::Error::other("No pinned release asset for this architecture"))?;
+    match action.as_str() {
+        "install" => {
+            let cancel = Arc::new(AtomicBool::new(false));
+            signal_hook::flag::register(libc::SIGINT, cancel.clone())?;
+            signal_hook::flag::register(libc::SIGTERM, cancel.clone())?;
+            println!(
+                "{}",
+                backends::install(&root, asset, &cancel, &AtomicU64::new(0))?.display()
+            );
+        }
+        "probe" => {
+            if !asset.installed(&root) {
+                return Err(io::Error::other("Backend not installed"));
+            }
+            println!("{}", backends::probe(&asset.binary(&root))?);
+        }
+        _ => {
+            return Err(io::Error::other(
+                "Use backend list, install KIND or probe KIND",
+            ))
+        }
+    }
+    Ok(())
+}
 fn main() -> io::Result<()> {
     let mut args = std::env::args_os().skip(1);
     if let Some(arg) = args.next() {
+        if arg == "backend" {
+            return backend_cli(args);
+        }
         if args.next().is_some() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -47,7 +116,7 @@ fn main() -> io::Result<()> {
                 return Ok(());
             }
             Some("--help" | "-h") => {
-                println!("Llamancer — Summon your models.\n\nUsage: llamancer [serve|--help|--version]\n  serve   Supervise a local router without a TUI");
+                println!("Llamancer — Summon your models.\n\nUsage: llamancer [serve|backend|--help|--version]\n  serve   Supervise a local router without a TUI\n  backend list | install KIND | probe KIND");
                 return Ok(());
             }
             _ => {
