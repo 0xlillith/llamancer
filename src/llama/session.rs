@@ -33,7 +33,8 @@ pub struct Controller {
     single: Option<Group>,
     pub generation: u64,
     pub active_context: Option<u32>,
-    router_contexts: std::collections::BTreeMap<String, Option<u32>>,
+    active_profile: Option<crate::models::profile::Profile>,
+    router_contexts: std::collections::BTreeMap<String, crate::models::profile::Profile>,
     discard_pending: bool,
     pub snapshot: Option<Snapshot>,
     pub cursor: usize,
@@ -58,9 +59,16 @@ impl Controller {
                 .is_some_and(|g| identity(g) == identity(group))
     }
     pub fn router_context_matches(&self, g: &Group, config: &Config) -> bool {
-        self.router_contexts
-            .get(&router::id(g))
-            .is_some_and(|c| *c == config.effective_profile(g).engine.context_size)
+        self.router_contexts.get(&router::id(g)).is_some_and(|p| {
+            let next = config.effective_profile(g);
+            p.engine == next.engine && p.generation == next.generation
+        })
+    }
+    pub fn profile_matches(&self, g: &Group, c: &Config) -> bool {
+        let next = c.effective_profile(g);
+        self.active_profile
+            .as_ref()
+            .is_some_and(|p| p.engine == next.engine && p.generation == next.generation)
     }
     pub fn active(&self) -> bool {
         self.busy() || self.owns_server()
@@ -169,17 +177,13 @@ impl Controller {
             groups
                 .iter()
                 .filter(|g| g.complete && !g.projector)
-                .map(|g| {
-                    (
-                        router::id(g),
-                        config.effective_profile(g).engine.context_size,
-                    )
-                })
+                .map(|g| (router::id(g), config.effective_profile(g)))
                 .collect()
         } else {
             Default::default()
         };
         let launch_mode = single.clone();
+        let active_profile = single.as_ref().map(|g| config.effective_profile(g));
         let requested_context = single
             .as_ref()
             .and_then(|g| config.effective_profile(g).engine.context_size);
@@ -246,6 +250,7 @@ impl Controller {
         })?;
         self.startup_deadline = Some(Instant::now() + Duration::from_secs(90));
         self.active_context = requested_context;
+        self.active_profile = active_profile;
         self.router_contexts = router_contexts;
         self.generation = self.generation.wrapping_add(1);
         self.single = launch_mode;

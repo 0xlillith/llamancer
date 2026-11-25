@@ -2,7 +2,9 @@ use crate::app::{App, TABS};
 use ratatui::layout::Rect;
 
 pub fn content(app: &App, body: Rect) -> (&'static str, String) {
-    if let Some(g) = &app.launch_menu {
+    if let Some(warning) = &app.probe_warning {
+        ("Tool compatibility warning",format!("{}\n\nSynthetic tool-call test only; a pass does not guarantee future tool reliability.\nNo tools were executed.\n\nEnter: continue anyway   Esc: cancel agent",super::safe(warning)))
+    } else if let Some(g) = &app.launch_menu {
         let mut lines = vec![
             format!(
                 "{} · {:.2} GiB",
@@ -35,6 +37,27 @@ pub fn content(app: &App, body: Rect) -> (&'static str, String) {
                     .map(|n| n.to_string())
                     .unwrap_or_else(|| "auto".into())
             ),
+            &format!(
+                "OMP thinking: {} (Enter or ←/→)",
+                app.config
+                    .effective_profile(g)
+                    .agent_thinking
+                    .map(|t| t.label())
+                    .unwrap_or("inherit")
+            ),
+            &format!(
+                "Tool compatibility preflight: {} (Enter toggles)",
+                if app.config.effective_profile(g).tool_preflight {
+                    "ON"
+                } else {
+                    "OFF"
+                }
+            ),
+            if crate::models::profile::recommended(g) {
+                "Apply reviewed model-card thinking sampler (Enter)"
+            } else {
+                "Model-card sampler: no reviewed preset"
+            },
         ]
         .iter()
         .enumerate()
@@ -60,14 +83,16 @@ pub fn content(app: &App, body: Rect) -> (&'static str, String) {
         } else {
             lines.push("Memory estimate unavailable for this model architecture.".into());
         }
-        if app.server.is_single_model(g)
-            && app.server.active_context != app.config.effective_profile(g).engine.context_size
-        {
-            lines.push("Context changed: confirm Run to restart this managed model.".into());
+        if app.server.is_single_model(g) && !app.server.profile_matches(g, &app.config) {
+            lines.push(
+                "Inference profile changed: confirm Run to restart this managed model.".into(),
+            );
         }
         if app.server.snapshot.as_ref().is_some_and(|s| s.router) {
-            lines
-                .push("Router context changes require restarting the router (R in Server).".into());
+            lines.push(
+                "Router inference profile changes require restarting the router (R in Server)."
+                    .into(),
+            );
         }
         if app.server.owns_server()
             && app.server.snapshot.as_ref().is_some_and(|s| !s.router)

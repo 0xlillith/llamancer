@@ -272,7 +272,7 @@ pub fn row_at(area: Rect, app: &App, column: u16, row: u16) -> Option<usize> {
     let (body, _) = content_regions(regions(area)[2], app);
     if app.launch_menu.is_some() {
         let index = usize::from(row.checked_sub(body.y.checked_add(4)?)?);
-        return (index < 5
+        return (index < 8
             && app.context_input.is_none()
             && row < body.bottom().saturating_sub(1)
             && column > body.x
