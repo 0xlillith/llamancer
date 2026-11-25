@@ -209,7 +209,7 @@ impl SearchSpec {
                 if value.is_empty()
                     || !value
                         .bytes()
-                        .all(|b| b.is_ascii_alphanumeric() || b == b'-')
+                        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.'))
                     || spec.license.is_some()
                 {
                     return Err(io::Error::other("Use one license:identifier filter"));
