@@ -14,7 +14,7 @@ Choose the installed backend build using the server executable setting. Managed 
 
 References: https://github.com/can1357/oh-my-pi/blob/main/docs/providers.md and https://github.com/can1357/oh-my-pi/blob/main/docs/cli-reference.md
 
-The OMP launch adapter selects the native llama.cpp provider using the documented LLAMA_CPP_BASE_URL environment override and --model provider/model selector. It inherits the user's OMP configuration and uses the configured project directory.
+The OMP launch adapter selects the native llama.cpp provider using the documented LLAMA_CPP_BASE_URL environment override and --model provider/model selector. For keyless sessions it inherits the user's OMP configuration and uses the configured project directory. Authenticated sessions instead use the private temporary profile described below.
 
 ## Pi
 
@@ -24,9 +24,9 @@ The default Pi adapter registers a text-only OpenAI-compatible provider through 
 
 ## Custom agents
 
-A custom executable and explicit argument array are configured in TOML. Llamancer passes LLAMANCER_ENDPOINT and LLAMANCER_MODEL through the environment, not shell interpolation. Agents can run in the current terminal or use Kitty remote-control launch plans for a tab or OS window; actual graphical launches require a supported terminal environment. Installed-agent protocol smoke tests pass with OMP 19.2.0 and Pi 1.6.0. Real-model tool selection and graphical desktop launch remain release gates.
+A custom executable and explicit argument array are configured in TOML. Llamancer passes LLAMANCER_ENDPOINT and LLAMANCER_MODEL through the environment, not shell interpolation. Agents can run in the current terminal or use Kitty remote-control launch plans for a tab or OS window; actual graphical launches require a supported terminal environment. Installed-agent protocol smoke tests pass with OMP 19.2.0 and Pi 1.6.0. Real-model read-tool selection and graphical desktop launch have passed the documented fixture tests.
 
-Pi 1.6.0 on ARM64 successfully discovered an explicit extension provider, whereas native discovery and CLI login failed. Existing stored native-provider credentials can take precedence over the environment; the separate Llamancer provider avoids the native credential namespace. Full interactive generation, tool use and Kitty validation remain separate release gates.
+Pi 1.6.0 on ARM64 successfully discovered an explicit extension provider, whereas native discovery and CLI login failed. Existing stored native-provider credentials can take precedence over the environment; the separate Llamancer provider avoids the native credential namespace. Interactive generation, tool use and Kitty validation passed the subsequent documented tests; native-provider authentication is not offered.
 
 ## Authenticated OMP profile boundary
 

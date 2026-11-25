@@ -19,7 +19,7 @@ Llamancer brings local GGUF model discovery, inference preferences, server contr
 
 ## Status
 
-Pre-release development. Native Linux x86_64 and aarch64 CI, real CPU text and image inference against llama.cpp b12721, checksum-verified Hub downloads and restoration, a real systemd user-service lifecycle, isolated Arch package installation, and installed-agent protocol smoke tests are passing. Real AMD Vulkan and ROCm single-model/router inference, authenticated OMP generation, and graphical Kitty custom-agent launches have now passed on CachyOS/KDE Wayland. Larger-model compatibility, interactive agent workflows, gated Hub access and final release review remain outstanding. See [verified status](docs/STATUS.md) and [desktop validation evidence](docs/DESKTOP-RESULTS.md) for the precise validation boundaries.
+Pre-release development, targeting the first Linux beta. Native Linux x86_64 and aarch64 CI, managed CPU text/vision inference, checksum-verified public and authorized gated Hub downloads, systemd lifecycle, Arch package installation, AMD Vulkan/ROCm text and vision inference, pinned CPU/Vulkan/ROCm source builds, real OMP/Pi tool use and graphical agent exit have passed their documented acceptance tests. Authenticated OMP uses an isolated temporary profile. No general model compatibility, comprehensive security audit or stable-release certification is implied. See [verified status](docs/STATUS.md), [desktop results](docs/DESKTOP-RESULTS.md) and [release review](docs/BETA-REVIEW.md).
 
 | Workspace | Current functionality |
 | --- | --- |
@@ -31,7 +31,7 @@ Pre-release development. Native Linux x86_64 and aarch64 CI, real CPU text and i
 
 ## Quick start
 
-Requirements: Linux, a terminal, Rust 1.88 or newer to build from source, and a separately installed compatible llama-server for inference. OMP or Pi is optional. Install external software from its official source; Llamancer does not install or upgrade it.
+Requirements: Linux, a terminal, Rust 1.88 or newer to build from source, and a compatible llama-server for inference (installed through Backend Manager or separately). OMP or Pi is optional. Install external software from its official source; Llamancer does not install or upgrade it.
 
 ```sh
 git clone https://github.com/0xlillith/llamancer.git
