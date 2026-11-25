@@ -16,3 +16,5 @@ pub mod service;
 pub mod diagnostics;
 
 pub mod backends;
+
+pub mod doctor;
