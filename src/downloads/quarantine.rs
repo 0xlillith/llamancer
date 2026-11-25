@@ -381,6 +381,7 @@ mod tests {
             root: root.into(),
             root_identity: None,
             state: State::Complete,
+            error: None,
             receipt: None,
         };
         let path = super::super::destination(&item).unwrap();
