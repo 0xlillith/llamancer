@@ -182,6 +182,23 @@ fn real_cpu_router_lifecycle() {
 #[test]
 #[ignore = "requires a real multimodal model and projector"]
 fn real_cpu_multimodal() {
+    real_multimodal("none", 0);
+}
+
+#[test]
+#[ignore = "requires a real multimodal model, projector and compatible GPU backend"]
+fn real_gpu_multimodal() {
+    let device = std::env::var("LLAMANCER_TEST_DEVICE").expect("Set explicit GPU device");
+    assert!(!device.is_empty() && device != "none" && device != "auto");
+    let layers: u32 = std::env::var("LLAMANCER_TEST_GPU_LAYERS")
+        .expect("Set GPU layers")
+        .parse()
+        .unwrap();
+    assert!((1..=999).contains(&layers));
+    real_multimodal(&device, layers);
+}
+
+fn real_multimodal(device: &str, layers: u32) {
     let binary = std::env::var("LLAMANCER_TEST_SERVER").expect("Set LLAMANCER_TEST_SERVER");
     let root = PathBuf::from(
         std::env::var_os("LLAMANCER_TEST_VISION_MODELS").expect("Set LLAMANCER_TEST_VISION_MODELS"),
@@ -206,13 +223,14 @@ fn real_cpu_multimodal() {
     let mut config = Config {
         server_binary: binary,
         endpoint: format!("http://127.0.0.1:{port}"),
-        device: "none".into(),
+        device: device.into(),
         ..Config::default()
     };
     let mut profile = models::profile::Profile::default();
     profile.engine.projector = Some(projector.path.to_str().unwrap().into());
     profile.engine.context_size = Some(4096);
     profile.engine.threads = Some(2);
+    profile.engine.gpu_layers = Some(layers);
     config
         .profiles
         .insert(models::library::identity(model), profile);
