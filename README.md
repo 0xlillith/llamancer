@@ -29,6 +29,12 @@ Pre-release development, targeting the first Linux beta. Native Linux x86_64 and
 | Server | External attach, managed session, headless router supervisor, router presets, load/unload, logs, Web UI and btop |
 | Settings | XDG TOML preferences, Dracula/high-contrast/custom themes, model roots, agent, server executable, device selection, project directory |
 
+## Screenshots
+
+![Llamancer Library and GGUF inspector, Dracula theme](assets/screenshots/library.png)
+
+[More screenshots and terminal captures](docs/SCREENSHOTS.md): inference profiles, live Hugging Face discovery and the persistent download queue.
+
 ## Quick start
 
 Requirements: Linux, a terminal, Rust 1.88 or newer to build from source, and a compatible llama-server for inference (installed through Backend Manager or separately). OMP or Pi is optional. Install external software from its official source; Llamancer does not install or upgrade it.
