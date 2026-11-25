@@ -145,6 +145,23 @@ fn content_range(value: &str, offset: u64, total: u64) -> bool {
         && end.parse::<u64>().ok() == total.checked_sub(1)
 }
 fn transfer(item: &Item, cancel: &AtomicBool, progress: &AtomicU64) -> io::Result<()> {
+    transfer_from(
+        item,
+        cancel,
+        progress,
+        huggingface::resolve(&item.file)?,
+        |path| fs2::available_space(path),
+    )
+}
+fn transfer_from(
+    item: &Item,
+    cancel: &AtomicBool,
+    progress: &AtomicU64,
+    source: url::Url,
+    available_space: impl Fn(&Path) -> io::Result<u64>,
+) -> io::Result<()> {
+    cancelled(cancel)?;
+
     let dest = destination(item)?;
     if dest.exists() {
         return verify(&dest, item, cancel);
@@ -158,7 +175,7 @@ fn transfer(item: &Item, cancel: &AtomicBool, progress: &AtomicU64) -> io::Resul
         .write(true)
         .create_new(true)
         .mode(0o600)
-        .custom_flags(libc::O_NOFOLLOW)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
         .open(&partial)
     {
         Ok(f) => f,
@@ -169,7 +186,7 @@ fn transfer(item: &Item, cancel: &AtomicBool, progress: &AtomicU64) -> io::Resul
             fs::OpenOptions::new()
                 .read(true)
                 .write(true)
-                .custom_flags(libc::O_NOFOLLOW)
+                .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
                 .open(&partial)?
         }
         Err(e) => return Err(e),
@@ -204,11 +221,11 @@ fn transfer(item: &Item, cancel: &AtomicBool, progress: &AtomicU64) -> io::Resul
     let parent = dest
         .parent()
         .ok_or_else(|| io::Error::other("Missing destination parent"))?;
-    if fs2::available_space(parent)? < item.file.size - offset {
+    if available_space(parent)? < item.file.size - offset {
         return Err(io::Error::other("Insufficient free disk space"));
     }
     if offset < item.file.size {
-        let mut url = huggingface::resolve(&item.file)?;
+        let mut url = source.clone();
         let http = huggingface::agent();
         let mut response = None;
         for _ in 0..8 {
@@ -234,10 +251,10 @@ fn transfer(item: &Item, cancel: &AtomicBool, progress: &AtomicU64) -> io::Resul
                     file.set_len(0)?;
                     offset = 0;
                     progress.store(0, Ordering::Relaxed);
-                    if fs2::available_space(parent)? < item.file.size {
+                    if available_space(parent)? < item.file.size {
                         return Err(io::Error::other("Insufficient free disk space"));
                     }
-                    url = huggingface::resolve(&item.file)?;
+                    url = source.clone();
                     continue;
                 }
                 Err(e) => return Err(huggingface::error(e)),
@@ -269,7 +286,7 @@ fn transfer(item: &Item, cancel: &AtomicBool, progress: &AtomicU64) -> io::Resul
                 file.set_len(0)?;
                 offset = 0;
                 progress.store(0, Ordering::Relaxed);
-                if fs2::available_space(parent)? < item.file.size {
+                if available_space(parent)? < item.file.size {
                     return Err(io::Error::other("Insufficient free disk space"));
                 }
             }
@@ -330,13 +347,24 @@ fn retryable(error: &io::Error) -> bool {
     )
 }
 fn transfer_with_retry(item: &Item, cancel: &AtomicBool, progress: &AtomicU64) -> io::Result<()> {
+    retry(
+        cancel,
+        || transfer(item, cancel, progress),
+        Duration::from_millis(100),
+    )
+}
+fn retry(
+    cancel: &AtomicBool,
+    mut operation: impl FnMut() -> io::Result<()>,
+    delay: Duration,
+) -> io::Result<()> {
     for attempt in 0..3 {
         cancelled(cancel)?;
-        match transfer(item, cancel, progress) {
+        match operation() {
             Err(e) if retryable(&e) && attempt < 2 => {
                 for _ in 0..(10 * (1 << attempt)) {
                     cancelled(cancel)?;
-                    std::thread::sleep(Duration::from_millis(100));
+                    std::thread::sleep(delay);
                 }
             }
             result => return result,
@@ -548,6 +576,203 @@ impl Controller {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn fixture(root: &Path) -> Item {
+        Item {
+            file: File {
+                repo: "owner/model".into(),
+                revision: "a".repeat(40),
+                name: "model.gguf".into(),
+                size: 6,
+                sha256: Some(format!("{:x}", Sha256::digest(b"abcdef"))),
+            },
+            root: root.into(),
+            state: State::Queued,
+        }
+    }
+    // A finite local HTTP server drives the actual ureq transfer path. The public
+    // entrypoint still pins the origin to HTTPS Hugging Face.
+    fn server(
+        responses: Vec<(&'static str, &'static str)>,
+    ) -> (url::Url, std::thread::JoinHandle<()>) {
+        use std::{
+            io::{BufRead, BufReader},
+            net::TcpListener,
+        };
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let url =
+            url::Url::parse(&format!("http://{}/model", listener.local_addr().unwrap())).unwrap();
+        let handle = std::thread::spawn(move || {
+            for (range, response) in responses {
+                let deadline = Instant::now() + Duration::from_secs(5);
+                let mut stream = loop {
+                    match listener.accept() {
+                        Ok((stream, _)) => break stream,
+                        Err(e)
+                            if e.kind() == io::ErrorKind::WouldBlock
+                                && Instant::now() < deadline =>
+                        {
+                            std::thread::sleep(Duration::from_millis(5))
+                        }
+                        Err(e) => panic!("fixture accept: {e}"),
+                    }
+                };
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(3)))
+                    .unwrap();
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut headers = String::new();
+                loop {
+                    let mut line = String::new();
+                    reader.read_line(&mut line).unwrap();
+                    if line == "\r\n" || line.is_empty() {
+                        break;
+                    }
+                    headers.push_str(&line.to_ascii_lowercase());
+                }
+                if range.is_empty() {
+                    assert!(!headers.contains("range: bytes="));
+                } else {
+                    assert!(headers.contains(range), "{headers}");
+                }
+                stream.write_all(response.as_bytes()).unwrap();
+            }
+        });
+        (url, handle)
+    }
+    #[test]
+    fn resumes_206_and_restarts_200_and_416() {
+        const FULL: &str =
+            "HTTP/1.1 200 OK\r\nContent-Length: 6\r\nConnection: close\r\n\r\nabcdef";
+        const REST:&str="HTTP/1.1 206 Partial Content\r\nContent-Length: 3\r\nContent-Range: bytes 3-5/6\r\nConnection: close\r\n\r\ndef";
+        const RANGE:&str="HTTP/1.1 416 Range Not Satisfiable\r\nContent-Length: 0\r\nContent-Range: bytes */6\r\nConnection: close\r\n\r\n";
+        for responses in [
+            vec![("range: bytes=3-", REST)],
+            vec![("range: bytes=3-", FULL)],
+            vec![("range: bytes=3-", RANGE), ("", FULL)],
+        ] {
+            let root = tempfile::tempdir().unwrap();
+            let item = fixture(root.path());
+            let dest = destination(&item).unwrap();
+            let partial = dest.with_file_name("model.gguf.part");
+            fs::write(&partial, b"abc").unwrap();
+            let (url, worker) = server(responses);
+            transfer_from(
+                &item,
+                &AtomicBool::new(false),
+                &AtomicU64::new(0),
+                url,
+                |_| Ok(100),
+            )
+            .unwrap();
+            worker.join().unwrap();
+            assert_eq!(fs::read(&dest).unwrap(), b"abcdef");
+            assert!(!partial.exists());
+        }
+    }
+    #[test]
+    fn rejects_wrong_range_and_changed_object() {
+        for response in [
+            "HTTP/1.1 206 Partial Content\r\nContent-Length: 3\r\nContent-Range: bytes 3-5/7\r\nConnection: close\r\n\r\ndef",
+            "HTTP/1.1 206 Partial Content\r\nContent-Length: 3\r\nContent-Range: bytes 3-5/6\r\nConnection: close\r\n\r\nxyz",
+        ] {
+            let root=tempfile::tempdir().unwrap();let item=fixture(root.path());let dest=destination(&item).unwrap();let partial=dest.with_file_name("model.gguf.part");fs::write(&partial,b"abc").unwrap();
+            let (url,worker)=server(vec![("range: bytes=3-",response)]);
+            assert!(transfer_from(&item,&AtomicBool::new(false),&AtomicU64::new(0),url,|_|Ok(100)).is_err());
+            worker.join().unwrap();assert!(!dest.exists());assert!(partial.exists());
+        }
+    }
+    #[test]
+    fn interrupted_response_can_resume_and_lock_prevents_concurrent_writer() {
+        let root = tempfile::tempdir().unwrap();
+        let item = fixture(root.path());
+        let dest = destination(&item).unwrap();
+        let partial = dest.with_file_name("model.gguf.part");
+        let (url, worker) = server(vec![(
+            "",
+            "HTTP/1.1 200 OK\r\nContent-Length: 6\r\nConnection: close\r\n\r\nabc",
+        )]);
+        assert!(transfer_from(
+            &item,
+            &AtomicBool::new(false),
+            &AtomicU64::new(0),
+            url,
+            |_| Ok(100)
+        )
+        .is_err());
+        worker.join().unwrap();
+        assert_eq!(fs::read(&partial).unwrap(), b"abc");
+        let lock = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&partial)
+            .unwrap();
+        FileExt::try_lock_exclusive(&lock).unwrap();
+        let url = url::Url::parse("http://127.0.0.1:1/").unwrap();
+        assert!(transfer_from(
+            &item,
+            &AtomicBool::new(false),
+            &AtomicU64::new(0),
+            url.clone(),
+            |_| Ok(100)
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("in use"));
+        drop(lock);
+        assert!(transfer_from(
+            &item,
+            &AtomicBool::new(false),
+            &AtomicU64::new(0),
+            url,
+            |_| Ok(0)
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("disk space"));
+        let (url,worker)=server(vec![("range: bytes=3-","HTTP/1.1 206 Partial Content\r\nContent-Length: 3\r\nContent-Range: bytes 3-5/6\r\nConnection: close\r\n\r\ndef")]);
+        transfer_from(
+            &item,
+            &AtomicBool::new(false),
+            &AtomicU64::new(0),
+            url,
+            |_| Ok(100),
+        )
+        .unwrap();
+        worker.join().unwrap();
+        assert_eq!(fs::read(dest).unwrap(), b"abcdef");
+    }
+    #[test]
+    fn bounded_retry_exhaustion_and_cancellation() {
+        let cancel = AtomicBool::new(false);
+        let mut attempts = 0;
+        assert!(retry(
+            &cancel,
+            || {
+                attempts += 1;
+                Err(io::ErrorKind::TimedOut.into())
+            },
+            Duration::ZERO
+        )
+        .is_err());
+        assert_eq!(attempts, 3);
+        attempts = 0;
+        assert_eq!(
+            retry(
+                &cancel,
+                || {
+                    attempts += 1;
+                    cancel.store(true, Ordering::Release);
+                    Err(io::ErrorKind::TimedOut.into())
+                },
+                Duration::ZERO
+            )
+            .unwrap_err()
+            .kind(),
+            io::ErrorKind::Interrupted
+        );
+        assert_eq!(attempts, 1);
+    }
     #[test]
     fn rate_ignores_initial_resumed_bytes() {
         let now = Instant::now();
