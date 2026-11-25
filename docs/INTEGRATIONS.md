@@ -24,6 +24,6 @@ The default Pi adapter registers a text-only OpenAI-compatible provider through 
 
 ## Custom agents
 
-A custom executable and explicit argument array are configured in TOML. Llamancer passes LLAMANCER_ENDPOINT and LLAMANCER_MODEL through the environment, not shell interpolation. Agents can run in the current terminal or use Kitty remote-control launch plans for a tab or OS window; actual graphical launches require a supported terminal environment. Real agent smoke tests remain a release gate.
+A custom executable and explicit argument array are configured in TOML. Llamancer passes LLAMANCER_ENDPOINT and LLAMANCER_MODEL through the environment, not shell interpolation. Agents can run in the current terminal or use Kitty remote-control launch plans for a tab or OS window; actual graphical launches require a supported terminal environment. Installed-agent protocol smoke tests pass with OMP 19.2.0 and Pi 1.6.0. Real-model tool selection and graphical desktop launch remain release gates.
 
 Pi 1.6.0 on ARM64 successfully discovered an explicit extension provider, whereas native discovery and CLI login failed. Existing stored native-provider credentials can take precedence over the environment; the separate Llamancer provider avoids the native credential namespace. Full interactive generation, tool use and Kitty validation remain separate release gates.

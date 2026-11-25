@@ -20,3 +20,5 @@ The Dependency audit workflow inventories license metadata and uses RustSec carg
 The completed CPU-side gates include isolated Arch x86_64 package installation, an actual ARM64 systemd user-service lifecycle, recoverable quarantine safety tests, and real single-model/router multimodal CPU inference. Installed-agent protocol tests cover authenticated streaming and a read-tool round trip using controlled responses. See [development status](STATUS.md) for the linked evidence and limits.
 
 Before a stable release, validate the actual Arch desktop, AMD Vulkan/ROCm inference, additional model architectures and measured memory overhead, gated access with an authorized fixture, real-model OMP/Pi tool selection and graphical Kitty integration. Review the license inventory and remaining security assumptions manually. Do not publish a stable tag solely because CI passes.
+
+Use the [desktop acceptance runbook](DESKTOP-ACCEPTANCE.md) to execute the remaining gates. Distribution archives include original third-party Cargo notices and a conservative all-target inventory; missing or incomplete notices still require review before publishing.

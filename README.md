@@ -8,7 +8,7 @@
 
 [![CI](https://github.com/0xlillith/llamancer/actions/workflows/ci.yml/badge.svg)](https://github.com/0xlillith/llamancer/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-bd93f9.svg)](LICENSE)
-[![Status: development](https://img.shields.io/badge/status-development-ffb86c)](docs/IMPLEMENTATION.md)
+[![Status: pre-release](https://img.shields.io/badge/status-pre--release-ffb86c)](docs/STATUS.md)
 
 **A lightweight Rust TUI for llama.cpp model and inference management.**
 **OMP-first. Not OMP-only.**
@@ -23,11 +23,11 @@ Pre-release development. Native Linux x86_64 and aarch64 CI, real CPU text and i
 
 | Workspace | Current functionality |
 | --- | --- |
-| Library | Read-only GGUF indexing, shard grouping, search, ordering, favorites, inspector and per-model profiles |
-| Discover | Paginated Hugging Face search, pinned revision/file listing, quantization/shard selection |
+| Library | Read-only GGUF indexing, shard grouping, search, favorites, inspector, inference profiles, import, hide/restore and recoverable managed-file quarantine |
+| Discover | Paginated Hugging Face search, exact repository lookup, license/quantization filters, pinned revisions and shard selection |
 | Downloads | Persistent queue, sequential resumable transfers, bounded retry, throughput and ETA, free-space checks, file locking and integrity validation |
 | Server | External attach, managed session, headless router supervisor, router presets, load/unload, logs, Web UI and btop |
-| Settings | XDG TOML preferences, Dracula/custom themes, model roots, agent, server executable, device selection, project directory |
+| Settings | XDG TOML preferences, Dracula/high-contrast/custom themes, model roots, agent, server executable, device selection, project directory |
 
 ## Quick start
 
@@ -46,6 +46,8 @@ cargo run --locked --release
 5. Press x in Server to stop an owned session. External servers are never stopped by Llamancer.
 
 OMP uses the documented LLAMA_CPP_BASE_URL runtime override. Pi uses a Llamancer-owned session extension with the selected endpoint and model; choose pi-native for the upstream router provider (LLAMA_BASE_URL). Existing agent settings remain untouched. The compatibility extension supports text only and requires an advertised or configured context size. The configured custom agent receives LLAMANCER_ENDPOINT and LLAMANCER_MODEL.
+
+For Arch-based systems, see the [experimental VCS package](packaging/arch/README.md). Binary tarballs and checksums are available as [workflow artifacts](https://github.com/0xlillith/llamancer/actions/workflows/release.yml) until a stable release is published.
 
 ## Controls
 
@@ -84,7 +86,7 @@ In Discover, use a query such as `qwen license:apache-2.0 quant:Q4_K_M`, or `@ow
 
 ### Recoverable model quarantine
 
-Press `t` in Library or Downloads to quarantine a complete managed model bundle, and `T` in Downloads to restore it. Confirm explicitly after stopping all inference servers. Only files newly published by Llamancer with an authoritative SHA-256 and persisted inode receipt are eligible; imported files, legacy queue entries, changed files and files without a checksum are refused. Linux write leases reject files currently open by other processes and fail closed on unsupported filesystems. The configured local endpoint must be idle. Llamancer cannot detect unloaded paths registered in arbitrary external servers, so stop them before confirming.
+Press `t` in Library or Downloads to quarantine a complete managed model bundle, and `T` in Downloads to restore it. Confirm explicitly after stopping all inference servers. Only files newly published by Llamancer with an authoritative SHA-256 and persisted inode receipt are eligible; imported files, legacy queue entries, changed files and files without a checksum are refused. Linux write leases and readable same-user procfs mapping checks reject in-use files; local mapping inspection and a write lease are mandatory. Managed files must remain owner-only. Other processes may be hidden by OS access controls, and this is not protection from privileged processes, hidden PID namespaces or hostile same-user mutation. Stop all inference before confirming. The configured local endpoint must be idle. Llamancer cannot detect unloaded paths registered in arbitrary external servers, so stop them before confirming.
 
 Quarantine renames the files in place with a `.llamancer-quarantine` suffix; no bytes are deleted and no disk space is reclaimed. Restoring never overwrites an existing path. If interrupted during a multipart move, queue state is reconciled on restart and the same operation or restore can resume. Ownership records are retained. Do not manually rename or replace quarantined files unless recovering outside Llamancer.
 
@@ -98,6 +100,8 @@ Select current, kitty-tab or kitty-window in Settings. The a shortcut uses the c
 
 ## Development
 
+The [desktop acceptance runbook](docs/DESKTOP-ACCEPTANCE.md) describes the remaining GPU, agent, terminal, authorized Hub and release checks, with isolated test commands and evidence requirements.
+
 ```sh
 cargo fmt --all -- --check
 cargo test --locked --all-targets
@@ -106,7 +110,7 @@ cargo build --locked --release
 python3 tests/terminal_smoke.py target/release/llamancer
 ```
 
-CI runs on native Linux x86_64 and aarch64. The optional Live CPU smoke tests workflow checks a pinned upstream llama-server and a tiny checksum-verified GGUF fixture, plus live Hub download/resume and managed quarantine/restore. Its optional multimodal input runs real single-model and router image inference with a checksum-pinned SmolVLM model and projector. The Arch package workflow builds and installs the VCS package in an isolated Arch x86_64 container. Release builds produce tarballs and SHA-256 files as workflow artifacts; no registry publication or stable release is automatic.
+CI runs on native Linux x86_64 and aarch64. The optional Live CPU smoke tests workflow checks a pinned upstream llama-server and a tiny checksum-verified GGUF fixture, plus live Hub download/resume and managed quarantine/restore. Its optional multimodal input runs real single-model and router image inference with a checksum-pinned SmolVLM model and projector. The Arch package workflow builds and installs the VCS package in an isolated Arch x86_64 container. Release builds produce tarballs, third-party notice inventories and SHA-256 files as workflow artifacts; no registry publication or stable release is automatic.
 
 Read [Architecture](docs/ARCHITECTURE.md), [Implementation specification](docs/IMPLEMENTATION.md), [GGUF indexing](docs/GGUF.md), [Integrations](docs/INTEGRATIONS.md), [Roadmap](docs/ROADMAP.md), [Status](docs/STATUS.md), [Release validation](docs/RELEASE-VALIDATION.md) and [Contributing](CONTRIBUTING.md).
 
