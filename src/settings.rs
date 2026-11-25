@@ -150,7 +150,7 @@ pub fn apply(
             {
                 return Err(invalid("Enter an existing absolute GGUF file path"));
             }
-            let path = path.canonicalize()?;
+            let path = crate::models::file_reference(&path)?;
             if !draft.model_imports.contains(&path) {
                 draft.model_imports.push(path);
             }
