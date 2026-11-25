@@ -37,6 +37,7 @@ pub struct Runtime {
     path: PathBuf,
     scan: Option<Job<Scan>>,
     rescan_pending: bool,
+    pending_agent: Option<(Option<String>, std::time::Instant)>,
     backend: Option<(Job<BackendResult>, Arc<AtomicU64>, u64)>,
     _lock: crate::diagnostics::SessionLock,
     diagnostics: crate::diagnostics::Diagnostics,
@@ -66,6 +67,7 @@ impl Runtime {
             path,
             scan: None,
             rescan_pending: false,
+            pending_agent: None,
             backend: None,
             _lock: lock,
             diagnostics,
@@ -120,19 +122,9 @@ impl Runtime {
         self.app.server.tick(&self.app.config);
         self.app.discovery.tick();
         if let Some(d) = self.app.downloads.as_mut() {
-            let before = d
-                .queue
-                .items
-                .iter()
-                .filter(|i| i.state == crate::downloads::State::Complete)
-                .count();
+            let before = d.bundles().iter().filter(|g| g.state == "Complete").count();
             d.tick();
-            let after = d
-                .queue
-                .items
-                .iter()
-                .filter(|i| i.state == crate::downloads::State::Complete)
-                .count();
+            let after = d.bundles().iter().filter(|g| g.state == "Complete").count();
             self.rescan_pending |= after > before;
         }
         if let Some(job) = self.scan.as_mut() {
@@ -162,12 +154,26 @@ impl Runtime {
                         self.app.invalid = scan.invalid;
                         self.app.invalid_total = scan.invalid_total;
                         self.app.invalid_cursor = 0;
+                        let previous = self.app.selected().map(models::library::identity);
                         self.app.candidates = self
                             .app
                             .config
                             .filter_groups(models::group::group(scan.candidates));
-                        self.app.model_cursor = 0;
-                        self.app.details = false;
+                        self.app.model_cursor = previous
+                            .as_ref()
+                            .and_then(|id| {
+                                self.app.visible().iter().position(|&i| {
+                                    models::library::identity(&self.app.candidates[i]) == *id
+                                })
+                            })
+                            .unwrap_or(0);
+                        self.app.clamp_cursor();
+                        self.app.details = self.app.details
+                            && previous.as_ref().is_some_and(|id| {
+                                self.app
+                                    .selected()
+                                    .is_some_and(|g| models::library::identity(g) == *id)
+                            });
                     }
                     Err(e) => {
                         let _ = self
@@ -178,12 +184,203 @@ impl Runtime {
                 }
             }
         }
-        if self.rescan_pending && self.scan.is_none() {
-            self.rescan_pending = false;
-            if let Err(e) = self.scan() {
-                self.app.notice = format!("Library refresh: {e}");
+        if self.rescan_pending && self.scan.is_none() && !self.mutation_active() {
+            match self.scan() {
+                Ok(()) => self.rescan_pending = false,
+                Err(e) => {
+                    self.rescan_pending = false;
+                    self.app.notice = format!("Library refresh: {e}");
+                }
             }
         }
+    }
+    /// Only the explicit launch confirmation can arm this continuation.
+    pub fn poll_launch(&mut self) -> io::Result<Effect> {
+        let Some((target, deadline)) = self.pending_agent.as_ref() else {
+            return Ok(Effect::None);
+        };
+        let server = &self.app.server;
+        if std::time::Instant::now() >= *deadline || !server.active() {
+            self.pending_agent = None;
+            self.app.launching_agent = false;
+            return Err(io::Error::other(format!(
+                "Agent launch cancelled: {}",
+                server.status
+            )));
+        }
+        if server.busy() || !server.owns_server() {
+            return Ok(Effect::None);
+        }
+        let Some(snapshot) = server.snapshot.as_ref() else {
+            return Ok(Effect::None);
+        };
+        let ready = match target {
+            Some(id) => {
+                snapshot.router
+                    && snapshot
+                        .models
+                        .iter()
+                        .any(|m| m.id == *id && m.state() == "loaded")
+            }
+            None => !snapshot.router && !snapshot.models.is_empty(),
+        };
+        if !ready {
+            return Ok(Effect::None);
+        }
+        let (target, _) = self.pending_agent.take().unwrap();
+        self.app.launching_agent = false;
+        if let Some(id) = target {
+            self.app.server.select_id(&id)?;
+        } else {
+            self.app.server.cursor = 0;
+        }
+        self.launch_agent(crate::agents::TerminalMode::NewWindow)
+    }
+    fn open_launch(&mut self) -> io::Result<()> {
+        let group = self
+            .app
+            .selected()
+            .cloned()
+            .ok_or_else(|| io::Error::other("Select a model first"))?;
+        self.app.launch_cursor = if group.complete && !group.projector {
+            if self.app.config.api_key_file.is_some()
+                || !crate::doctor::executable("kitty", std::env::var_os("PATH").as_deref())
+            {
+                1
+            } else {
+                0
+            }
+        } else {
+            2
+        };
+        self.app.launch_menu = Some(group);
+        self.app.details = false;
+        Ok(())
+    }
+    fn confirm_launch(&mut self) -> io::Result<Effect> {
+        let group = self
+            .app
+            .launch_menu
+            .take()
+            .ok_or_else(|| io::Error::other("Select a model"))?;
+        let identity = models::library::identity(&group);
+        let group = self
+            .app
+            .candidates
+            .iter()
+            .find(|g| models::library::identity(g) == identity)
+            .cloned()
+            .ok_or_else(|| io::Error::other("Model no longer indexed; select it again"))?;
+        if self.app.launch_cursor == 2 {
+            if let Some(i) = self
+                .app
+                .visible()
+                .iter()
+                .position(|&i| models::library::identity(&self.app.candidates[i]) == identity)
+            {
+                self.app.model_cursor = i;
+                self.app.details = true;
+            }
+            return Ok(Effect::None);
+        }
+        if !group.complete || group.projector {
+            return Err(io::Error::other("Select a complete model, not a projector"));
+        }
+        if self.mutation_active() {
+            return Err(io::Error::other("Wait for model quarantine"));
+        }
+        let agent = self.app.launch_cursor == 0;
+        if agent {
+            if self.app.config.api_key_file.is_some() {
+                return Err(io::Error::other("Authenticated agent sessions require explicit current-terminal launch (A). Choose Run model only."));
+            }
+            if !crate::doctor::executable("kitty", std::env::var_os("PATH").as_deref()) {
+                return Err(io::Error::other(
+                    "Install Kitty for a separate agent window, or choose Run model only.",
+                ));
+            }
+            if self.app.config.default_agent == "pi-native" {
+                return Err(io::Error::other(
+                    "Pi native requires router mode; use Server.",
+                ));
+            }
+            if self.app.config.workspace_root.is_some()
+                && self
+                    .app
+                    .config
+                    .project_dir
+                    .as_ref()
+                    .is_none_or(|p| !p.is_dir())
+            {
+                return Err(io::Error::other(
+                    "Choose an active project (P in Settings) before launching the agent.",
+                ));
+            }
+            let exe = match self.app.config.default_agent.as_str() {
+                "omp" => "omp",
+                "pi" => "pi",
+                "custom" => self.app.config.custom_agent.as_str(),
+                _ => return Err(io::Error::other("Configure an agent first")),
+            };
+            if !crate::doctor::executable(exe, std::env::var_os("PATH").as_deref()) {
+                return Err(io::Error::other(format!(
+                    "Agent executable {exe} unavailable; install/configure it or Run model only."
+                )));
+            }
+        }
+        let target = if self.app.server.owns_server()
+            && self.app.server.snapshot.as_ref().is_some_and(|s| s.router)
+        {
+            let id = crate::llama::router::id(&group);
+            self.app.server.select_id(&id)?;
+            if self
+                .app
+                .server
+                .selected()
+                .is_none_or(|m| m.state() != "loaded")
+            {
+                self.app.server.set_loaded(&self.app.config, true)?;
+            }
+            Some(id)
+        } else if self.app.server.is_single_model(&group) {
+            None
+        } else {
+            if !crate::doctor::executable(
+                &self.app.config.server_binary,
+                std::env::var_os("PATH").as_deref(),
+            ) {
+                self.app.tab = 3;
+                self.handle_key(KeyEvent::new(KeyCode::Char('B'), KeyModifiers::NONE))?;
+                self.app.notice =
+                    "Choose a backend, then return to Library and open the model.".into();
+                return Ok(Effect::None);
+            }
+            if self.app.server.owns_server() {
+                if self.app.server.snapshot.as_ref().is_none_or(|s| s.router) {
+                    return Err(io::Error::other(
+                        "Wait for the managed server to become ready before switching models.",
+                    ));
+                }
+                self.app.server.stop()?;
+            }
+            self.app
+                .server
+                .start(&self.app.config, Vec::new(), Some(group))?;
+            None
+        };
+        self.app.tab = 3;
+        if agent {
+            self.pending_agent = Some((
+                target,
+                std::time::Instant::now() + std::time::Duration::from_secs(120),
+            ));
+            self.app.launching_agent = true;
+            self.app.notice =
+                "Starting model; agent opens in a new window when ready. Esc cancels agent launch."
+                    .into();
+            return self.poll_launch();
+        }
+        Ok(Effect::None)
     }
     pub fn input_failed(&self) {
         let _ = self
@@ -210,7 +407,9 @@ impl Runtime {
     }
     /// Text focus is not a modal dialog: mouse tabs and result rows remain usable.
     pub fn modal(&self) -> bool {
-        self.app.backend_open
+        self.app.launch_menu.is_some()
+            || self.app.launching_agent
+            || self.app.backend_open
             || self.app.setup_open
             || self.app.projects.is_some()
             || self.app.fit_report.is_some()
@@ -240,6 +439,13 @@ impl Runtime {
         self.app.discovery.editing = false;
     }
     pub fn select_row(&mut self, index: usize) {
+        if self.app.launch_menu.is_some() {
+            if index < 3 {
+                self.app.launch_cursor = index;
+            }
+            return;
+        }
+
         if self.app.setup_open {
             if index < crate::setup::LABELS.len() {
                 self.app.setup_cursor = index;
@@ -308,6 +514,32 @@ impl Runtime {
     pub fn handle_key(&mut self, key: KeyEvent) -> io::Result<Effect> {
         if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
             self.app.dispatch(Action::Quit);
+            return Ok(Effect::None);
+        }
+        if self.app.launching_agent {
+            if matches!(key.code, KeyCode::Esc | KeyCode::Char('x')) {
+                self.pending_agent = None;
+                self.app.launching_agent = false;
+                self.app.notice =
+                    "Automatic agent launch cancelled; inference remains available.".into();
+            }
+            return Ok(Effect::None);
+        }
+        if self.app.launch_menu.is_some() {
+            match key.code {
+                KeyCode::Esc => self.app.launch_menu = None,
+                KeyCode::Up => self.app.launch_cursor = self.app.launch_cursor.saturating_sub(1),
+                KeyCode::Down => self.app.launch_cursor = (self.app.launch_cursor + 1).min(2),
+                KeyCode::Enter => {
+                    let selected = self.app.launch_menu.clone();
+                    let result = self.confirm_launch();
+                    if result.is_err() && self.app.tab == 0 {
+                        self.app.launch_menu = selected;
+                    }
+                    return result;
+                }
+                _ => {}
+            }
             return Ok(Effect::None);
         }
         if self.app.setup_open {
@@ -1013,7 +1245,11 @@ impl Runtime {
                 self.app.model_cursor =
                     (self.app.model_cursor + 1).min(self.app.visible().len().saturating_sub(1))
             }
-            KeyCode::Enter if self.app.selected().is_some() => self.app.details = !self.app.details,
+            KeyCode::Enter if self.app.details => self.app.details = false,
+            KeyCode::Enter if self.app.selected().is_some() => self.open_launch()?,
+            KeyCode::Char('j') if self.app.selected().is_some() => {
+                self.app.details = !self.app.details
+            }
             KeyCode::Char('/') => {
                 self.app.searching = true;
                 self.app.details = false;
@@ -1220,75 +1456,81 @@ impl Runtime {
                 ))
             }
             KeyCode::Char('b') => return Ok(Effect::Monitor),
-            KeyCode::Char('a' | 'A') => {
-                if s.busy() {
-                    return Err(io::Error::other("Wait for server operation"));
-                }
-                let snapshot = s
-                    .snapshot
-                    .as_ref()
-                    .ok_or_else(|| io::Error::other("Refresh server first"))?;
-                let model = s
-                    .selected()
-                    .ok_or_else(|| io::Error::other("Select a model first"))?;
-                if snapshot.router && !matches!(model.state(), "loaded" | "sleeping") {
-                    return Err(io::Error::other("Load the model first"));
-                }
-                if c.default_agent == "pi-native" && !snapshot.router {
-                    return Err(io::Error::other(
-                        "Pi native integration requires router mode",
-                    ));
-                }
-                let cwd = match &c.project_dir {
-                    Some(p) if p.is_dir() => p.clone(),
-                    Some(_) => {
-                        return Err(io::Error::other(
-                            "Active project no longer exists; select P",
-                        ))
-                    }
-                    None if c.workspace_root.is_some() => {
-                        return Err(io::Error::other("Select an active project with P"))
-                    }
-                    None => std::env::current_dir()?,
-                };
-                let mut plan = match c.default_agent.as_str() {
-                    "omp" => Native("omp").prepare(&c.endpoint, &model.id, cwd)?,
-                    "pi" => {
-                        let context=model.context_limit().or_else(||self.app.candidates.iter().find(|group|crate::llama::router::id(group)==model.id).and_then(|group|c.profiles.get(&models::library::identity(group)).and_then(|p|p.engine.context_size).map(u64::from))).ok_or_else(||io::Error::other("Server did not report an active context size; use a configured model profile or pi-native"))?;
-                        Pi {
-                            root: &self.root,
-                            context,
-                        }
-                        .prepare(&c.endpoint, &model.id, cwd)?
-                    }
-                    "pi-native" => Native("pi").prepare(&c.endpoint, &model.id, cwd)?,
-                    "custom" => Custom {
-                        executable: &c.custom_agent,
-                        args: &c.custom_agent_args,
-                    }
-                    .prepare(&c.endpoint, &model.id, cwd)?,
-                    _ => return Err(io::Error::other("Unknown agent")),
-                };
-                let mode = if key == KeyCode::Char('A') {
+            KeyCode::Enter | KeyCode::Char('a' | 'A') => {
+                return self.launch_agent(if key == KeyCode::Enter {
+                    crate::agents::TerminalMode::NewWindow
+                } else if key == KeyCode::Char('A') {
                     crate::agents::TerminalMode::Current
                 } else {
                     c.agent_terminal
-                };
-                if let Some(key) = crate::llama::auth::Key::for_endpoint(
-                    c.api_key_file.as_deref(),
-                    &crate::llama::client::endpoint(&c.endpoint)?,
-                )? {
-                    if mode != crate::agents::TerminalMode::Current {
-                        return Err(io::Error::other("Authenticated agent launch requires current terminal (A); no secrets in Kitty argv"));
-                    }
-                    plan.with_key(&key, &c.default_agent)?;
-                }
-                plan.validate(mode)?;
-                return Ok(Effect::Launch(plan, mode));
+                })
             }
             _ => {}
         }
         Ok(Effect::None)
+    }
+    fn launch_agent(&mut self, mode: crate::agents::TerminalMode) -> io::Result<Effect> {
+        let c = &self.app.config;
+        let s = &self.app.server;
+        if s.busy() {
+            return Err(io::Error::other("Wait for server operation"));
+        }
+        let snapshot = s
+            .snapshot
+            .as_ref()
+            .ok_or_else(|| io::Error::other("Refresh server first"))?;
+        let model = s
+            .selected()
+            .ok_or_else(|| io::Error::other("Select a model first"))?;
+        if snapshot.router && !matches!(model.state(), "loaded" | "sleeping") {
+            return Err(io::Error::other("Load the model first"));
+        }
+        if c.default_agent == "pi-native" && !snapshot.router {
+            return Err(io::Error::other(
+                "Pi native integration requires router mode",
+            ));
+        }
+        let cwd = match &c.project_dir {
+            Some(p) if p.is_dir() => p.clone(),
+            Some(_) => {
+                return Err(io::Error::other(
+                    "Active project no longer exists; select P",
+                ))
+            }
+            None if c.workspace_root.is_some() => {
+                return Err(io::Error::other("Select an active project with P"))
+            }
+            None => std::env::current_dir()?,
+        };
+        let mut plan = match c.default_agent.as_str() {
+            "omp" => Native("omp").prepare(&c.endpoint, &model.id, cwd)?,
+            "pi" => {
+                let context=model.context_limit().or_else(||self.app.candidates.iter().find(|group|crate::llama::router::id(group)==model.id).and_then(|group|c.profiles.get(&models::library::identity(group)).and_then(|p|p.engine.context_size).map(u64::from))).ok_or_else(||io::Error::other("Server did not report an active context size; use a configured model profile or pi-native"))?;
+                Pi {
+                    root: &self.root,
+                    context,
+                }
+                .prepare(&c.endpoint, &model.id, cwd)?
+            }
+            "pi-native" => Native("pi").prepare(&c.endpoint, &model.id, cwd)?,
+            "custom" => Custom {
+                executable: &c.custom_agent,
+                args: &c.custom_agent_args,
+            }
+            .prepare(&c.endpoint, &model.id, cwd)?,
+            _ => return Err(io::Error::other("Unknown agent")),
+        };
+        if let Some(key) = crate::llama::auth::Key::for_endpoint(
+            c.api_key_file.as_deref(),
+            &crate::llama::client::endpoint(&c.endpoint)?,
+        )? {
+            if mode != crate::agents::TerminalMode::Current {
+                return Err(io::Error::other("Authenticated agent launch requires current terminal (A); no secrets in Kitty argv"));
+            }
+            plan.with_key(&key, &c.default_agent)?;
+        }
+        plan.validate(mode)?;
+        Ok(Effect::Launch(plan, mode))
     }
 }
 fn edit_text(input: &mut String, key: KeyEvent, limit: usize) {
