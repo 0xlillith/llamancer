@@ -268,7 +268,8 @@ pub fn row_at(area: Rect, app: &App, column: u16, row: u16) -> Option<usize> {
         ),
         2 => {
             let d = app.downloads.as_ref()?;
-            (body, 3, 5, d.cursor, d.queue.items.len())
+            let groups = d.bundles();
+            (body, 3, 5, d.bundle_cursor(&groups), groups.len())
         }
         3 => {
             if app.server.show_logs {

@@ -657,6 +657,22 @@ impl Rate {
         self.sample = Some((now, bytes));
     }
 }
+/// A view of existing persistent file records, not a second queue.
+pub struct BundleView {
+    pub name: String,
+    pub indices: Vec<usize>,
+    pub expected: u64,
+    pub bytes: u64,
+    pub received: u64,
+    pub complete: usize,
+    pub active: Option<usize>,
+    pub state: &'static str,
+}
+impl BundleView {
+    pub fn label(&self) -> String {
+        format!("{} ({}/{})", self.state, self.complete, self.expected)
+    }
+}
 pub struct Controller {
     pub queue: Queue,
     pub cursor: usize,
@@ -665,6 +681,7 @@ pub struct Controller {
     active: Option<(usize, Job<Option<Receipt>>, Arc<AtomicU64>)>,
     mutation: Option<Job<()>>,
     run_queue: bool,
+    resume_parts: std::collections::VecDeque<usize>,
     rate: Rate,
 }
 impl Controller {
@@ -677,8 +694,187 @@ impl Controller {
             active: None,
             mutation: None,
             run_queue: false,
+            resume_parts: Default::default(),
             rate: Rate::default(),
         })
+    }
+    pub fn bundles(&self) -> Vec<BundleView> {
+        use std::collections::BTreeMap;
+        let mut by_key = BTreeMap::new();
+        let mut groups: Vec<BundleView> = Vec::new();
+        for (i, item) in self.queue.items.iter().enumerate() {
+            let path = Path::new(&item.file.name);
+            let (name, expected) = crate::models::group::shard(path)
+                .map(|(base, _, total)| {
+                    (
+                        path.with_file_name(format!("{base}.gguf"))
+                            .to_string_lossy()
+                            .into_owned(),
+                        total,
+                    )
+                })
+                .unwrap_or_else(|| (item.file.name.clone(), 1));
+            let key = (
+                &item.root,
+                &item.file.repo,
+                &item.file.revision,
+                name.clone(),
+                expected,
+            );
+            let n = *by_key.entry(key).or_insert_with(|| {
+                let n = groups.len();
+                groups.push(BundleView {
+                    name,
+                    indices: vec![],
+                    expected,
+                    bytes: 0,
+                    received: 0,
+                    complete: 0,
+                    active: None,
+                    state: "Queued",
+                });
+                n
+            });
+            let g = &mut groups[n];
+            g.indices.push(i);
+            g.bytes = g.bytes.saturating_add(item.file.size);
+            g.received = g
+                .received
+                .saturating_add(self.known_bytes(i).unwrap_or(0).min(item.file.size));
+            if item.state == State::Complete {
+                g.complete += 1;
+            }
+            if self.active.as_ref().is_some_and(|(j, _, _)| *j == i) {
+                g.active = Some(i);
+            }
+        }
+        for g in &mut groups {
+            let has = |state: State| {
+                g.indices
+                    .iter()
+                    .any(|&i| self.queue.items[i].state == state)
+            };
+            g.state = if let Some(i) = g.active {
+                if self.is_verifying(i) {
+                    "Verifying"
+                } else {
+                    "Downloading"
+                }
+            } else if g
+                .indices
+                .iter()
+                .all(|&i| self.queue.items[i].state == State::Quarantined)
+            {
+                "Quarantined"
+            } else if g.complete as u64 == g.expected {
+                "Complete"
+            } else if has(State::Failed) {
+                "Failed"
+            } else if has(State::Paused) {
+                "Paused"
+            } else if has(State::Quarantined) {
+                "Mixed"
+            } else if g.indices.len() as u64 != g.expected {
+                "Incomplete"
+            } else {
+                "Queued"
+            };
+        }
+        groups
+    }
+    pub fn bundle_cursor(&self, groups: &[BundleView]) -> usize {
+        groups
+            .iter()
+            .position(|g| g.indices.contains(&self.cursor))
+            .unwrap_or(0)
+    }
+    pub fn select_bundle(&mut self, index: usize) {
+        if let Some(g) = self.bundles().get(index) {
+            self.cursor = g.indices[0];
+        }
+    }
+    pub fn move_bundle(&mut self, down: bool) {
+        let groups = self.bundles();
+        let i = self.bundle_cursor(&groups);
+        self.select_bundle(if down {
+            (i + 1).min(groups.len().saturating_sub(1))
+        } else {
+            i.saturating_sub(1)
+        });
+    }
+    pub fn resume_bundle(&mut self) -> io::Result<()> {
+        if self.busy() {
+            return Err(io::Error::other("Pause active transfer first"));
+        }
+        let groups = self.bundles();
+        let g = groups
+            .get(self.bundle_cursor(&groups))
+            .ok_or_else(|| io::Error::other("Select a model"))?;
+        if g.indices.len() as u64 != g.expected {
+            return Err(io::Error::other(
+                "Missing shards; select the complete variant in Discover",
+            ));
+        }
+        if g.indices
+            .iter()
+            .any(|&i| self.queue.items[i].state == State::Quarantined)
+        {
+            return Err(io::Error::other("Restore quarantined model first"));
+        }
+        let pending: std::collections::VecDeque<_> = g
+            .indices
+            .iter()
+            .copied()
+            .filter(|&i| self.queue.items[i].state != State::Complete)
+            .collect();
+        if pending.is_empty() {
+            return Err(io::Error::other("Model already complete"));
+        }
+        self.resume_parts = pending;
+        self.run_queue = false;
+        self.start_next_part()
+    }
+    fn start_next_part(&mut self) -> io::Result<()> {
+        let Some(i) = self.resume_parts.pop_front() else {
+            return Ok(());
+        };
+        self.cursor = i;
+        if let Err(e) = self.start() {
+            self.resume_parts.clear();
+            return Err(e);
+        }
+        Ok(())
+    }
+    pub fn remove_bundle(&mut self) -> io::Result<()> {
+        if self.busy() {
+            return Err(io::Error::other("Pause active transfer first"));
+        }
+        let groups = self.bundles();
+        let g = groups
+            .get(self.bundle_cursor(&groups))
+            .ok_or_else(|| io::Error::other("Select a model"))?;
+        if g.indices
+            .iter()
+            .any(|&i| self.queue.items[i].receipt.is_some())
+        {
+            return Err(io::Error::other(
+                "Keep ownership receipts; quarantine the model instead",
+            ));
+        }
+        let old = self.queue.items.clone();
+        self.queue.items = old
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| !g.indices.contains(i))
+            .map(|(_, item)| item.clone())
+            .collect();
+        if let Err(e) = self.queue.save(&self.path) {
+            self.queue.items = old;
+            return Err(e);
+        }
+        self.cursor = self.cursor.min(self.queue.items.len().saturating_sub(1));
+        self.status = "Model queue removed; files retained".into();
+        Ok(())
     }
     pub fn busy(&self) -> bool {
         self.active.is_some() || self.mutation.is_some()
@@ -778,7 +974,7 @@ impl Controller {
             return Ok(());
         }
         if let Some((_, job, _)) = &self.active {
-            if !job.is_cancelled() {
+            if !job.is_cancelled() && self.resume_parts.is_empty() {
                 self.run_queue = true;
             }
             return Ok(());
@@ -971,6 +1167,7 @@ impl Controller {
         Ok(())
     }
     pub fn pause(&mut self) {
+        self.resume_parts.clear();
         self.run_queue = false;
         if let Some(job) = &self.mutation {
             job.cancel();
@@ -1053,14 +1250,20 @@ impl Controller {
                 if self.queue.save(&self.path).is_err() {
                     self.status.push_str("; queue save failed");
                     self.run_queue = false;
+                    self.resume_parts.clear();
                 }
-                if self.run_queue && completed {
+                if completed && !self.resume_parts.is_empty() {
+                    if let Err(e) = self.start_next_part() {
+                        self.status = e.to_string();
+                    }
+                } else if self.run_queue && completed {
                     if self.start_queue().is_err() {
                         self.run_queue = false;
                         self.status = "Queue complete; rescan Library".into();
                     }
                 } else {
                     self.run_queue = false;
+                    self.resume_parts.clear();
                 }
             }
         }
@@ -1085,6 +1288,45 @@ mod tests {
             last_bytes: None,
             receipt: None,
         }
+    }
+    #[test]
+    fn multipart_view_and_resume_all_missing_parts() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().canonicalize().unwrap();
+        let mut q = Controller::new(root.join("queue.toml")).unwrap();
+        let mut a = fixture(&root);
+        a.file.name = "Q4-00001-of-00002.gguf".into();
+        let mut b = a.clone();
+        b.file.name = "Q4-00002-of-00002.gguf".into();
+        let mut other = a.clone();
+        other.file.name = "Q8-00001-of-00002.gguf".into();
+        for item in [&a, &b] {
+            let dest = destination(item).unwrap();
+            fs::write(
+                dest.with_file_name(format!("{}.part", item.file.name)),
+                b"abcdef",
+            )
+            .unwrap();
+        }
+        q.add(vec![a.file, b.file, other.file], root).unwrap();
+        q.queue.items[0].state = State::Failed;
+        q.queue.items[1].state = State::Paused;
+        let views = q.bundles();
+        assert_eq!(views.len(), 2);
+        assert_eq!(views[0].bytes, 12);
+        assert_eq!(views[0].state, "Failed");
+        q.resume_bundle().unwrap();
+        let until = Instant::now() + Duration::from_secs(3);
+        while q.busy() {
+            q.tick();
+            assert!(Instant::now() < until);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let views = q.bundles();
+        assert_eq!(views[0].state, "Complete");
+        assert_eq!(views[0].received, 12);
+        assert_eq!(views[1].state, "Incomplete");
+        assert_eq!(q.queue.items[2].state, State::Queued);
     }
     // A finite local HTTP server drives the actual ureq transfer path. The public
     // entrypoint still pins the origin to HTTPS Hugging Face.
