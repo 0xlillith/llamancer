@@ -178,6 +178,7 @@ impl Runtime {
     pub fn modal(&self) -> bool {
         self.app.backend_open
             || self.app.projects.is_some()
+            || self.app.download_destination.is_some()
             || self.app.show_invalid
             || self.app.profile_editor.is_some()
             || self.app.edit.is_some()
@@ -188,6 +189,12 @@ impl Runtime {
             || self.app.quarantine_confirmation.is_some()
     }
     pub fn select_row(&mut self, index: usize) {
+        if let Some(choice) = &mut self.app.download_destination {
+            if index < choice.roots.len() {
+                choice.cursor = index;
+            }
+            return;
+        }
         if let Some(projects) = &self.app.projects {
             if index < projects.len() {
                 self.app.project_cursor = index;
@@ -240,6 +247,33 @@ impl Runtime {
     pub fn handle_key(&mut self, key: KeyEvent) -> io::Result<Effect> {
         if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
             self.app.dispatch(Action::Quit);
+            return Ok(Effect::None);
+        }
+        if let Some(choice) = &mut self.app.download_destination {
+            match key.code {
+                KeyCode::Esc => self.app.download_destination = None,
+                KeyCode::Up => choice.cursor = choice.cursor.saturating_sub(1),
+                KeyCode::Down => {
+                    choice.cursor = (choice.cursor + 1).min(choice.roots.len().saturating_sub(1))
+                }
+                KeyCode::Enter => {
+                    let root = choice
+                        .roots
+                        .get(choice.cursor)
+                        .cloned()
+                        .ok_or_else(|| io::Error::other("Select a root"))?;
+                    crate::downloads::check_destination(&root, choice.required)?;
+                    self.app
+                        .downloads
+                        .as_mut()
+                        .ok_or_else(|| io::Error::other("Queue unavailable"))?
+                        .add(choice.files.clone(), root)?;
+                    self.app.download_destination = None;
+                    self.app.notice = "Queued; press r to start".into();
+                    self.app.tab = 2;
+                }
+                _ => {}
+            }
             return Ok(Effect::None);
         }
         if let Some(projects) = &self.app.projects {
@@ -858,7 +892,7 @@ impl Runtime {
             KeyCode::Down => self.app.discovery.move_cursor(true),
             KeyCode::Backspace => self.app.discovery.back(),
             KeyCode::Enter if self.app.discovery.repo.is_none() => self.app.discovery.open()?,
-            KeyCode::Char('d') if !self.app.discovery.busy() => {
+            KeyCode::Char('d' | 'D') if !self.app.discovery.busy() => {
                 let files = crate::huggingface::bundle(
                     &self.app.discovery.files,
                     self.app.discovery.cursor,
@@ -866,13 +900,29 @@ impl Runtime {
                 if files.is_empty() {
                     return Err(io::Error::other("Select a file or complete shard bundle"));
                 }
-                let root = self
-                    .app
-                    .config
-                    .model_roots
-                    .first()
-                    .ok_or_else(|| io::Error::other("Add a download/model root in Settings first"))?
-                    .clone();
+                let roots = &self.app.config.model_roots;
+                if roots.is_empty() {
+                    return Err(io::Error::other(
+                        "Add a download/model root in Settings first",
+                    ));
+                }
+                let preferred = self.app.config.download_root.as_deref();
+                if key == KeyCode::Char('D') || (roots.len() > 1 && preferred.is_none()) {
+                    self.app.download_destination = Some(crate::downloads::DestinationChoice::new(
+                        files,
+                        roots.clone(),
+                        preferred,
+                    )?);
+                    return Ok(());
+                }
+                let root = preferred
+                    .filter(|p| roots.iter().any(|r| r == p))
+                    .unwrap_or(roots[0].as_path())
+                    .to_owned();
+                crate::downloads::check_destination(
+                    &root,
+                    crate::downloads::bundle_bytes(&files)?,
+                )?;
                 let downloads = self
                     .app
                     .downloads

@@ -73,6 +73,17 @@ pub(super) fn viewport(cursor: usize, height: u16, reserved: u16) -> (usize, usi
 }
 pub fn row_at(area: Rect, app: &App, column: u16, row: u16) -> Option<usize> {
     let body = regions(area)[2];
+    if let Some(choice) = &app.download_destination {
+        let row = row.checked_sub(body.y.checked_add(2)?)?;
+        let (offset, capacity) = viewport(choice.cursor, body.height, 4);
+        let index = offset.checked_add(usize::from(row))?;
+        return (usize::from(row) < capacity
+            && index < choice.roots.len()
+            && column > body.x
+            && column < body.right().saturating_sub(1)
+            && body.y + 2 + row < body.bottom().saturating_sub(1))
+        .then_some(index);
+    }
     if let Some(projects) = &app.projects {
         let row = row.checked_sub(body.y.checked_add(2)?)?;
         let (offset, capacity) = viewport(app.project_cursor, body.height, 4);
@@ -241,6 +252,7 @@ pub fn draw_themed(frame: &mut Frame, app: &App, theme: &Theme) {
     } else if app.tab == 0
         && !app.backend_open
         && app.projects.is_none()
+        && app.download_destination.is_none()
         && !app.help
         && app.edit.is_none()
         && app.profile_editor.is_none()
@@ -275,7 +287,9 @@ pub fn draw_themed(frame: &mut Frame, app: &App, theme: &Theme) {
         };
         frame.render_widget(paragraph, body);
     }
-    let footer_text = if app.projects.is_some() {
+    let footer_text = if app.download_destination.is_some() {
+        "↑↓ choose storage  Enter queue  Esc cancel"
+    } else if app.projects.is_some() {
         "↑↓ choose project  Enter select  Esc cancel"
     } else if app.backend_open && app.backend_confirmation.is_some() {
         "y confirm / n cancel / Esc back"
@@ -284,7 +298,7 @@ pub fn draw_themed(frame: &mut Frame, app: &App, theme: &Theme) {
     } else if app.notice.is_empty() {
         match app.tab {
             0 => "r scan  / search  f favorite  s sort  p profile  l load  i invalid  h hide  t quarantine  ? help",
-            1 => "/ search  Enter open  d queue  n next page  Backspace back  ? help",
+            1 => "/ search  Enter open  d queue  D destination  n next page  Backspace back  ? help",
             2 => "r resume  R run queue  x pause  t quarantine  T restore  z remove entry  ? help",
             3 => "r refresh  D detach  s router  R restart  i probe  x stop  l/u load/unload  a agent  A current  w web  b btop  g logs  B backends  P project",
             _ => "↑↓ select  Enter edit  T theme  B backends  P project  ? help  q quit",
@@ -296,6 +310,7 @@ pub fn draw_themed(frame: &mut Frame, app: &App, theme: &Theme) {
         && app.notice.is_empty()
         && app.backend_confirmation.is_none()
         && app.projects.is_none()
+        && app.download_destination.is_none()
     {
         match (app.backend_open, app.tab) {
             (true, _) => "↑↓ i install Enter use v ver c check p probe d rm",

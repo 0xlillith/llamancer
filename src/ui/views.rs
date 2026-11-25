@@ -2,7 +2,36 @@ use crate::app::{App, TABS};
 use ratatui::layout::Rect;
 
 pub fn content(app: &App, body: Rect) -> (&'static str, String) {
-    if let Some(projects) = &app.projects {
+    if let Some(choice) = &app.download_destination {
+        let (offset, capacity) = super::viewport(choice.cursor, body.height, 4);
+        let mut lines = vec![format!(
+            "Bundle: {} files | {:.2} GiB required",
+            choice.files.len(),
+            choice.required as f64 / 1073741824.0
+        )];
+        for (i, root) in choice.roots.iter().enumerate().skip(offset).take(capacity) {
+            let space = choice.available[i]
+                .map(|n| {
+                    format!(
+                        "{:.2} GiB free{}",
+                        n as f64 / 1073741824.0,
+                        if n < choice.required {
+                            " (insufficient)"
+                        } else {
+                            ""
+                        }
+                    )
+                })
+                .unwrap_or_else(|| "unavailable / read-only".into());
+            lines.push(format!(
+                "{} {} | {}",
+                if i == choice.cursor { ">" } else { " " },
+                space,
+                super::safe(&root.to_string_lossy())
+            ));
+        }
+        ("Download destination", lines.join("\n"))
+    } else if let Some(projects) = &app.projects {
         let (offset, capacity) = super::viewport(app.project_cursor, body.height, 4);
         let mut lines = vec!["Choose a direct project folder (up to 512).".into()];
         if projects.is_empty() {
@@ -172,7 +201,7 @@ pub fn content(app: &App, body: Rect) -> (&'static str, String) {
                             if d.editing { "▏" } else { "" }
                         ),
                         safe(&d.status),
-                        "/ search | @owner/repo | license:mit | quant:Q4_K_M | d queue | n next"
+                        "/ search | @owner/repo | license:mit | quant:Q4_K_M | d queue | D choose root | n next"
                             .into(),
                     ];
                     let (offset, capacity) = super::viewport(d.cursor, body.height, 6);
