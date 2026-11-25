@@ -142,6 +142,7 @@ pub fn profile_args(profile: &Profile, help: &str) -> io::Result<Vec<OsString>> 
 }
 pub struct Owned {
     child: Child,
+    reaped: bool,
     preset: Option<tempfile::NamedTempFile>,
     key_file: Option<tempfile::NamedTempFile>,
     logs: Arc<Mutex<VecDeque<String>>>,
@@ -196,6 +197,7 @@ impl Owned {
         }
         Ok(Self {
             child,
+            reaped: false,
             logs,
             preset: None,
             key_file: None,
@@ -208,7 +210,47 @@ impl Owned {
         self.preset = Some(file);
     }
     pub fn running(&mut self) -> io::Result<bool> {
-        Ok(self.child.try_wait()?.is_none())
+        if self.reaped {
+            return Ok(false);
+        }
+        // WNOWAIT observes exit without reaping the leader. Its PID/PGID stays
+        // reserved until group cleanup, preventing a recycled group from being signaled.
+        loop {
+            let mut info = std::mem::MaybeUninit::<libc::siginfo_t>::zeroed();
+            // SAFETY: live owned child ID, writable siginfo, valid waitid flags.
+            let result = unsafe {
+                libc::waitid(
+                    libc::P_PID,
+                    self.child.id(),
+                    info.as_mut_ptr(),
+                    libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+                )
+            };
+            if result == 0 {
+                // SAFETY: waitid succeeded and the zeroed result has si_pid=0 if no event.
+                return Ok(unsafe { info.assume_init().si_pid() } == 0);
+            }
+            let error = io::Error::last_os_error();
+            if error.kind() != io::ErrorKind::Interrupted {
+                return Err(error);
+            }
+        }
+    }
+    fn signal_group(&self, signal: libc::c_int) -> io::Result<()> {
+        if self.reaped {
+            return Ok(());
+        }
+        let group = i32::try_from(self.child.id()).map_err(io::Error::other)?;
+        // SAFETY: process_group(0) made the unreaped owned child its own group leader.
+        if unsafe { libc::kill(-group, signal) } == 0 {
+            return Ok(());
+        }
+        let error = io::Error::last_os_error();
+        if error.raw_os_error() == Some(libc::ESRCH) {
+            Ok(())
+        } else {
+            Err(error)
+        }
     }
     pub fn logs(&self) -> Vec<String> {
         self.logs
@@ -217,21 +259,19 @@ impl Owned {
             .unwrap_or_default()
     }
     pub fn stop(&mut self) -> io::Result<()> {
-        if self.running()? {
-            let group = format!("-{}", self.child.id());
-            let _ = Command::new("kill").args(["-TERM", "--", &group]).status();
-            let deadline = Instant::now() + Duration::from_secs(2);
-            while self.running()? && Instant::now() < deadline {
-                thread::sleep(Duration::from_millis(50));
-            }
-            if self.running()? {
-                let _ = Command::new("kill").args(["-KILL", "--", &group]).status();
-                if self.running()? {
-                    self.child.kill()?;
-                }
-                self.child.wait()?;
-            }
+        if self.reaped {
+            return Ok(());
         }
+        // Even an exited leader may have live router workers in its group.
+        self.signal_group(libc::SIGTERM)?;
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while self.running()? && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(50));
+        }
+        // Clean up remaining descendants before releasing the leader PID.
+        self.signal_group(libc::SIGKILL)?;
+        self.child.wait()?;
+        self.reaped = true;
         Ok(())
     }
 }
@@ -243,6 +283,35 @@ impl Drop for Owned {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn exited_leader_does_not_leave_owned_worker_alive() {
+        let root = tempfile::tempdir().unwrap();
+        let heartbeat = root.path().join("heartbeat");
+        let worker = root.path().join("worker.pid");
+        // The parent exits while its background descendant keeps writing.
+        let script =
+            "(while :; do printf x >> \"$1\"; sleep 0.05; done) & echo $! > \"$2\"; exit 0";
+        let args = vec![
+            "-c".into(),
+            script.into(),
+            "fixture".into(),
+            heartbeat.as_os_str().into(),
+            worker.as_os_str().into(),
+        ];
+        let mut owned = Owned::start("/bin/sh", &args).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while owned.running().unwrap() || !heartbeat.exists() || !worker.exists() {
+            assert!(Instant::now() < deadline);
+            thread::sleep(Duration::from_millis(20));
+        }
+        owned.stop().unwrap();
+        // Repeated stop is idempotent, and no background writes remain.
+        owned.stop().unwrap();
+        let size = std::fs::metadata(&heartbeat).unwrap().len();
+        thread::sleep(Duration::from_millis(200));
+        assert_eq!(std::fs::metadata(heartbeat).unwrap().len(), size);
+        assert!(!owned.running().unwrap());
+    }
     #[test]
     fn rejects_remote_and_unsupported_flags() {
         let mut p = Profile::default();

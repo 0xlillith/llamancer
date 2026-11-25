@@ -127,9 +127,9 @@ impl Controller {
         groups: Vec<Group>,
         single: Option<Group>,
     ) -> io::Result<()> {
-        if self.active() {
+        if self.active() || self.attached {
             return Err(io::Error::other(
-                "Stop the managed server or wait for the current operation",
+                "Stop or detach the existing server before starting another",
             ));
         }
         let config = config.clone();
@@ -375,5 +375,87 @@ impl Controller {
                 self.status = error.to_string();
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{BufRead, BufReader, Write};
+    fn serve(listener: TcpListener, ids: &'static str) -> std::thread::JoinHandle<()> {
+        listener.set_nonblocking(true).unwrap();
+        std::thread::spawn(move || {
+            for (expected, response) in [
+                ("/health", r#"{"status":"ok"}"#),
+                ("/props", r#"{"role":"router"}"#),
+                ("/models", ids),
+            ] {
+                let deadline = Instant::now() + Duration::from_secs(5);
+                let mut stream = loop {
+                    match listener.accept() {
+                        Ok((stream, _)) => break stream,
+                        Err(e)
+                            if e.kind() == io::ErrorKind::WouldBlock
+                                && Instant::now() < deadline =>
+                        {
+                            std::thread::sleep(Duration::from_millis(5))
+                        }
+                        Err(e) => panic!("fixture: {e}"),
+                    }
+                };
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(2)))
+                    .unwrap();
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut line = String::new();
+                reader.read_line(&mut line).unwrap();
+                assert_eq!(line.split_whitespace().nth(1), Some(expected));
+                loop {
+                    line.clear();
+                    reader.read_line(&mut line).unwrap();
+                    if line == "\r\n" || line.is_empty() {
+                        break;
+                    }
+                }
+                write!(stream,"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",response.len(),response).unwrap();
+            }
+        })
+    }
+    fn wait(controller: &mut Controller, config: &Config) {
+        let deadline = Instant::now() + Duration::from_secs(8);
+        while controller.busy() {
+            controller.tick(config);
+            assert!(Instant::now() < deadline, "{}", controller.status);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+    #[test]
+    fn external_failure_clears_snapshot_and_reconnect_preserves_selection() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let config = Config {
+            endpoint: format!("http://{addr}"),
+            ..Config::default()
+        };
+        let worker = serve(listener, r#"{"data":[{"id":"a"},{"id":"b"}]}"#);
+        let mut controller = Controller::default();
+        controller.refresh(&config).unwrap();
+        wait(&mut controller, &config);
+        worker.join().unwrap();
+        controller.select_id("b").unwrap();
+        assert!(controller.start(&config, Vec::new(), None).is_err());
+        controller.refresh(&config).unwrap();
+        wait(&mut controller, &config);
+        assert!(controller.snapshot.is_none());
+        assert!(controller.polling());
+        let listener = TcpListener::bind(addr).unwrap();
+        let worker = serve(listener, r#"{"data":[{"id":"b"},{"id":"a"}]}"#);
+        controller.last_refresh = Some(Instant::now() - Duration::from_secs(60));
+        controller.tick(&config);
+        wait(&mut controller, &config);
+        worker.join().unwrap();
+        assert_eq!(controller.selected().unwrap().id, "b");
+        controller.disconnect().unwrap();
+        assert!(!controller.polling());
     }
 }
