@@ -293,6 +293,30 @@ mod tests {
         assert_eq!(fs::read(trash).unwrap(), b"external");
     }
     #[test]
+    fn mapped_file_is_not_moved() {
+        let root = tempfile::tempdir().unwrap();
+        let (item, path) = fixture(root.path());
+        let file = File::open(&path).unwrap();
+        // SAFETY: file contains six bytes; map read-only for the duration of the assertion.
+        let mapping = unsafe {
+            libc::mmap(
+                std::ptr::null_mut(),
+                6,
+                libc::PROT_READ,
+                libc::MAP_SHARED,
+                file.as_raw_fd(),
+                0,
+            )
+        };
+        assert_ne!(mapping, libc::MAP_FAILED);
+        drop(file);
+        let result = move_items(vec![item], false, &endpoint(), &AtomicBool::new(false));
+        // SAFETY: mapping was successfully created above and has not been unmapped.
+        assert_eq!(unsafe { libc::munmap(mapping, 6) }, 0);
+        assert!(result.is_err());
+        assert!(path.exists());
+    }
+    #[test]
     fn occupied_endpoint_and_modified_content_fail_closed() {
         let root = tempfile::tempdir().unwrap();
         let (item, path) = fixture(root.path());
