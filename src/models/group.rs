@@ -24,6 +24,16 @@ impl Group {
             .fold(0u64, |sum, f| sum.saturating_add(f.metadata.elements))
     }
 }
+/// Return same-directory complete projector candidates, never auto-attach a guess.
+pub fn projector_candidates<'a>(model: &Group, groups: &'a [Group]) -> Vec<&'a Group> {
+    let parent = model.files.first().and_then(|f| f.path.parent());
+    groups
+        .iter()
+        .filter(|g| {
+            g.projector && g.complete && g.files.len() == 1 && g.files[0].path.parent() == parent
+        })
+        .collect()
+}
 pub(crate) fn shard(path: &Path) -> Option<(&str, u64, u64)> {
     let stem = path.file_stem()?.to_str()?;
     let (left, total) = stem.rsplit_once("-of-")?;
@@ -64,7 +74,8 @@ pub fn group(files: Vec<Candidate>) -> Vec<Group> {
                 .into_owned();
             let expected = f.metadata.split_count.unwrap_or(1);
             let complete = expected == 1 && f.metadata.split_no.unwrap_or(0) == 0;
-            let projector = name.to_ascii_lowercase().starts_with("mmproj");
+            let projector = name.to_ascii_lowercase().starts_with("mmproj")
+                || f.metadata.architecture.as_deref() == Some("clip");
             groups.push(Group {
                 name,
                 files: vec![f],
@@ -82,7 +93,10 @@ pub fn group(files: Vec<Candidate>) -> Vec<Group> {
         });
         let complete =
             consistent && indices.len() as u64 == expected && entries.len() == indices.len();
-        let projector = name.to_ascii_lowercase().starts_with("mmproj");
+        let projector = name.to_ascii_lowercase().starts_with("mmproj")
+            || entries
+                .first()
+                .is_some_and(|(_, f)| f.metadata.architecture.as_deref() == Some("clip"));
         groups.push(Group {
             name,
             files: entries.into_iter().map(|(_, f)| f).collect(),
@@ -113,6 +127,29 @@ mod tests {
                 ..Default::default()
             },
         }
+    }
+    #[test]
+    fn projector_candidates_are_local_and_unambiguous_by_user_choice() {
+        let model = group(vec![f(1), f(2)]).remove(0);
+        let candidate = |path: &str| Candidate {
+            path: path.into(),
+            bytes: 100,
+            version: 3,
+            metadata: Metadata {
+                architecture: Some("clip".into()),
+                ..Default::default()
+            },
+        };
+        let groups = group(vec![
+            candidate("/models/projector.gguf"),
+            candidate("/other/mmproj.gguf"),
+        ]);
+        let matches = projector_candidates(&model, &groups);
+        assert_eq!(matches.len(), 1);
+        assert_eq!(
+            matches[0].files[0].path,
+            Path::new("/models/projector.gguf")
+        );
     }
     #[test]
     fn complete_and_missing() {

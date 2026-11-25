@@ -114,8 +114,8 @@ fn cancelled(cancel: &AtomicBool) -> io::Result<()> {
         Ok(())
     }
 }
-// The common GGML tensor types have a fixed number of bytes per block.
-// Unknown/new tensor types remain indexable but are not certified.
+// GGML block sizes verified against ggml.h and ggml-common.h at llama.cpp b12721.
+// Unknown future types remain indexable but are not certified.
 fn type_layout(kind: u32) -> Option<(u64, u64)> {
     Some(match kind {
         0 => (1, 4),
@@ -132,7 +132,27 @@ fn type_layout(kind: u32) -> Option<(u64, u64)> {
         13 => (256, 176),
         14 => (256, 210),
         15 => (256, 292),
-        30 => (1, 2),
+        16 => (256, 66),   // IQ2_XXS
+        17 => (256, 74),   // IQ2_XS
+        18 => (256, 98),   // IQ3_XXS
+        19 => (256, 50),   // IQ1_S
+        20 => (32, 18),    // IQ4_NL
+        21 => (256, 110),  // IQ3_S
+        22 => (256, 82),   // IQ2_S
+        23 => (256, 136),  // IQ4_XS
+        24 => (1, 1),      // I8
+        25 => (1, 2),      // I16
+        26 => (1, 4),      // I32
+        27 | 28 => (1, 8), // I64 / F64
+        29 => (256, 56),   // IQ1_M
+        30 => (1, 2),      // BF16
+        34 => (256, 54),   // TQ1_0
+        35 => (256, 66),   // TQ2_0
+        39 => (32, 17),    // MXFP4
+        40 => (64, 36),    // NVFP4
+        41 => (128, 18),   // Q1_0
+        42 => (64, 18),    // Q2_0
+        43 => (1, 1),      // F8_E4M3
         _ => return None,
     })
 }
@@ -286,6 +306,9 @@ pub fn read(path: &Path, cancel: &AtomicBool) -> io::Result<Metadata> {
             .checked_add(elements)
             .ok_or_else(|| invalid("Element count overflow"))?;
         let kind = r.u32()?;
+        if matches!(kind,4|5|31..=33|36..=38) {
+            return Err(invalid("Removed GGML tensor type"));
+        }
         let offset = r.u64()?;
         if offset % alignment != 0 {
             return Err(invalid("Unaligned tensor offset"));
@@ -381,6 +404,55 @@ mod tests {
         assert!(read(f.path(), &cancel).unwrap().payload_bounds_checked);
         f.as_file().set_len(b.len() as u64 + 31).unwrap();
         assert!(read(f.path(), &cancel).is_err());
+    }
+    #[test]
+    fn all_pinned_quantization_extents_are_checked() {
+        // Explicit independent expected values from upstream static assertions.
+        for (kind, block, bytes) in [
+            (16, 256, 66),
+            (17, 256, 74),
+            (18, 256, 98),
+            (19, 256, 50),
+            (20, 32, 18),
+            (21, 256, 110),
+            (22, 256, 82),
+            (23, 256, 136),
+            (24, 1, 1),
+            (25, 1, 2),
+            (26, 1, 4),
+            (27, 1, 8),
+            (28, 1, 8),
+            (29, 256, 56),
+            (34, 256, 54),
+            (35, 256, 66),
+            (39, 32, 17),
+            (40, 64, 36),
+            (41, 128, 18),
+            (42, 64, 18),
+            (43, 1, 1),
+        ] {
+            let mut b = b"GGUF".to_vec();
+            b.extend(3u32.to_le_bytes());
+            b.extend(1u64.to_le_bytes());
+            b.extend(0u64.to_le_bytes());
+            string(&mut b, "weight");
+            b.extend(1u32.to_le_bytes());
+            b.extend((block as u64).to_le_bytes());
+            b.extend((kind as u32).to_le_bytes());
+            b.extend(0u64.to_le_bytes());
+            b.resize((b.len() + 31) & !31, 0);
+            let start = b.len();
+            b.resize(start + bytes, 0);
+            let mut f = tempfile::NamedTempFile::new().unwrap();
+            f.write_all(&b).unwrap();
+            let cancel = AtomicBool::new(false);
+            assert!(
+                read(f.path(), &cancel).unwrap().payload_bounds_checked,
+                "kind {kind}"
+            );
+            f.as_file().set_len((b.len() - 1) as u64).unwrap();
+            assert!(read(f.path(), &cancel).is_err(), "kind {kind}");
+        }
     }
     #[test]
     fn huge_count_rejected() {
