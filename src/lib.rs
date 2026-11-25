@@ -20,3 +20,6 @@ pub mod backends;
 pub mod doctor;
 
 pub mod workspace;
+
+pub mod benchmark;
+pub mod setup;

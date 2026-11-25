@@ -20,6 +20,9 @@ pub enum Action {
 pub struct App {
     pub tab: usize,
     pub backend_open: bool,
+    pub benchmark_open: bool,
+    pub setup_open: bool,
+    pub setup_cursor: usize,
     pub backend_cursor: usize,
     pub backend_version: usize,
     pub backend_confirmation: Option<char>,

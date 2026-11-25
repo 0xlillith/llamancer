@@ -20,6 +20,7 @@ use std::{
 };
 enum BackendResult {
     Message(String),
+    Benchmark(crate::benchmark::Record),
     Select(PathBuf, String),
 }
 
@@ -86,6 +87,15 @@ impl Runtime {
                 self.app.backend_progress = None;
                 self.app.backend_status = match outcome {
                     Ok(BackendResult::Message(message)) => message,
+                    Ok(BackendResult::Benchmark(record)) => {
+                        let summary = record.summary();
+                        let mut next = self.app.config.clone();
+                        crate::benchmark::record(&mut next.benchmarks, record);
+                        match self.persist(next) {
+                            Ok(()) => summary,
+                            Err(e) => format!("{summary}\nSave failed: {e}"),
+                        }
+                    }
                     Ok(BackendResult::Select(path, device)) => {
                         let mut next = self.app.config.clone();
                         next.server_binary = path.to_string_lossy().into_owned();
@@ -177,6 +187,7 @@ impl Runtime {
     }
     pub fn modal(&self) -> bool {
         self.app.backend_open
+            || self.app.setup_open
             || self.app.projects.is_some()
             || self.app.fit_report.is_some()
             || self.app.download_destination.is_some()
@@ -190,6 +201,15 @@ impl Runtime {
             || self.app.quarantine_confirmation.is_some()
     }
     pub fn select_row(&mut self, index: usize) {
+        if self.app.setup_open {
+            if index < crate::setup::LABELS.len() {
+                self.app.setup_cursor = index;
+            }
+            return;
+        }
+        if self.app.benchmark_open {
+            return;
+        }
         if let Some(choice) = &mut self.app.download_destination {
             if index < choice.roots.len() {
                 choice.cursor = index;
@@ -248,6 +268,46 @@ impl Runtime {
     pub fn handle_key(&mut self, key: KeyEvent) -> io::Result<Effect> {
         if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
             self.app.dispatch(Action::Quit);
+            return Ok(Effect::None);
+        }
+        if self.app.setup_open {
+            let max = crate::setup::LABELS.len() - 1;
+            match key.code {
+                KeyCode::Esc => self.app.setup_open = false,
+                KeyCode::Up => self.app.setup_cursor = self.app.setup_cursor.saturating_sub(1),
+                KeyCode::Down => self.app.setup_cursor = (self.app.setup_cursor + 1).min(max),
+                KeyCode::Enter => {
+                    self.app.setup_open = false;
+                    self.app.tab = 4;
+                    match self.app.setup_cursor {
+                        1 => {
+                            return self
+                                .handle_key(KeyEvent::new(KeyCode::Char('B'), KeyModifiers::NONE))
+                        }
+                        2 => {
+                            self.app.tab = 3;
+                            return self.server_key(KeyCode::Char('i'));
+                        }
+                        i => {
+                            let field = match i {
+                                0 => Field::AddRoot,
+                                3 => Field::Agent,
+                                _ => Field::WorkspaceRoot,
+                            };
+                            self.app.setting =
+                                Field::ALL.iter().position(|&f| f == field).unwrap_or(0);
+                            self.app.edit = Some((field, field.initial(&self.app.config)));
+                        }
+                    }
+                    self.app.notice = "Complete this step; press G to return to setup".into();
+                }
+                _ => {}
+            }
+            return Ok(Effect::None);
+        }
+        if key.code == KeyCode::Char('G') && !self.modal() {
+            self.app.setup_open = true;
+            self.app.notice.clear();
             return Ok(Effect::None);
         }
         if self.app.fit_report.is_some() {
@@ -461,6 +521,12 @@ impl Runtime {
     }
     fn backend_key(&mut self, key: KeyCode) -> io::Result<()> {
         self.app.notice.clear();
+        if self.app.benchmark_open {
+            if matches!(key, KeyCode::Esc | KeyCode::Char('h')) {
+                self.app.benchmark_open = false;
+            }
+            return Ok(());
+        }
         if let Some((job, _, _)) = &self.backend {
             if matches!(key, KeyCode::Char('x') | KeyCode::Esc) {
                 job.cancel();
@@ -515,6 +581,10 @@ impl Runtime {
                     self.backend = Some((job, Arc::new(AtomicU64::new(0)), 0));
                     self.app.backend_busy = true;
                     self.app.backend_status = "Checking upstream releases…".into();
+                    return Ok(());
+                }
+                KeyCode::Char('h') => {
+                    self.app.benchmark_open = true;
                     return Ok(());
                 }
                 KeyCode::Char('p') => 'p',
@@ -585,7 +655,7 @@ impl Runtime {
                     backends::remove(&root, asset, &selected)?;
                     Ok(BackendResult::Message("Managed backend removed".into()))
                 }
-                'b' => Ok(BackendResult::Message(backends::benchmark(
+                'b' => Ok(BackendResult::Benchmark(backends::benchmark(
                     &root,
                     asset,
                     &model.expect("benchmark model"),

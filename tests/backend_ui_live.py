@@ -120,6 +120,15 @@ def main():
             os.write(master, b"y")
             screen.wait(master, process, b"Working", seconds=5)
             screen.wait(master, process, b"pp 0 / tg 32:", seconds=90)
+            history = tomllib.loads((config / "config.toml").read_text())["benchmarks"]
+            assert {r["kind"] for r in history} == {"cpu", "vulkan"}
+            assert len({r["model_sha256"] for r in history}) == 1
+            assert all(r["pp"] > 0 and r["tg"] > 0 for r in history)
+            os.write(master, b"h")
+            screen.wait(master, process, b"Comparable benchmark history")
+            screen.wait(master, process, b"Latest model SHA-256")
+            os.write(master, b"\x1b")
+            time.sleep(0.3)
             os.write(master, b"\x1b")
             time.sleep(0.3)
             os.write(master, b"q")

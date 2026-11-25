@@ -2,7 +2,30 @@ use crate::app::{App, TABS};
 use ratatui::layout::Rect;
 
 pub fn content(app: &App, body: Rect) -> (&'static str, String) {
-    if let Some(report) = &app.fit_report {
+    if app.setup_open {
+        let (offset, capacity) = super::viewport(app.setup_cursor, body.height, 4);
+        let statuses = crate::setup::statuses(app);
+        let mut lines =
+            vec!["Configure only what you need. No automatic downloads or driver changes.".into()];
+        for (i, label) in crate::setup::LABELS
+            .iter()
+            .enumerate()
+            .skip(offset)
+            .take(capacity)
+        {
+            lines.push(format!(
+                "{} [{}] {label}",
+                if i == app.setup_cursor { ">" } else { " " },
+                if statuses[i] { "OK" } else { "  " }
+            ));
+        }
+        ("Guided setup", lines.join("\n"))
+    } else if app.benchmark_open {
+        (
+            "Comparable benchmark history",
+            crate::benchmark::comparison(&app.config.benchmarks),
+        )
+    } else if let Some(report) = &app.fit_report {
         ("Model memory advisory", report.clone())
     } else if let Some(choice) = &app.download_destination {
         let (offset, capacity) = super::viewport(choice.cursor, body.height, 4);
@@ -183,7 +206,7 @@ pub fn content(app: &App, body: Rect) -> (&'static str, String) {
             ),
         )
     } else if app.help {
-        ("Help", "Tab / arrows / 1–5: navigate; click tab or row, scroll to select\nLibrary: r scan, x cancel, Up/Down select, Enter details\n/: search, s: sort, f: favorite, v: favorites only, p: inference profile, m: memory advisory, l: start single model, i: invalid files, h: hide model, t: quarantine\nDiscover: / search, Enter open, d queue, n next page\nDownloads: r resume, R run queue, x pause, t quarantine, T restore, z remove entry\nServer: r refresh, D detach, s router  R restart, i probe, x stop, l/u load/unload, a agent, A current terminal, g logs\nSettings: Up/Down select, Enter edit; T next theme; B backend manager, P project picker (also Server)\n?: toggle help\nEsc: close help or quit\nq / Ctrl+C: quit".into())
+        ("Help", "Tab / arrows / 1–5: navigate; click tab or row, scroll to select\nLibrary: r scan, x cancel, Up/Down select, Enter details\n/: search, s: sort, f: favorite, v: favorites only, p: inference profile, m: memory advisory, l: start single model, i: invalid files, h: hide model, t: quarantine\nDiscover: / search, Enter open, d queue, n next page\nDownloads: r resume, R run queue, x pause, t quarantine, T restore, z remove entry\nServer: r refresh, D detach, s router  R restart, i probe, x stop, l/u load/unload, a agent, A current terminal, g logs\nG guided setup (any view). Settings: Up/Down select, Enter edit; T next theme; B backend manager, P project picker (also Server)\n?: toggle help\nEsc: close help or quit\nq / Ctrl+C: quit".into())
     } else {
         (
             TABS[app.tab],

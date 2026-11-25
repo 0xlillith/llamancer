@@ -43,3 +43,5 @@
 - Added explicit model memory advisory with actual backend-reported device capacity.
 
 - Added experimental managed NVIDIA CUDA archives and separately verified runtime companions.
+
+- Added guided setup and bounded comparable benchmark history.

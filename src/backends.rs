@@ -411,7 +411,12 @@ pub fn detected_device(kind: Kind, output: &str) -> io::Result<String> {
     }else if kind==Kind::Cuda {"CUDA installed but no compatible device detected. Check NVIDIA driver and runtime compatibility."}else{"Vulkan installed but no device detected. Check Vulkan loader and GPU driver."}))
 }
 /// A bounded benchmark of a deliberately small local model. Never fetch a model.
-pub fn benchmark(root: &Path, asset: Asset, model: &Path, flag: &AtomicBool) -> io::Result<String> {
+pub fn benchmark(
+    root: &Path,
+    asset: Asset,
+    model: &Path,
+    flag: &AtomicBool,
+) -> io::Result<crate::benchmark::Record> {
     use std::{
         io::{Seek, SeekFrom},
         os::unix::process::CommandExt,
@@ -427,6 +432,33 @@ pub fn benchmark(root: &Path, asset: Asset, model: &Path, flag: &AtomicBool) -> 
             "Use a complete local GGUF up to 512 MiB for this quick benchmark",
         ));
     }
+    let mut model_file = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(&model)?;
+    let before = model_file.metadata()?;
+    if !before.is_file() || before.len() == 0 || before.len() > 512 * 1024 * 1024 {
+        return Err(io::Error::other("Invalid benchmark model size"));
+    }
+    let mut hash = Sha256::new();
+    let mut buffer = [0u8; 65536];
+    let mut count = 0u64;
+    loop {
+        cancel(flag)?;
+        let n = model_file.read(&mut buffer)?;
+        if n == 0 {
+            break;
+        }
+        count += n as u64;
+        if count > before.len() {
+            return Err(io::Error::other("Benchmark model changed"));
+        }
+        hash.update(&buffer[..n]);
+    }
+    if count != before.len() {
+        return Err(io::Error::other("Benchmark model changed"));
+    }
+    let model_sha256 = format!("{:x}", hash.finalize());
     let output = probe(&asset.binary(root))?;
     let device = detected_device(asset.kind, &output)?;
     let bench = asset.binary(root).with_file_name("llama-bench");
@@ -482,22 +514,42 @@ pub fn benchmark(root: &Path, asset: Asset, model: &Path, flag: &AtomicBool) -> 
     if results.len() != 2 {
         return Err(io::Error::other("Unexpected benchmark output"));
     }
-    let mut lines = vec![format!(
-        "{} | {} | 2 threads, 2 repeats",
-        asset.kind.name(),
-        device
-    )];
-    for row in results {
-        let speed = row["avg_ts"]
-            .as_f64()
-            .filter(|v| v.is_finite() && *v > 0.0)
-            .ok_or_else(|| io::Error::other("Missing benchmark throughput"))?;
-        lines.push(format!(
-            "pp {} / tg {}: {:.2} tok/s",
-            row["n_prompt"], row["n_gen"], speed
-        ));
+    let after = fs::metadata(&model)?;
+    if (
+        before.dev(),
+        before.ino(),
+        before.len(),
+        before.mtime(),
+        before.mtime_nsec(),
+    ) != (
+        after.dev(),
+        after.ino(),
+        after.len(),
+        after.mtime(),
+        after.mtime_nsec(),
+    ) {
+        return Err(io::Error::other("Benchmark model changed during run"));
     }
-    Ok(lines.join("\n"))
+    let speed = |prompt: u64, generated: u64| -> io::Result<f64> {
+        results
+            .iter()
+            .find(|row| {
+                row["n_prompt"].as_u64() == Some(prompt) && row["n_gen"].as_u64() == Some(generated)
+            })
+            .and_then(|row| row["avg_ts"].as_f64())
+            .filter(|v| v.is_finite() && *v > 0.0)
+            .ok_or_else(|| io::Error::other("Missing matching benchmark throughput"))
+    };
+    Ok(crate::benchmark::Record {
+        kind: asset.kind.name().into(),
+        release: asset.release.into(),
+        device,
+        model_sha256,
+        model_bytes: before.len(),
+        pp: speed(128, 0)?,
+        tg: speed(0, 32)?,
+        gpu_layers: if asset.kind == Kind::Cpu { 0 } else { 8 },
+    })
 }
 /// Remove only the catalog-owned version directory, never an external executable.
 /// Runtime and service selection are separate; callers must stop inference first.

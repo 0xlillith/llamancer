@@ -174,7 +174,7 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App, p: &Palette) {
     };
     if indices.is_empty() {
         let message = if app.candidates.is_empty() {
-            "No models indexed.\n\nAdd a model root in Settings (5), then press r to scan.\nDiscover (2) can queue Hugging Face GGUF files."
+            "No models indexed.\n\nPress G for guided setup, or add a model root in Settings (5), then press r to scan.\nDiscover (2) can queue Hugging Face GGUF files."
         } else {
             "No matching models. Edit search with / or toggle favorites with v."
         };
