@@ -81,8 +81,8 @@ impl Icon {
         } else {
             match self {
                 Self::Brand => "◇",
-                Self::Library => "▤",
-                Self::Discover => "⌕",
+                Self::Library => "#",
+                Self::Discover => "/",
                 Self::Downloads => "↓",
                 Self::Server => "◉",
                 Self::Settings => "≡",
@@ -90,8 +90,8 @@ impl Icon {
                 Self::Agent => ">",
                 Self::Check => "+",
                 Self::Warning => "!",
-                Self::Memory => "▥",
-                Self::Chart => "▥",
+                Self::Memory => "+",
+                Self::Chart => "%",
                 Self::Theme => "◈",
             }
         }
@@ -152,6 +152,6 @@ mod tests {
         assert!(!Mode::Auto.enabled(false));
         assert_eq!(Mode::Auto.next().next().next(), Mode::Auto);
         assert!("invalid".parse::<Mode>().is_err());
-        assert_eq!(Icon::Library.glyph(false), "▤");
+        assert_eq!(Icon::Library.glyph(false), "#");
     }
 }
