@@ -2,6 +2,11 @@ name: Live CPU smoke tests
 
 on:
   workflow_dispatch:
+    inputs:
+      multimodal:
+        description: Include pinned SmolVLM CPU vision fixtures
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -42,6 +47,25 @@ jobs:
           test -n "$server"
           printf 'LLAMANCER_TEST_SERVER=%s\nLLAMANCER_TEST_MODELS=%s\n' "$server" "$RUNNER_TEMP/models" >> "$GITHUB_ENV"
       - name: Test actual inference and service lifecycle
-        run: cargo test --locked --test llama_live -- --ignored --nocapture
+        run: cargo test --locked --test llama_live real_cpu_router_lifecycle -- --ignored --nocapture
       - name: Test actual Hub download and resume
         run: cargo test --locked --test hub_live -- --ignored --nocapture
+
+      - name: Fetch pinned multimodal fixtures
+        if: inputs.multimodal
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/vision"
+          mkdir -p "$root"
+          base="https://huggingface.co/ggml-org/SmolVLM-256M-Instruct-GGUF/resolve/b9e4379657e1450d04d02eec8e345667265b0a00"
+          model="SmolVLM-256M-Instruct-Q8_0.gguf"
+          projector="mmproj-SmolVLM-256M-Instruct-Q8_0.gguf"
+          curl --fail --location --retry 3 --max-time 180 "$base/$model" -o "$root/$model"
+          curl --fail --location --retry 3 --max-time 180 "$base/$projector" -o "$root/$projector"
+          printf '%s  %s\n' 2a31195d3769c0b0fd0a4906201666108834848db768af11de1d2cef7cd35e65 "$root/$model" | sha256sum -c -
+          printf '%s  %s\n' 7e943f7c53f0382a6fc41b6ee0c2def63ba4fded9ab8ed039cc9e2ab905e0edd "$root/$projector" | sha256sum -c -
+          printf 'LLAMANCER_TEST_VISION_MODELS=%s\n' "$root" >> "$GITHUB_ENV"
+      - name: Test actual multimodal single and router inference
+        if: inputs.multimodal
+        run: cargo test --locked --test llama_live real_cpu_multimodal -- --ignored --nocapture
