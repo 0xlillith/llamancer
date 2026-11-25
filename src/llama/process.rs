@@ -13,6 +13,12 @@ use std::{
 };
 
 pub fn command_output(binary: &str, args: &[&str]) -> io::Result<String> {
+    let _lock = crate::backends::execution_lock(Path::new(binary))?;
+    command_output_unlocked(binary, args)
+}
+// Installer calls this only on a verified staged executable while holding the
+// exclusive storage lock.
+pub(crate) fn command_output_unlocked(binary: &str, args: &[&str]) -> io::Result<String> {
     let out = tempfile::tempfile()?;
     let err = out.try_clone()?;
     let mut child = Command::new(binary)

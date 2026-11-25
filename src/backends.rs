@@ -4,140 +4,18 @@ use std::{
     collections::BTreeSet,
     fs::{self, File, OpenOptions},
     io::{self, Read, Write},
-    os::unix::fs::{symlink, DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt},
+    os::unix::fs::{symlink, DirBuilderExt, MetadataExt, OpenOptionsExt},
     path::{Component, Path, PathBuf},
     sync::atomic::{AtomicBool, AtomicU64, Ordering},
     time::Duration,
 };
 use url::Url;
 
-pub const RELEASE: &str = "b12721";
-pub const RELEASES: [&str; 2] = [RELEASE, "b12726"];
+mod catalog;
+pub use catalog::{catalog, catalog_version, Asset, Kind, RELEASE, RELEASES};
 const MAX_EXPANDED: u64 = 8 * 1024 * 1024 * 1024;
 const MAX_ENTRIES: usize = 8192;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Kind {
-    Cpu,
-    Vulkan,
-    Rocm,
-}
-impl Kind {
-    pub const ALL: [Self; 3] = [Self::Cpu, Self::Vulkan, Self::Rocm];
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::Cpu => "cpu",
-            Self::Vulkan => "vulkan",
-            Self::Rocm => "rocm",
-        }
-    }
-    pub fn parse(name: &str) -> io::Result<Self> {
-        Self::ALL
-            .into_iter()
-            .find(|k| k.name() == name)
-            .ok_or_else(|| io::Error::other("Choose cpu, vulkan or rocm"))
-    }
-}
-#[derive(Debug, Clone, Copy)]
-pub struct Asset {
-    pub kind: Kind,
-    pub release: &'static str,
-    pub suffix: &'static str,
-    pub size: u64,
-    pub sha256: &'static str,
-}
-impl Asset {
-    pub fn filename(self) -> String {
-        format!("llama-{}-bin-ubuntu-{}.tar.gz", self.release, self.suffix)
-    }
-    pub fn url(self) -> String {
-        format!(
-            "https://github.com/ggml-org/llama.cpp/releases/download/{}/{}",
-            self.release,
-            self.filename()
-        )
-    }
-    pub fn directory(self, root: &Path) -> PathBuf {
-        root.join(format!("{}-{}", self.release, self.suffix))
-    }
-    pub fn binary(self, root: &Path) -> PathBuf {
-        self.directory(root)
-            .join(format!("llama-{}/llama-server", self.release))
-    }
-    pub fn installed(self, root: &Path) -> bool {
-        let dir = self.directory(root);
-        fs::symlink_metadata(&dir).is_ok_and(|m| m.is_dir())
-            && fs::symlink_metadata(self.binary(root))
-                .is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
-            && fs::read_to_string(dir.join("sha256")).is_ok_and(|s| s.trim() == self.sha256)
-    }
-}
-pub fn catalog(kind: Kind) -> Option<Asset> {
-    catalog_version(kind, RELEASE)
-}
-pub fn catalog_version(kind: Kind, tag: &str) -> Option<Asset> {
-    let release = *RELEASES.iter().find(|&&r| r == tag)?;
-    let (suffix, size, sha256) = match (release, std::env::consts::ARCH, kind) {
-        (RELEASE, "x86_64", Kind::Cpu) => (
-            "x64",
-            23388595,
-            "ab56524ce899526e51c04e77f089a5792c59282b49736b239900970d3947be47",
-        ),
-        (RELEASE, "x86_64", Kind::Vulkan) => (
-            "vulkan-x64",
-            37095907,
-            "ba2a338af1aa1d82d74d23f7e50e19ca5cb4da064d54bd86f6c01c80f77e7bda",
-        ),
-        (RELEASE, "x86_64", Kind::Rocm) => (
-            "rocm-10.0-x64",
-            277131895,
-            "bfe159abce6a526ec6b5cc8ba44a9e91600d3c7632b78c3d48733efe224937bb",
-        ),
-        (RELEASE, "aarch64", Kind::Cpu) => (
-            "arm64",
-            18944130,
-            "2c615cee75536574a30002ead85a3a259eac2ed3519d5e22546e61a5a9430c40",
-        ),
-        (RELEASE, "aarch64", Kind::Vulkan) => (
-            "vulkan-arm64",
-            30074713,
-            "d5c0356952fa73344ed2baab6a7a2aceff4a4f23005341e053eb7d5d222b553e",
-        ),
-        ("b12726", "x86_64", Kind::Cpu) => (
-            "x64",
-            23396793,
-            "cbfac3a6328b62f33239698f6b4daca58597a7be9f2e67b53ac1d28877908f71",
-        ),
-        ("b12726", "x86_64", Kind::Vulkan) => (
-            "vulkan-x64",
-            37107018,
-            "71c65dc9e8b24f3042d5b1709e2abc0ae1c098ddaffa029d85bcec319b24bc8a",
-        ),
-        ("b12726", "x86_64", Kind::Rocm) => (
-            "rocm-10.0-x64",
-            277168959,
-            "786f13e7802971684be7b9cb67c6cc8c2c4eea95d11faac20f2d78141db116d0",
-        ),
-        ("b12726", "aarch64", Kind::Cpu) => (
-            "arm64",
-            18946594,
-            "db9f2796bc7365e8d9b8eff41497ab5d817e39e1117c48e5ea02cd6712cf9f54",
-        ),
-        ("b12726", "aarch64", Kind::Vulkan) => (
-            "vulkan-arm64",
-            30074722,
-            "74d5fd4ca137330d07f089ee4b0b1c44ba20b80b18906fb15a32213d3fed9ef2",
-        ),
-        _ => return None,
-    };
-    Some(Asset {
-        kind,
-        release,
-        suffix,
-        size,
-        sha256,
-    })
-}
 pub fn root() -> io::Result<PathBuf> {
     let absolute = |key: &str| {
         std::env::var_os(key)
@@ -178,6 +56,7 @@ fn download(
 ) -> io::Result<()> {
     let agent = ureq::AgentBuilder::new()
         .redirects(0)
+        .timeout(Duration::from_secs(600))
         .timeout_connect(Duration::from_secs(10))
         .timeout_read(Duration::from_secs(15))
         .build();
@@ -361,6 +240,9 @@ pub fn install(
     flag: &AtomicBool,
     progress: &AtomicU64,
 ) -> io::Result<PathBuf> {
+    if !asset.valid() {
+        return Err(io::Error::other("Asset is not in the reviewed catalog"));
+    }
     private_root(root)?;
     let _lock = storage_lock(root, true)?;
     let dest = asset.directory(root);
@@ -390,7 +272,7 @@ pub fn install(
         return Err(io::Error::other("Missing regular llama-server"));
     }
     cancel(flag)?;
-    let version = crate::llama::process::command_output(
+    let version = crate::llama::process::command_output_unlocked(
         binary
             .to_str()
             .ok_or_else(|| io::Error::other("Non-UTF8 backend path"))?,
@@ -406,7 +288,6 @@ pub fn install(
     Ok(asset.binary(root))
 }
 pub fn probe(binary: &Path) -> io::Result<String> {
-    let _lock = execution_lock(binary)?;
     crate::llama::process::command_output(
         binary
             .to_str()
@@ -551,6 +432,9 @@ pub fn benchmark(root: &Path, asset: Asset, model: &Path, flag: &AtomicBool) -> 
 /// Remove only the catalog-owned version directory, never an external executable.
 /// Runtime and service selection are separate; callers must stop inference first.
 pub fn remove(root: &Path, asset: Asset, selected: &str) -> io::Result<()> {
+    if !asset.valid() {
+        return Err(io::Error::other("Asset is not in the reviewed catalog"));
+    }
     private_root(root)?;
     let _lock = storage_lock(root, true)?;
     if !asset.installed(root) {
@@ -622,6 +506,32 @@ pub fn hardware() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::fs::PermissionsExt;
+    #[test]
+    fn malformed_receipt_and_fabricated_catalog_entry_are_rejected() {
+        use std::{ffi::CString, os::unix::ffi::OsStrExt};
+        let root = tempfile::tempdir().unwrap();
+        let asset = catalog(Kind::Cpu).unwrap();
+        let binary = asset.binary(root.path());
+        fs::create_dir_all(binary.parent().unwrap()).unwrap();
+        fs::write(&binary, b"fixture").unwrap();
+        fs::set_permissions(&binary, fs::Permissions::from_mode(0o700)).unwrap();
+        let receipt = asset.directory(root.path()).join("sha256");
+        let name = CString::new(receipt.as_os_str().as_bytes()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
+        assert!(!asset.installed(root.path()));
+        let forged = Asset {
+            suffix: "../outside",
+            ..asset
+        };
+        assert!(install(
+            root.path(),
+            forged,
+            &AtomicBool::new(false),
+            &AtomicU64::new(0)
+        )
+        .is_err());
+    }
     #[test]
     fn active_storage_readers_refuse_mutation() {
         let root = tempfile::tempdir().unwrap();
