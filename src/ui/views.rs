@@ -83,6 +83,14 @@ pub fn content(app: &App, body: Rect) -> (&'static str, String) {
         } else {
             lines.push("Memory estimate unavailable for this model architecture.".into());
         }
+        if let (Some(requested), Some(trained)) = (
+            app.config.effective_profile(g).engine.context_size,
+            g.files.first().and_then(|f| f.metadata.context),
+        ) {
+            if u64::from(requested) > trained {
+                lines.push(format!("Warning: requested {requested} exceeds declared model context {trained}; backend may cap it."));
+            }
+        }
         if app.server.is_single_model(g) && !app.server.profile_matches(g, &app.config) {
             lines.push(
                 "Inference profile changed: confirm Run to restart this managed model.".into(),
@@ -421,19 +429,55 @@ pub fn content(app: &App, body: Rect) -> (&'static str, String) {
                         let cursor = d.bundle_cursor(&groups);
                         let (offset, capacity) = super::viewport(cursor, body.height, 5);
                         for (i, g) in groups.iter().enumerate().skip(offset).take(capacity) {
-                            lines.push(format!(
-                                "{} {:<21} {} | {:>6.1}% | {:.2}/{:.2} GiB | {}",
-                                if i == cursor { ">" } else { " " },
+                            let suffix = format!(
+                                "{}  {} {:>5.1}%",
                                 g.label(),
-                                super::chrome::meter(g.received, g.bytes, 12),
-                                100.0 * g.received as f64 / g.bytes.max(1) as f64,
-                                g.received as f64 / 1073741824.0,
-                                g.bytes as f64 / 1073741824.0,
-                                safe(&g.name)
+                                super::chrome::meter(
+                                    g.received,
+                                    g.bytes,
+                                    if body.width >= 85 { 12 } else { 5 }
+                                ),
+                                100.0 * g.received as f64 / g.bytes.max(1) as f64
+                            );
+                            let name_width = usize::from(body.width)
+                                .saturating_sub(ratatui::text::Span::raw(&suffix).width() + 6);
+                            lines.push(format!(
+                                "{} {:<width$}  {}",
+                                if i == cursor { ">" } else { " " },
+                                super::clip(&g.name, name_width),
+                                suffix,
+                                width = name_width
                             ));
                         }
+                        if let Some(g) = groups.get(cursor) {
+                            let mut summary = format!(
+                                "Selected: {:.2}/{:.2} GiB",
+                                g.received as f64 / 1073741824.0,
+                                g.bytes as f64 / 1073741824.0
+                            );
+                            if let Some((speed, _)) = g.active.and_then(|i| d.speed_eta(i)) {
+                                let sec = (g.bytes.saturating_sub(g.received) as f64 / speed).ceil()
+                                    as u64;
+                                summary.push_str(&format!(
+                                    " · {:.1} MiB/s · ETA {}m {}s",
+                                    speed / 1048576.0,
+                                    sec / 60,
+                                    sec % 60
+                                ));
+                            } else if let Some(error) = g
+                                .indices
+                                .iter()
+                                .find_map(|&i| d.queue.items[i].error.as_ref())
+                            {
+                                summary.push_str(&format!(" · {}", safe(error)));
+                            }
+                            lines.push(summary);
+                            if let Some((graph, _)) = g.active.and_then(|i| d.speed_history(i)) {
+                                lines.push(format!("Speed: {graph}"));
+                            }
+                        }
                         if d.queue.items.is_empty() {
-                            lines.push("Discover models and queue files with d.".into());
+                            lines.push("No downloads yet. Choose Discover to find a model.".into());
                         }
                         lines.join("\n")
                     } else {
@@ -458,7 +502,11 @@ pub fn content(app: &App, body: Rect) -> (&'static str, String) {
                             },
                             safe(&server.status)
                         ),
-                        super::server_actions(app),
+                        if server.show_logs {
+                            "[ Back to server ]".into()
+                        } else {
+                            super::server_actions(app)
+                        },
                     ];
                     if server.show_logs {
                         lines.extend(
@@ -503,6 +551,17 @@ pub fn content(app: &App, body: Rect) -> (&'static str, String) {
                         lines
                             .push("For multiple models: B choose backend → s Start router.".into());
                     }
+                    if let Some(n) = crate::models::fit::available_ram() {
+                        lines.push(format!(
+                            "System RAM: {:.1} GiB available",
+                            n as f64 / 1073741824.0
+                        ));
+                    }
+                    if let Some(n) = server.selected().and_then(|m| m.context_limit()) {
+                        lines.push(format!("Reported context: {n}"));
+                    } else if let Some(n) = server.active_context {
+                        lines.push(format!("Requested context: {n}"));
+                    }
                     if let Some(project) = &app.config.project_dir {
                         lines.push(format!(
                             "Project: {} | P switch",
@@ -521,8 +580,8 @@ pub fn content(app: &App, body: Rect) -> (&'static str, String) {
                     lines.join("\n")
                 }
                 _ => {
-                    let mut lines = Vec::new();
-                    let (offset, capacity) = super::viewport(app.setting, body.height, 5);
+                    let mut lines = vec!["Settings categories".into()];
+                    let (offset, capacity) = super::viewport(app.setting, body.height, 6);
                     for (i, field) in crate::settings::Field::ALL
                         .into_iter()
                         .enumerate()
@@ -530,11 +589,18 @@ pub fn content(app: &App, body: Rect) -> (&'static str, String) {
                         .take(capacity)
                     {
                         lines.push(format!(
-                            "{} {:<10} | {}: {}",
+                            "{} {:<10}  {:<26} {}",
                             if i == app.setting { ">" } else { " " },
                             field.category(),
                             field.label(),
-                            super::safe(&field.initial(&app.config))
+                            {
+                                let v = field.initial(&app.config);
+                                if v.is_empty() {
+                                    "—".into()
+                                } else {
+                                    super::safe(&v)
+                                }
+                            }
                         ));
                     }
                     lines.push(format!(

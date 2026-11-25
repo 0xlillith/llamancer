@@ -321,6 +321,7 @@ impl Runtime {
         } else {
             2
         };
+        self.app.launch_advanced = false;
         self.app.launch_menu = Some(group);
         self.app.details = false;
         Ok(())
@@ -651,7 +652,8 @@ impl Runtime {
     }
     /// Text focus is not a modal dialog: mouse tabs and result rows remain usable.
     pub fn modal(&self) -> bool {
-        self.app.launch_menu.is_some()
+        self.app.picker.is_some()
+            || self.app.launch_menu.is_some()
             || self.app.launching_agent
             || self.app.backend_open
             || self.app.setup_open
@@ -687,7 +689,7 @@ impl Runtime {
             if self.app.context_input.is_some() {
                 return;
             }
-            if index < 8 {
+            if self.app.launch_order().contains(&index) {
                 self.app.launch_cursor = index;
             }
             return;
@@ -758,9 +760,130 @@ impl Runtime {
             _ => {}
         }
     }
+    pub fn open_picker(&mut self, kind: crate::ui::choices::Kind) {
+        self.blur_search();
+        self.app.picker = Some(crate::ui::choices::Picker::new(kind, &self.app));
+    }
+    pub fn select_picker(&mut self, index: usize) -> io::Result<Effect> {
+        if let Some(p) = self.app.picker.as_mut() {
+            if index < p.options.len() {
+                p.cursor = index;
+            }
+        }
+        self.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+    }
+    fn apply_picker(&mut self) -> io::Result<()> {
+        use crate::ui::choices::Kind;
+        let Some(p) = self.app.picker.take() else {
+            return Ok(());
+        };
+        let Some(value) = p.options.get(p.cursor).cloned() else {
+            return Ok(());
+        };
+        match p.kind {
+            Kind::Sort => {
+                if self.app.discovery.repo.is_some() {
+                    self.app.discovery.variant_sort = [
+                        crate::huggingface::discovery::VariantSort::Balanced,
+                        crate::huggingface::discovery::VariantSort::Smallest,
+                        crate::huggingface::discovery::VariantSort::Largest,
+                        crate::huggingface::discovery::VariantSort::Name,
+                    ][p.cursor];
+                    self.app.discovery.rebuild_variants();
+                } else {
+                    self.app.discovery.ranking = [
+                        crate::huggingface::Ranking::Downloads,
+                        crate::huggingface::Ranking::Trending,
+                        crate::huggingface::Ranking::Newest,
+                        crate::huggingface::Ranking::Updated,
+                        crate::huggingface::Ranking::Likes,
+                    ][p.cursor];
+                    self.app.discovery.search()?;
+                }
+            }
+            Kind::Filters => match p.cursor {
+                0 => self.open_picker(Kind::Quant),
+                1 => self.open_picker(Kind::Author),
+                2 => self.open_picker(Kind::License),
+                _ => {
+                    self.app.discovery.query = self
+                        .app
+                        .discovery
+                        .query
+                        .split_whitespace()
+                        .filter(|w| {
+                            !["author:", "license:", "quant:"]
+                                .iter()
+                                .any(|prefix| w.starts_with(prefix))
+                        })
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    self.app.discovery.search()?;
+                }
+            },
+            Kind::Quant if self.app.discovery.repo.is_some() => {
+                self.app.discovery.variant_filter =
+                    if p.cursor == 0 { String::new() } else { value };
+                self.app.discovery.rebuild_variants();
+            }
+            Kind::Author | Kind::License | Kind::Quant => {
+                let prefix = match p.kind {
+                    Kind::Author => "author:",
+                    Kind::License => "license:",
+                    _ => "quant:",
+                };
+                let mut query = self
+                    .app
+                    .discovery
+                    .query
+                    .split_whitespace()
+                    .filter(|w| !w.starts_with(prefix))
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                if p.cursor != 0 {
+                    if !query.is_empty() {
+                        query.push(' ');
+                    }
+                    query.push_str(prefix);
+                    query.push_str(&value);
+                }
+                // Validate before replacing the editable query.
+                crate::huggingface::SearchSpec::parse(&query)?;
+                self.app.discovery.query = query;
+                self.app.discovery.search()?;
+            }
+            Kind::Context(global) => {
+                self.app.launch_cursor = if global { 4 } else { 3 };
+                if value == "Custom value…" {
+                    self.app.context_input = Some(String::new());
+                } else {
+                    self.save_context(&value, global)?;
+                }
+            }
+            Kind::Setting(f) => {
+                if value == "Custom value…" {
+                    self.app.edit = Some((f, f.initial(&self.app.config)));
+                } else {
+                    self.app.edit = Some((f, value));
+                    self.settings_edit(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))?;
+                }
+            }
+        }
+        Ok(())
+    }
     pub fn handle_key(&mut self, key: KeyEvent) -> io::Result<Effect> {
         if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
             self.app.dispatch(Action::Quit);
+            return Ok(Effect::None);
+        }
+        if let Some(p) = self.app.picker.as_mut() {
+            match key.code {
+                KeyCode::Esc => self.app.picker = None,
+                KeyCode::Up => p.cursor = p.cursor.saturating_sub(1),
+                KeyCode::Down => p.cursor = (p.cursor + 1).min(p.options.len().saturating_sub(1)),
+                KeyCode::Enter => self.apply_picker()?,
+                _ => {}
+            }
             return Ok(Effect::None);
         }
         if self.app.launching_agent {
@@ -809,8 +932,25 @@ impl Runtime {
             }
             match key.code {
                 KeyCode::Esc => self.app.launch_menu = None,
-                KeyCode::Up => self.app.launch_cursor = self.app.launch_cursor.saturating_sub(1),
-                KeyCode::Down => self.app.launch_cursor = (self.app.launch_cursor + 1).min(7),
+                KeyCode::Up | KeyCode::Down => {
+                    let order = self.app.launch_order();
+                    let i = order
+                        .iter()
+                        .position(|&x| x == self.app.launch_cursor)
+                        .unwrap_or(0);
+                    self.app.launch_cursor = order[if key.code == KeyCode::Up {
+                        i.saturating_sub(1)
+                    } else {
+                        (i + 1).min(order.len() - 1)
+                    }];
+                }
+                KeyCode::Enter if self.app.launch_cursor == 8 => {
+                    self.app.launch_advanced = !self.app.launch_advanced
+                }
+                KeyCode::Char('C') if (3..=4).contains(&self.app.launch_cursor) => self
+                    .open_picker(crate::ui::choices::Kind::Context(
+                        self.app.launch_cursor == 4,
+                    )),
                 KeyCode::Char('c') => {
                     self.app.launch_cursor = 3;
                     self.app.context_input = Some(String::new());
@@ -1457,7 +1597,11 @@ impl Runtime {
             KeyCode::Down => self.app.setting = (self.app.setting + 1) % Field::ALL.len(),
             KeyCode::Enter => {
                 let f = Field::ALL[self.app.setting];
-                self.app.edit = Some((f, f.initial(&self.app.config)));
+                if f.choices().is_empty() {
+                    self.app.edit = Some((f, f.initial(&self.app.config)));
+                } else {
+                    self.open_picker(crate::ui::choices::Kind::Setting(f));
+                }
             }
             _ => {}
         }
@@ -1665,14 +1809,10 @@ impl Runtime {
     fn discovery_key(&mut self, key: KeyCode) -> io::Result<()> {
         match key {
             KeyCode::Char('s') if !self.app.discovery.busy() => {
-                let d = &mut self.app.discovery;
-                if d.repo.is_some() {
-                    d.variant_sort = d.variant_sort.next();
-                    d.rebuild_variants();
-                } else {
-                    d.ranking = d.ranking.next();
-                    d.search()?;
-                }
+                self.open_picker(crate::ui::choices::Kind::Sort)
+            }
+            KeyCode::Char('F') if !self.app.discovery.busy() => {
+                self.open_picker(crate::ui::choices::Kind::Filters)
             }
             KeyCode::Char('n') => self.app.discovery.more()?,
             KeyCode::Char('/') if !self.app.discovery.busy() => self.app.discovery.editing = true,

@@ -1,3 +1,4 @@
+pub mod choices;
 mod chrome;
 pub mod controls;
 pub mod icons;
@@ -21,6 +22,27 @@ pub(crate) fn safe(text: &str) -> String {
         .collect()
 }
 // Keep the end of an active query visible, including the editing cursor.
+pub(super) fn clip(value: &str, width: usize) -> String {
+    let value = safe(value);
+    if ratatui::text::Span::raw(&value).width() <= width {
+        return value;
+    }
+    if width == 0 {
+        return String::new();
+    }
+    let mut out = String::new();
+    let mut used = 0;
+    for ch in value.chars() {
+        let n = ratatui::text::Span::raw(ch.to_string()).width();
+        if used + n > width.saturating_sub(1) {
+            break;
+        }
+        used += n;
+        out.push(ch);
+    }
+    out.push('…');
+    out
+}
 fn search_value(value: &str, editing: bool, width: usize) -> String {
     if value.is_empty() {
         return if editing {
@@ -320,7 +342,7 @@ pub fn row_at(area: Rect, app: &App, column: u16, row: u16) -> Option<usize> {
             let s = app.server.snapshot.as_ref()?;
             (body, 5, 7, app.server.cursor, s.models.len())
         }
-        4 => (body, 1, 5, app.setting, crate::settings::Field::ALL.len()),
+        4 => (body, 2, 6, app.setting, crate::settings::Field::ALL.len()),
         _ => return None,
     };
     let inner_row = row.checked_sub(rect.y.checked_add(header)?)?;
@@ -459,8 +481,11 @@ pub fn draw_themed(frame: &mut Frame, app: &App, theme: &Theme) {
         chrome::aside(frame, side, app, &palette);
     }
     controls::draw(frame, app, &palette);
-    let footer_text = if app.launch_menu.is_some() {
-        "Enter action  ↑↓ choose  ←→ context presets  c custom context  Esc back"
+    choices::draw(frame, app, &palette);
+    let footer_text = if app.picker.is_some() {
+        "↑↓ select  Enter choose  Esc cancel"
+    } else if app.launch_menu.is_some() {
+        "Enter action  ↑↓ choose  C presets  c custom context  Esc back"
     } else if app.launching_agent {
         "Starting inference → agent window  Esc cancel agent launch"
     } else if app.setup_open {
@@ -490,7 +515,7 @@ pub fn draw_themed(frame: &mut Frame, app: &App, theme: &Theme) {
     } else {
         match app.tab {
             0 => "Enter open / double-click  j inspect  p profile  m fit  F3 search  r refresh  ? help",
-            1 => "F3 focus search  s sort  Enter open/download  d download  n next page  Backspace back  ? help",
+            1 => "F3 search  s sort  F filters  Enter open/download  ? help",
             2 => "Enter resume  x pause  ? help",
             3 => "Enter agent  P project  g logs  ? help",
             _ => "↑↓ select  Enter edit  T theme  I icons  B backends  P project  G setup  ? help  q quit",
@@ -542,7 +567,7 @@ mod tests {
         let area = Rect::new(0, 0, 140, 36);
         let (main, side) = content_regions(regions(area)[2], &app);
         assert!(side.is_some());
-        assert_eq!(row_at(area, &app, 5, main.y + 1), Some(0));
+        assert_eq!(row_at(area, &app, 5, main.y + 2), Some(0));
         assert_eq!(row_at(area, &app, side.unwrap().x + 2, main.y + 1), None);
         for (mode, expected) in [
             (icons::Mode::Auto, true),
@@ -582,10 +607,11 @@ mod tests {
         };
         let mut app = App {
             launch_menu: Some(group),
+            launch_advanced: true,
             ..Default::default()
         };
         for (w, h) in [(1, 1), (20, 5), (50, 14), (80, 24), (140, 36)] {
-            for index in 0..8 {
+            for index in 0..9 {
                 app.launch_cursor = index;
                 let mut terminal = Terminal::new(TestBackend::new(w, h)).unwrap();
                 terminal.draw(|f| draw(f, &app)).unwrap();
@@ -606,6 +632,27 @@ mod tests {
         app.context_input = Some("65536".into());
         let area = Rect::new(0, 0, 80, 24);
         assert!((0..24).all(|y| (0..80).all(|x| launch_hit(area, &app, x, y).is_none())));
+    }
+    #[test]
+    fn choice_picker_does_not_activate_underlying_controls() {
+        let mut app = App {
+            tab: 1,
+            ..Default::default()
+        };
+        app.picker = Some(choices::Picker::new(choices::Kind::Sort, &app));
+        for (w, h) in [(1, 1), (30, 12), (80, 24), (140, 36)] {
+            let mut t = Terminal::new(TestBackend::new(w, h)).unwrap();
+            t.draw(|f| draw(f, &app)).unwrap();
+            let area = Rect::new(0, 0, w, h);
+            assert!((0..h).all(|y| (0..w).all(|x| controls::hit(area, &app, x, y).is_none())));
+            if w >= 80 {
+                let hits = (0..h)
+                    .flat_map(|y| (0..w).map(move |x| (x, y)))
+                    .filter_map(|(x, y)| choices::hit(area, &app, x, y))
+                    .collect::<std::collections::HashSet<_>>();
+                assert_eq!(hits.len(), 5);
+            }
+        }
     }
     #[test]
     fn visible_controls_share_pointer_geometry() {
@@ -643,8 +690,8 @@ mod tests {
             ..App::default()
         };
         let body = regions(area)[2];
-        let (offset, _) = viewport(app.setting, body.height, 5);
-        assert_eq!(row_at(area, &app, 5, body.y + 1), Some(offset));
+        let (offset, _) = viewport(app.setting, body.height, 6);
+        assert_eq!(row_at(area, &app, 5, body.y + 2), Some(offset));
         assert_eq!(row_at(area, &app, body.x, body.y + 1), None);
         app.help = true;
         assert_eq!(row_at(area, &app, 5, body.y + 1), None);

@@ -5,7 +5,7 @@ use ratatui::{
     layout::Rect,
     style::Modifier,
     text::{Line, Span},
-    widgets::{Block, BorderType, Paragraph, Wrap},
+    widgets::{Paragraph, Wrap},
     Frame,
 };
 
@@ -111,20 +111,14 @@ pub fn tab(frame: &mut Frame, area: Rect, index: usize, app: &App, p: &Palette) 
     } else {
         format!("{}{}", if selected { ">" } else { " " }, index + 1)
     };
-    let style = if selected {
-        p.selected.add_modifier(Modifier::BOLD)
-    } else {
-        p.base
-    };
-    let border = if selected { p.selected } else { p.border };
-    frame.render_widget(
-        Paragraph::new(label).centered().style(style).block(
-            Block::bordered()
-                .border_type(BorderType::Rounded)
-                .border_style(border),
-        ),
-        area,
+    let interior = Rect::new(
+        area.x,
+        area.y.saturating_add(1),
+        area.width,
+        area.height.min(2).saturating_sub(1),
     );
+    let style = if selected { p.brand } else { p.surface };
+    frame.render_widget(Paragraph::new(label).centered().style(style), interior);
 }
 /// Color structured rows without changing their text or hit-testing geometry.
 pub fn row(line: &str, p: &Palette, logs: bool) -> Line<'static> {
@@ -457,8 +451,14 @@ pub fn aside(frame: &mut Frame, area: Rect, app: &App, p: &Palette) {
                             }
                             if let Some((speed, _)) = d.speed_eta(i) {
                                 lines.push(Line::raw(format!(
-                                    "{:.1} MiB/s (current part)",
-                                    speed / 1048576.0
+                                    "{:.1} MiB/s · ETA {}m {}s",
+                                    speed / 1048576.0,
+                                    ((g.bytes.saturating_sub(g.received) as f64 / speed).ceil()
+                                        as u64)
+                                        / 60,
+                                    ((g.bytes.saturating_sub(g.received) as f64 / speed).ceil()
+                                        as u64)
+                                        % 60
                                 )));
                             }
                         }
@@ -510,10 +510,38 @@ pub fn aside(frame: &mut Frame, area: Rect, app: &App, p: &Palette) {
                 lines.push(Line::raw(""));
                 lines.push(Line::styled("Agent", p.muted));
                 lines.push(Line::raw(safe(&app.config.default_agent)));
-                lines.push(Line::raw("P project · a launch"));
+                if let Some(n) = crate::models::fit::available_ram() {
+                    lines.push(Line::raw(""));
+                    lines.push(Line::styled("System memory", p.muted));
+                    lines.push(Line::raw(format!(
+                        "{:.1} GiB available",
+                        n as f64 / 1073741824.0
+                    )));
+                }
+                if let Some(n) = s.active_context {
+                    lines.push(Line::raw(format!("Requested context: {n}")));
+                }
+                for device in crate::models::fit::parse_devices(&s.devices) {
+                    lines.push(Line::raw(format!(
+                        "{}: {:.1}/{:.1} GiB free (last probe)",
+                        device.id,
+                        device.free as f64 / 1073741824.0,
+                        device.total as f64 / 1073741824.0
+                    )));
+                }
+                lines.push(Line::raw(
+                    "Agent window close releases agent-owned inference.",
+                ));
             }
             _ => {
                 title = "Preferences";
+                if let Some(field) = crate::settings::Field::ALL.get(app.setting) {
+                    lines.push(Line::styled(field.label(), p.heading));
+                    lines.push(Line::raw(field.hint()));
+                    lines.push(Line::raw(""));
+                    lines.push(Line::raw("Double-click or Enter to edit."));
+                    lines.push(Line::raw(""));
+                }
                 lines.push(Line::styled("Appearance", p.heading));
                 lines.push(Line::raw(format!("Theme: {}", safe(&app.config.theme))));
                 lines.push(Line::raw(format!(

@@ -44,16 +44,24 @@ fn layout(area: Rect, app: &App) -> Layout {
         0
     };
     let tail = if inner.height >= 3 { 1 } else { 0 };
-    let capacity = usize::from(inner.height.saturating_sub(header + tail)).min(8);
+    let order = app.launch_order();
+    let capacity = usize::from(inner.height.saturating_sub(header + tail)).min(order.len());
+    let cursor = order
+        .iter()
+        .position(|&i| i == app.launch_cursor)
+        .unwrap_or(0);
     let offset = if capacity == 0 {
         0
     } else {
-        app.launch_cursor
-            .min(7)
+        cursor
             .saturating_sub(capacity - 1)
-            .min(8 - capacity)
+            .min(order.len() - capacity)
     };
-    let rows = (offset..offset + capacity)
+    let rows = order
+        .iter()
+        .copied()
+        .skip(offset)
+        .take(capacity)
         .enumerate()
         .map(|(n, i)| {
             (
@@ -108,7 +116,11 @@ pub fn hit(area: Rect, app: &App, x: u16, y: u16) -> Option<Hit> {
             } else if right.contains(pos) {
                 KeyCode::Right
             } else {
-                KeyCode::Enter
+                if (3..=4).contains(&i) && x >= r.right().saturating_sub(20) && r.width >= 54 {
+                    KeyCode::Char('C')
+                } else {
+                    KeyCode::Enter
+                }
             }
         } else {
             KeyCode::Enter
@@ -154,7 +166,15 @@ pub fn draw(f: &mut Frame, area: Rect, app: &App, p: &Palette) {
     }
     for (index, r) in &l.rows {
         let text = lines.get(3 + *index).copied().unwrap_or_default();
-        let label = text.get(2..).unwrap_or(text);
+        let label = if *index == 8 {
+            if app.launch_advanced {
+                "▾ Advanced settings"
+            } else {
+                "▸ Advanced settings"
+            }
+        } else {
+            text.get(2..).unwrap_or(text)
+        };
         let label = label
             .split("  ←/→")
             .next()
@@ -167,14 +187,21 @@ pub fn draw(f: &mut Frame, area: Rect, app: &App, p: &Palette) {
             p.selected.add_modifier(Modifier::BOLD)
         } else if *index == 0 {
             p.brand
-        } else if *index < 3 {
+        } else if *index < 3 || *index == 8 {
             p.surface
         } else {
             p.base
         };
         let mut text_area = *r;
         if stepper(*r, *index).is_some() {
-            text_area.width = text_area.width.saturating_sub(10);
+            text_area.width =
+                text_area
+                    .width
+                    .saturating_sub(if (3..=4).contains(index) && r.width >= 54 {
+                        20
+                    } else {
+                        10
+                    });
         }
         let marker = if selected { "›" } else { " " };
         f.render_widget(
@@ -182,6 +209,12 @@ pub fn draw(f: &mut Frame, area: Rect, app: &App, p: &Palette) {
             text_area,
         );
         if let Some((prev, next)) = stepper(*r, *index) {
+            if (3..=4).contains(index) && r.width >= 54 {
+                f.render_widget(
+                    Paragraph::new(" Presets ").centered().style(p.label),
+                    Rect::new(r.right() - 20, r.y, 10, 1),
+                );
+            }
             f.render_widget(Paragraph::new(" ‹ ").centered().style(p.label), prev);
             f.render_widget(Paragraph::new(" › ").centered().style(p.label), next);
         }
@@ -199,7 +232,7 @@ pub fn draw(f: &mut Frame, area: Rect, app: &App, p: &Palette) {
     }
     if let Some(r) = l.help {
         f.render_widget(
-            Paragraph::new(" [Back]  ↑↓ select · Enter action · ‹ › presets").style(p.dim),
+            Paragraph::new(" [Back]  ↑↓ select · Enter action · C presets").style(p.dim),
             r,
         );
     }

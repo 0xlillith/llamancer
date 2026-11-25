@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Compact navigation, searchable model variants, direct ranked sort/filter pickers, categorized settings and enumerated setting choices.
+- Fold advanced launch preferences; choose context presets or custom token counts, with declared model-context warnings.
+- Model running state, model-first download progress, aggregate transfer ETA, server reported context and measured available RAM.
+
 - Shared clickable action bars for Library, Discover, Downloads and Server; responsive launch panel with context and thinking steppers, plus double-click settings editing.
 
 - Opt-in local tool-call preflight (Responses SSE for OMP), exact argument checks and explicit failure confirmation.
