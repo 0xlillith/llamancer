@@ -76,6 +76,7 @@ pub fn row_at(area: Rect, app: &App, column: u16, row: u16) -> Option<usize> {
     if app.help
         || app.show_invalid
         || app.hide_confirmation.is_some()
+        || app.quarantine_confirmation.is_some()
         || app.profile_editor.is_some()
         || app.edit.is_some()
         || app.searching
@@ -169,7 +170,11 @@ pub fn draw_themed(frame: &mut Frame, app: &App, theme: &Theme) {
             .style(base)
             .block(palette.panel(title));
         // Keep list rows on one terminal line, so cursor and pointer geometry agree.
-        let paragraph = if app.help || app.profile_editor.is_some() || app.edit.is_some() {
+        let paragraph = if app.help
+            || app.profile_editor.is_some()
+            || app.edit.is_some()
+            || app.quarantine_confirmation.is_some()
+        {
             paragraph.wrap(Wrap { trim: false })
         } else {
             paragraph
@@ -178,9 +183,9 @@ pub fn draw_themed(frame: &mut Frame, app: &App, theme: &Theme) {
     }
     let footer_text = if app.notice.is_empty() {
         match app.tab {
-            0 => "r scan  / search  f favorite  s sort  p profile  l load  i invalid  h hide  ? help",
+            0 => "r scan  / search  f favorite  s sort  p profile  l load  i invalid  h hide  t quarantine  ? help",
             1 => "/ search  Enter open  d queue  n next page  Backspace back  ? help",
-            2 => "r resume  R run queue  x pause  z remove entry  ? help",
+            2 => "r resume  R run queue  x pause  t quarantine  T restore  z remove entry  ? help",
             3 => "r refresh  D detach  s router  R restart  i probe  x stop  l/u load/unload  a agent  A current  w web  b btop  g logs",
             _ => "↑↓ select  Enter edit  ? help  q quit",
         }

@@ -109,3 +109,9 @@ MIT. Llamancer is an independent project and is not affiliated with llama.cpp, O
 ### Terminal accessibility
 
 Click a tab or a visible list row to select it; use the mouse wheel or Up/Down to move the selection. Actions retain their contextual keyboard shortcuts. Selected entries have a textual marker as well as a color highlight. Choose the built-in `high-contrast` theme in Settings for increased contrast.
+
+### Recoverable model quarantine
+
+Press `t` in Library or Downloads to quarantine a complete managed model bundle, and `T` in Downloads to restore it. Confirm explicitly after stopping all inference servers. Only files newly published by Llamancer with an authoritative SHA-256 and persisted inode receipt are eligible; imported files, legacy queue entries, changed files and files without a checksum are refused. Linux write leases reject files currently open by other processes and fail closed on unsupported filesystems. The configured local endpoint must be idle. Llamancer cannot detect unloaded paths registered in arbitrary external servers, so stop them before confirming.
+
+Quarantine renames the files in place with a `.llamancer-quarantine` suffix; no bytes are deleted and no disk space is reclaimed. Restoring never overwrites an existing path. If interrupted during a multipart move, queue state is reconciled on restart and the same operation or restore can resume. Ownership records are retained. Do not manually rename or replace quarantined files unless recovering outside Llamancer.

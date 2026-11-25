@@ -131,6 +131,7 @@ impl Runtime {
             || self.app.discovery.editing
             || self.app.help
             || self.app.hide_confirmation.is_some()
+            || self.app.quarantine_confirmation.is_some()
     }
     pub fn select_row(&mut self, index: usize) {
         if self.modal() {
@@ -164,6 +165,26 @@ impl Runtime {
     pub fn handle_key(&mut self, key: KeyEvent) -> io::Result<Effect> {
         if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
             self.app.dispatch(Action::Quit);
+            return Ok(Effect::None);
+        }
+        if let Some(restore) = self.app.quarantine_confirmation {
+            match key.code {
+                KeyCode::Esc | KeyCode::Char('n') => self.app.quarantine_confirmation = None,
+                KeyCode::Char('y') => {
+                    self.ensure_quarantine_idle()?;
+                    let downloads = self
+                        .app
+                        .downloads
+                        .as_mut()
+                        .ok_or_else(|| io::Error::other("Queue unavailable"))?;
+                    downloads.quarantine(restore, &self.app.config.endpoint)?;
+                    self.app.quarantine_confirmation = None;
+                    self.app.candidates.clear();
+                    self.app.model_cursor = 0;
+                    self.app.details = false;
+                }
+                _ => {}
+            }
             return Ok(Effect::None);
         }
         if let Some(id) = self.app.hide_confirmation.clone() {
@@ -313,6 +334,9 @@ impl Runtime {
         Ok(())
     }
     fn settings_edit(&mut self, key: KeyEvent) -> io::Result<()> {
+        if key.code == KeyCode::Enter && self.mutation_active() {
+            return Err(io::Error::other("Wait for model quarantine to finish"));
+        }
         let (field, input) = self.app.edit.as_mut().expect("settings edit active");
         match key.code {
             KeyCode::Esc => {
@@ -367,9 +391,24 @@ impl Runtime {
             _ => {}
         }
     }
+    fn mutation_active(&self) -> bool {
+        self.app.downloads.as_ref().is_some_and(|d| d.mutating())
+    }
+    fn ensure_quarantine_idle(&self) -> io::Result<()> {
+        if self.scan.is_some()
+            || self.app.server.polling()
+            || self.app.server.snapshot.is_some()
+            || self.app.downloads.as_ref().is_some_and(|d| d.busy())
+        {
+            return Err(io::Error::other(
+                "Stop/detach inference and wait for scans/downloads before moving files",
+            ));
+        }
+        Ok(())
+    }
     pub fn scan(&mut self) -> io::Result<()> {
-        if self.scan.is_some() {
-            return Err(io::Error::other("Scan already running"));
+        if self.scan.is_some() || self.mutation_active() {
+            return Err(io::Error::other("Scan or model mutation already running"));
         }
         let roots = self.app.config.scan_roots();
         self.scan = Some(Job::start(move |cancel| models::scan(roots, &cancel))?);
@@ -389,6 +428,22 @@ impl Runtime {
         }
         match key {
             KeyCode::Char('i') => self.app.show_invalid = true,
+            KeyCode::Char('t') => {
+                self.ensure_quarantine_idle()?;
+                let group = self
+                    .app
+                    .selected()
+                    .cloned()
+                    .ok_or_else(|| io::Error::other("Select a model"))?;
+                let d = self
+                    .app
+                    .downloads
+                    .as_mut()
+                    .ok_or_else(|| io::Error::other("Queue unavailable"))?;
+                d.select_managed_group(&group)?;
+                self.app.tab = 2;
+                self.app.quarantine_confirmation = Some(false);
+            }
             KeyCode::Char('h') => {
                 if self.app.server.polling() || self.app.server.snapshot.is_some() {
                     return Err(io::Error::other(
@@ -452,6 +507,9 @@ impl Runtime {
                 }
             }
             KeyCode::Char('l') => {
+                if self.mutation_active() {
+                    return Err(io::Error::other("Wait for model quarantine to finish"));
+                }
                 if let Some(group) = self.app.selected().cloned() {
                     if self.app.server.owns_server()
                         && self.app.server.snapshot.as_ref().is_some_and(|s| s.router)
@@ -515,6 +573,17 @@ impl Runtime {
         Ok(())
     }
     fn download_key(&mut self, key: KeyCode) -> io::Result<()> {
+        if matches!(key, KeyCode::Char('t' | 'T')) {
+            self.ensure_quarantine_idle()?;
+            let d = self
+                .app
+                .downloads
+                .as_ref()
+                .ok_or_else(|| io::Error::other("Queue unavailable"))?;
+            d.quarantine_targets()?;
+            self.app.quarantine_confirmation = Some(key == KeyCode::Char('T'));
+            return Ok(());
+        }
         let Some(d) = self.app.downloads.as_mut() else {
             return Ok(());
         };
@@ -530,6 +599,9 @@ impl Runtime {
         Ok(())
     }
     fn server_key(&mut self, key: KeyCode) -> io::Result<Effect> {
+        if self.mutation_active() {
+            return Err(io::Error::other("Wait for model quarantine to finish"));
+        }
         let c = &self.app.config;
         let s = &mut self.app.server;
         match key {
