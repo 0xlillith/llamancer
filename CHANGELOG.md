@@ -45,3 +45,5 @@
 - Added experimental managed NVIDIA CUDA archives and separately verified runtime companions.
 
 - Added guided setup and bounded comparable benchmark history.
+
+- Optional auto/nerd/plain icon modes, responsive contextual sidebars, polished theme-aware visual chrome and expandable model inspector.

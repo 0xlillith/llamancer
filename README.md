@@ -118,7 +118,10 @@ See [Backend Manager](docs/BACKENDS.md) for verification, platform requirements 
 | Profile | Up/Down, Enter edit, a advanced/basic, s save, Esc discard, Ctrl+U clear input |
 
 ## Themes
-The default Dracula theme is joined by **Andromeda** (pastel violet, pink and cyan on a deep navy background), Catppuccin Mocha, Tokyo Night, Nord, Rosé Pine, Gruvbox Dark and High Contrast. Press uppercase `T` in Settings to cycle built-ins instantly, or edit the Theme field by name. Custom TOML themes remain supported. The header shows the active agent/project and theme; selected rows retain a textual marker and colored emphasis. No Nerd Font is required.
+The default Dracula theme is joined by **Andromeda** (pastel violet, pink and cyan on a deep navy background), Catppuccin Mocha, Tokyo Night, Nord, Rosé Pine, Gruvbox Dark and High Contrast. Press uppercase `T` in Settings to cycle built-ins instantly, or edit the Theme field by name. Custom TOML themes remain supported. The header shows the active agent/project and theme; selected rows retain a textual marker and colored emphasis. Nerd Fonts are optional: in Settings, press uppercase `I` to cycle `auto → nerd → plain`, or edit the Icons field. Auto checks a compatible local graphical terminal and optional Fontconfig glyph coverage once at startup, then uses portable Unicode symbols if the result is uncertain (including SSH and terminal multiplexers). The terminal's configured font ultimately determines glyph rendering; force `nerd` when appropriate, or `plain` for a portable fallback. No font is downloaded, no terminal configuration is changed, and no new runtime dependency is required.
+
+## Responsive interface
+The TUI uses accent-colored navigation, model and project status chips, contextual shortcut bars, an expandable model inspector, and adaptive side panels for discovery, transfers, backend management, preferences and guided setup. Wide terminals show extra context; narrower terminals retain the main list. Press Enter in Library for the full inspector and PageUp/PageDown to scroll. Live activity indicators run only while work is active; the idle event loop remains non-redrawing.
 
 ## Terminal accessibility
 

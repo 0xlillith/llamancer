@@ -1,11 +1,13 @@
+mod chrome;
+pub mod icons;
 mod library;
 pub mod theme;
 mod views;
-use crate::app::{App, TABS};
+use crate::app::App;
 use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::{Color, Modifier, Style},
-    text::{Line, Span},
+    text::Line,
     widgets::{Block, BorderType, Paragraph, Wrap},
     Frame,
 };
@@ -23,15 +25,42 @@ pub(super) struct Palette {
     pub muted: Style,
     pub green: Color,
     pub orange: Color,
+    pub dim: Style,
+    pub border: Style,
+    pub surface: Style,
+    pub label: Style,
+    pub brand: Style,
+    nerd: bool,
 }
 impl Palette {
-    fn new(theme: &Theme) -> Self {
+    fn new(theme: &Theme, nerd: bool) -> Self {
         let c = |v: &str| color(v).unwrap_or(Color::Reset);
         let base = Style::default()
             .bg(c(&theme.background))
             .fg(c(&theme.foreground));
+        let mix = |a: Color, b: Color, t: u16| match (a, b) {
+            (Color::Rgb(r, g, bl), Color::Rgb(r2, g2, b2)) => {
+                let blend =
+                    |x: u8, y: u8| ((u16::from(x) * (100 - t) + u16::from(y) * t) / 100) as u8;
+                Color::Rgb(blend(r, r2), blend(g, g2), blend(bl, b2))
+            }
+            _ => b,
+        };
+        let bg = c(&theme.background);
+        let fg = c(&theme.foreground);
+        let accent = c(&theme.purple);
+        let surface = base.bg(mix(bg, fg, 8));
         Self {
             base,
+            dim: base.fg(mix(bg, fg, 70)),
+            border: base.fg(mix(bg, fg, 40)),
+            surface,
+            label: surface.fg(accent),
+            brand: Style::default()
+                .bg(accent)
+                .fg(bg)
+                .add_modifier(Modifier::BOLD),
+            nerd,
             selected: base.bg(c(&theme.selection)).fg(c(&theme.pink)),
             heading: base.fg(c(&theme.cyan)).add_modifier(Modifier::BOLD),
             muted: base.fg(c(&theme.purple)),
@@ -39,10 +68,14 @@ impl Palette {
             orange: Color::Rgb(255, 184, 108),
         }
     }
+    pub fn icon(&self, icon: icons::Icon) -> &'static str {
+        icon.glyph(self.nerd)
+    }
     pub fn panel<'a>(&self, title: impl Into<Line<'a>>) -> Block<'a> {
         Block::bordered()
             .border_type(BorderType::Rounded)
-            .border_style(self.muted)
+            .border_style(self.border)
+            .title_style(self.heading)
             .title(title)
     }
 }
@@ -51,7 +84,13 @@ fn regions(area: Rect) -> [Rect; 4] {
         Constraint::Length(2),
         Constraint::Length(3),
         Constraint::Min(1),
-        Constraint::Length(1),
+        Constraint::Length(if area.height >= 24 {
+            3
+        } else if area.height >= 12 {
+            2
+        } else {
+            1
+        }),
     ])
     .areas(area)
 }
@@ -71,8 +110,33 @@ pub(super) fn viewport(cursor: usize, height: u16, reserved: u16) -> (usize, usi
     let capacity = usize::from(height.saturating_sub(reserved)).max(1);
     (cursor.saturating_sub(capacity.saturating_sub(1)), capacity)
 }
+fn content_regions(body: Rect, app: &App) -> (Rect, Option<Rect>) {
+    let ordinary = app.tab != 0
+        && !app.help
+        && app.edit.is_none()
+        && app.profile_editor.is_none()
+        && app.fit_report.is_none()
+        && app.quarantine_confirmation.is_none()
+        && !app.server.show_logs;
+    if body.width >= 120
+        && body.height >= 15
+        && app.backend_confirmation.is_none()
+        && (ordinary
+            || app.setup_open
+            || app.projects.is_some()
+            || app.download_destination.is_some()
+            || app.benchmark_open
+            || app.backend_open)
+    {
+        let [main, side] =
+            Layout::horizontal([Constraint::Min(82), Constraint::Length(34)]).areas(body);
+        (main, Some(side))
+    } else {
+        (body, None)
+    }
+}
 pub fn row_at(area: Rect, app: &App, column: u16, row: u16) -> Option<usize> {
-    let body = regions(area)[2];
+    let (body, _) = content_regions(regions(area)[2], app);
     if app.setup_open {
         let row = row.checked_sub(body.y.checked_add(2)?)?;
         let (offset, capacity) = viewport(app.setup_cursor, body.height, 4);
@@ -135,7 +199,7 @@ pub fn row_at(area: Rect, app: &App, column: u16, row: u16) -> Option<usize> {
     let (rect, header, reserved, cursor, len) = match app.tab {
         0 if app.show_invalid => (body, 2, 4, app.invalid_cursor, app.invalid.len()),
         0 => {
-            if app.details && body.width < 100 {
+            if app.details {
                 return None;
             }
             let list = library::list_area(body);
@@ -174,71 +238,31 @@ pub fn row_at(area: Rect, app: &App, column: u16, row: u16) -> Option<usize> {
     let index = offset.checked_add(usize::from(inner_row))?;
     (usize::from(inner_row) < capacity && index < len).then_some(index)
 }
+pub fn clamp_inspector_scroll(area: Rect, app: &mut App, theme: &Theme) {
+    if app.tab != 0 || !app.details || app.inspector_scroll == 0 {
+        return;
+    }
+    let body = regions(area)[2];
+    let [_, table] = Layout::vertical([Constraint::Length(4), Constraint::Min(1)]).areas(body);
+    let palette = Palette::new(theme, app.nerd_icons());
+    app.inspector_scroll = app
+        .inspector_scroll
+        .min(library::scroll_limit(table, app, &palette));
+}
 pub fn draw(frame: &mut Frame, app: &App) {
     draw_themed(frame, app, &Theme::default());
 }
 
 pub fn draw_themed(frame: &mut Frame, app: &App, theme: &Theme) {
     let [header, _, body, footer] = regions(frame.area());
-    let palette = Palette::new(theme);
+    let palette = Palette::new(theme, app.nerd_icons());
     let base = palette.base;
     frame.render_widget(Block::default().style(base), frame.area());
-    let header_line = Line::from(vec![
-        Span::styled(" ◈ LLAMANCER ", palette.muted.add_modifier(Modifier::BOLD)),
-        Span::styled(" / Summon your models. ", base),
-        Span::styled(concat!("v", env!("CARGO_PKG_VERSION")), palette.heading),
-    ]);
-    let project = app
-        .config
-        .project_dir
-        .as_ref()
-        .and_then(|p| p.file_name())
-        .map(|n| safe(&n.to_string_lossy()))
-        .unwrap_or_else(|| "no project".into());
-    let context = Line::from(vec![
-        Span::styled("  MODEL ", palette.muted),
-        Span::styled(app.candidates.len().to_string(), base),
-        Span::styled("   AGENT ", palette.muted),
-        Span::styled(safe(&app.config.default_agent), base),
-        Span::styled("   PROJECT ", palette.muted),
-        Span::styled(project, base),
-        Span::styled("   THEME ", palette.muted),
-        Span::styled(safe(&app.config.theme), base),
-    ]);
-    frame.render_widget(Paragraph::new(vec![header_line, context]), header);
+    chrome::header(frame, header, app, &palette);
     for (index, rect) in tab_regions(frame.area()).into_iter().enumerate() {
-        let style = if index == app.tab {
-            base.fg(color(&theme.pink).unwrap_or(Color::Reset))
-                .bg(color(&theme.selection).unwrap_or(Color::Reset))
-        } else {
-            base
-        };
-        let label = if rect.width < 12 {
-            let short = ["Lib", "Find", "DL", "Srv", "Cfg"][index];
-            format!(
-                "{}{}{}",
-                if index == app.tab { ">" } else { "" },
-                index + 1,
-                short
-            )
-        } else if index == app.tab {
-            format!("> {} {}", index + 1, TABS[index])
-        } else {
-            format!("  {} {}", index + 1, TABS[index])
-        };
-        frame.render_widget(
-            Paragraph::new(label).style(style).block(
-                Block::bordered()
-                    .border_type(BorderType::Rounded)
-                    .border_style(if index == app.tab {
-                        palette.selected.add_modifier(Modifier::BOLD)
-                    } else {
-                        palette.muted
-                    }),
-            ),
-            rect,
-        );
+        chrome::tab(frame, rect, index, app, &palette);
     }
+    let (body, aside) = content_regions(body, app);
     if let Some(action) = app.backend_confirmation.filter(|_| app.backend_open) {
         use crate::backends::{Kind, RELEASES};
         let kind = Kind::ALL[app.backend_cursor].name();
@@ -277,21 +301,36 @@ pub fn draw_themed(frame: &mut Frame, app: &App, theme: &Theme) {
         library::draw(frame, body, app, &palette);
     } else {
         let (title, content) = views::content(app, body);
-        // Keep selection readable with color and an explicit textual marker.
         let lines: Vec<Line> = content
             .lines()
             .map(|line| {
-                let style = if line.starts_with("> ") {
-                    palette.selected.add_modifier(Modifier::BOLD)
-                } else {
-                    base
-                };
-                Line::styled(line.to_owned(), style)
+                let mut styled = chrome::row(line, &palette, app.tab == 3 && app.server.show_logs);
+                if line.starts_with("> ") {
+                    let padding =
+                        usize::from(body.width.saturating_sub(2)).saturating_sub(styled.width());
+                    styled.spans.push(ratatui::text::Span::styled(
+                        " ".repeat(padding),
+                        palette.selected,
+                    ));
+                }
+                styled
             })
             .collect();
+        let icon = match title {
+            "Model memory advisory" => icons::Icon::Memory,
+            "Comparable benchmark history" => icons::Icon::Chart,
+            "Project workspace" => icons::Icon::Project,
+            "Guided setup" => icons::Icon::Check,
+            "Backend Manager" => icons::Icon::Server,
+            "Discover" => icons::Icon::Discover,
+            "Downloads" | "Download destination" => icons::Icon::Downloads,
+            "Server" => icons::Icon::Server,
+            "Settings" | "Edit settings" | "Inference profile" => icons::Icon::Settings,
+            _ => icons::Icon::Brand,
+        };
         let paragraph = Paragraph::new(lines)
             .style(base)
-            .block(palette.panel(format!(" {title} ")));
+            .block(palette.panel(format!(" {} {title} ", palette.icon(icon))));
         // Keep list rows on one terminal line, so cursor and pointer geometry agree.
         let paragraph = if app.help
             || app.profile_editor.is_some()
@@ -305,61 +344,108 @@ pub fn draw_themed(frame: &mut Frame, app: &App, theme: &Theme) {
         };
         frame.render_widget(paragraph, body);
     }
+    if let Some(side) = aside {
+        chrome::aside(frame, side, app, &palette);
+    }
     let footer_text = if app.setup_open {
         "↑↓ choose step  Enter open  Esc skip  G reopen"
     } else if app.benchmark_open {
-        "Esc / h return to Backend Manager"
+        "Esc back  h back"
     } else if app.fit_report.is_some() {
-        "Esc / Enter close  |  p profile to adjust settings"
+        "Esc close  Enter close  p profile (after closing)"
     } else if app.download_destination.is_some() {
         "↑↓ choose storage  Enter queue  Esc cancel"
     } else if app.projects.is_some() {
         "↑↓ choose project  Enter select  Esc cancel"
     } else if app.backend_open && app.backend_confirmation.is_some() {
-        "y confirm / n cancel / Esc back"
-    } else if app.backend_open && app.notice.is_empty() {
+        "y confirm  n cancel  Esc back"
+    } else if app.edit.is_some() {
+        "Enter save  Esc cancel  Ctrl+U clear"
+    } else if app.profile_editor.is_some() {
+        "↑↓ select  Enter edit  a mode  s save  Esc back"
+    } else if app.help {
+        "? close help  Esc close"
+    } else if app.searching || app.discovery.editing {
+        "Enter search  Esc cancel  Ctrl+U clear"
+    } else if app.details && app.tab == 0 {
+        "PgUp/PgDn scroll  Enter close  Esc close  p profile  m fit  l load"
+    } else if app.backend_open {
         "↑↓ select  i install  Enter use  v version  c check  p probe  b benchmark  h compare  d remove  x cancel  Esc back"
-    } else if app.notice.is_empty() {
+    } else {
         match app.tab {
             0 => "r scan  / search  f favorite  s sort  p profile  m fit  l load  i invalid  h hide  t quarantine  ? help",
             1 => "/ search  Enter open  d queue  D destination  n next page  Backspace back  ? help",
             2 => "r resume  R run queue  x pause  t quarantine  T restore  z remove entry  ? help",
             3 => "r refresh  D detach  s router  R restart  i probe  x stop  l/u load/unload  a agent  A current  w web  b btop  g logs  B backends  P project",
-            _ => "↑↓ select  Enter edit  T theme  B backends  P project  G setup  ? help  q quit",
+            _ => "↑↓ select  Enter edit  T theme  I icons  B backends  P project  G setup  ? help  q quit",
         }
-    } else {
-        &app.notice
     };
     let footer_text = if footer.width < 60
-        && app.notice.is_empty()
         && app.backend_confirmation.is_none()
         && app.projects.is_none()
         && app.download_destination.is_none()
         && app.fit_report.is_none()
         && !app.setup_open
         && !app.benchmark_open
+        && app.edit.is_none()
+        && app.profile_editor.is_none()
+        && !app.help
+        && !app.searching
+        && !app.discovery.editing
+        && !app.details
     {
         match (app.backend_open, app.tab) {
-            (true, _) => "↑↓ i install Enter use v ver c check p probe d rm",
-            (false, 0) => "r scan / find p profile m fit ? help",
-            (false, 1) => "/ find Enter open d queue ? help",
-            (false, 2) => "r run x pause t move T restore ? help",
-            (false, 3) => "s start x stop a agent B backends ? help",
-            _ => "↑↓ Enter edit T theme P project ? help",
+            (true, _) => "↑↓ select  i install  Enter use  v version  ? help",
+            (false, 0) => "r scan  / find  p profile  m fit  ? help",
+            (false, 1) => "/ find  Enter open  d queue  ? help",
+            (false, 2) => "r run  x pause  T restore  ? help",
+            (false, 3) => "s start  x stop  a agent  B backends  ? help",
+            _ => "↑↓ select  Enter edit  T theme  I icons  ? help",
         }
     } else {
         footer_text
     };
-    frame.render_widget(
-        Paragraph::new(safe(footer_text)).style(palette.heading),
-        footer,
-    );
+    chrome::footer(frame, footer, footer_text, app, &palette);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::TABS;
     use ratatui::{backend::TestBackend, Terminal};
+    #[test]
+    fn icon_modes_and_wide_sidebar_are_adaptive() {
+        let theme = Theme::default();
+        let mut app = App {
+            tab: 4,
+            nerd_available: true,
+            ..App::default()
+        };
+        let area = Rect::new(0, 0, 140, 36);
+        let (main, side) = content_regions(regions(area)[2], &app);
+        assert!(side.is_some());
+        assert_eq!(row_at(area, &app, 5, main.y + 1), Some(0));
+        assert_eq!(row_at(area, &app, side.unwrap().x + 2, main.y + 1), None);
+        for (mode, expected) in [
+            (icons::Mode::Auto, true),
+            (icons::Mode::Nerd, true),
+            (icons::Mode::Plain, false),
+        ] {
+            app.config.icon_mode = mode;
+            for (w, h) in [(20, 5), (60, 14), (140, 36)] {
+                let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
+                term.draw(|f| draw_themed(f, &app, &theme)).unwrap();
+                let buffer = term.backend().buffer();
+                let seen = (0..h).any(|y| {
+                    (0..w).any(|x| buffer[(x, y)].symbol() == icons::Icon::Brand.glyph(true))
+                });
+                assert_eq!(seen, expected);
+            }
+        }
+        let (main, side) = content_regions(regions(Rect::new(0, 0, 80, 24))[2], &app);
+        assert_eq!(main.width, 80);
+        assert!(side.is_none());
+    }
     #[test]
     fn mouse_hit_testing() {
         let area = Rect::new(0, 0, 80, 24);

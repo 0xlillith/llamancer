@@ -56,6 +56,7 @@ impl Runtime {
         Ok(Self {
             app: App {
                 config,
+                nerd_available: crate::ui::icons::detect(),
                 downloads: Some(downloads),
                 ..App::default()
             },
@@ -76,6 +77,7 @@ impl Runtime {
             || self.app.downloads.as_ref().is_some_and(|d| d.busy())
     }
     pub fn tick(&mut self) {
+        self.app.activity_frame = self.app.activity_frame.wrapping_add(1);
         if let Some((job, progress, size)) = self.backend.as_mut() {
             self.app.backend_progress =
                 (*size > 0).then(|| (progress.load(Ordering::Acquire), *size));
@@ -241,7 +243,10 @@ impl Runtime {
             return;
         }
         match self.app.tab {
-            0 if index < self.app.visible().len() => self.app.model_cursor = index,
+            0 if index < self.app.visible().len() => {
+                self.app.model_cursor = index;
+                self.app.inspector_scroll = 0;
+            }
             1 if index < self.app.discovery.len() => self.app.discovery.cursor = index,
             2 => {
                 if let Some(d) = self.app.downloads.as_mut() {
@@ -369,6 +374,21 @@ impl Runtime {
                 }
                 _ => {}
             }
+            return Ok(Effect::None);
+        }
+        if key.code == KeyCode::Char('I') && self.app.tab == 4 && !self.modal() {
+            let mut next = self.app.config.clone();
+            next.icon_mode = next.icon_mode.next();
+            self.persist(next)?;
+            self.app.notice = format!(
+                "Icons: {} ({})",
+                self.app.config.icon_mode.label(),
+                if self.app.nerd_icons() {
+                    "Nerd Font"
+                } else {
+                    "portable"
+                }
+            );
             return Ok(Effect::None);
         }
         if key.code == KeyCode::Char('T') && self.app.tab == 4 && !self.modal() {
@@ -859,6 +879,15 @@ impl Runtime {
             }
             return Ok(());
         }
+        if self.app.details && matches!(key, KeyCode::PageUp | KeyCode::PageDown) {
+            self.app.inspector_scroll = if key == KeyCode::PageUp {
+                self.app.inspector_scroll.saturating_sub(6)
+            } else {
+                self.app.inspector_scroll.saturating_add(6)
+            };
+            return Ok(());
+        }
+        self.app.inspector_scroll = 0;
         match key {
             KeyCode::Char('i') => self.app.show_invalid = true,
             KeyCode::Char('m') => {

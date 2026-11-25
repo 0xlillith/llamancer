@@ -182,6 +182,14 @@ fn main() -> io::Result<()> {
         execute!(io::stdout(), EnableMouseCapture)?;
         while !runtime.app.quit && !stop.load(Ordering::Acquire) {
             runtime.tick();
+            if runtime.app.details && runtime.app.inspector_scroll > 0 {
+                let size = terminal.size()?;
+                ui::clamp_inspector_scroll(
+                    ratatui::layout::Rect::new(0, 0, size.width, size.height),
+                    &mut runtime.app,
+                    &runtime.theme,
+                );
+            }
             terminal.draw(|frame| ui::draw_themed(frame, &runtime.app, &runtime.theme))?;
             // When idle, wait in bounded polls without repainting repeatedly.
             // SIGTERM can now wake an otherwise idle TUI.

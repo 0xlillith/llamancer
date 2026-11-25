@@ -19,6 +19,8 @@ pub enum Action {
 #[derive(Default)]
 pub struct App {
     pub tab: usize,
+    pub nerd_available: bool,
+    pub activity_frame: usize,
     pub backend_open: bool,
     pub benchmark_open: bool,
     pub setup_open: bool,
@@ -50,6 +52,7 @@ pub struct App {
     pub hide_confirmation: Option<std::path::PathBuf>,
     pub model_cursor: usize,
     pub details: bool,
+    pub inspector_scroll: u16,
     pub fit_report: Option<String>,
     pub query: String,
     pub searching: bool,
@@ -61,6 +64,9 @@ pub struct App {
     pub downloads: Option<crate::downloads::Controller>,
 }
 impl App {
+    pub fn nerd_icons(&self) -> bool {
+        self.config.icon_mode.enabled(self.nerd_available)
+    }
     pub fn visible(&self) -> Vec<usize> {
         library::visible(
             &self.candidates,

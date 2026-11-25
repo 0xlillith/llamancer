@@ -1,75 +1,16 @@
 //! Responsive library table and inspector.
 use crate::{
     app::App,
-    models::{
-        group::Group,
-        library::{identity, quantization},
-    },
+    models::library::{identity, quantization},
     ui::{safe, Palette},
 };
 use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::{Modifier, Style},
-    widgets::{Block, BorderType, Cell, Paragraph, Row, Table, Wrap},
+    text::{Line, Span},
+    widgets::{Cell, Paragraph, Row, Table, Wrap},
     Frame,
 };
-pub fn details(group: &Group, config: &crate::config::Config) -> String {
-    let m = &group.files[0].metadata;
-    let text = |v: &Option<String>| v.as_deref().map(safe).unwrap_or_else(|| "Unknown".into());
-    let num = |v: Option<u64>| v.map(|n| n.to_string()).unwrap_or_else(|| "Unknown".into());
-    let mut lines = vec![
-        safe(&group.name),
-        String::new(),
-        format!("Name          {}", text(&m.name)),
-        format!("Architecture  {}", text(&m.architecture)),
-        format!("Quantization  {}", quantization(m.file_type)),
-        format!("Context       {}", num(m.context)),
-        format!("Layers        {}", num(m.layers)),
-        format!("Tokenizer     {}", text(&m.tokenizer)),
-        format!("Vocabulary    {}", num(m.vocabulary)),
-        format!("Elements      {}", group.elements()),
-        format!(
-            "Disk size     {:.2} GiB",
-            group.bytes() as f64 / 1073741824.0
-        ),
-        format!("Shards        {}/{}", group.files.len(), group.expected),
-        if group.complete {
-            "Expected shards present".into()
-        } else {
-            "Incomplete or inconsistent shards".into()
-        },
-        String::new(),
-        if group
-            .files
-            .iter()
-            .all(|f| f.metadata.payload_bounds_checked)
-        {
-            "Known tensor extents verified; loadability untested.".into()
-        } else {
-            "Metadata read; some tensor extents unverified.".into()
-        },
-        "p profile | m fit | l load | Enter / Esc close".into(),
-        String::new(),
-    ];
-    let profile = config
-        .profiles
-        .get(&identity(group))
-        .cloned()
-        .unwrap_or_default();
-    if let Some(estimate) = crate::models::estimate::estimate(group, &profile) {
-        lines.push(format!(
-            "Weights ~{:.2} GiB + KV ~{:.2} GiB at {} tokens",
-            estimate.weights as f64 / 1073741824.0,
-            estimate.kv as f64 / 1073741824.0,
-            estimate.context
-        ));
-        lines.push("Approximate (auto cache assumes F16); excludes compute buffers, projector and overhead.".into());
-    } else {
-        lines.push("KV estimate unavailable for this architecture/metadata.".into());
-    }
-    lines.extend(group.files.iter().map(|f| safe(&f.path.to_string_lossy())));
-    lines.join("\n")
-}
 pub(super) fn list_area(area: Rect) -> Rect {
     let [_, table] = Layout::vertical([Constraint::Length(4), Constraint::Min(1)]).areas(area);
     if area.width >= 100 {
@@ -126,43 +67,95 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App, p: &Palette) {
     let indices = app.visible();
     let [summary, table_area] =
         Layout::vertical([Constraint::Length(4), Constraint::Min(1)]).areas(area);
-    let summary_text = format!(
-        "{} / {} models  ·  {} roots/imports  ·  {} invalid  ·  {}\nSearch: {}{}   Sort: {}   {}",
-        indices.len(),
-        app.candidates.len(),
-        app.config.model_roots.len() + app.config.model_imports.len(),
-        app.invalid_total,
-        if app.scanning { "Scanning" } else { "Idle" },
-        safe(&app.query),
-        if app.searching { "▏" } else { "" },
-        app.sort.label(),
-        if app.only_favorites {
-            "Favorites"
-        } else {
-            "All"
-        }
-    );
-    frame.render_widget(
-        Paragraph::new(summary_text).style(p.base).block(
-            Block::bordered()
-                .border_type(BorderType::Rounded)
-                .border_style(p.muted)
-                .title(" Library "),
+    use super::icons::Icon;
+    let total_bytes = app
+        .candidates
+        .iter()
+        .fold(0u64, |sum, g| sum.saturating_add(g.bytes()));
+    let stats = Line::from(vec![
+        Span::styled(format!(" {} MODELS ", p.icon(Icon::Library)), p.label),
+        Span::styled(
+            format!(" {}/{} ", indices.len(), app.candidates.len()),
+            p.surface.add_modifier(Modifier::BOLD),
         ),
+        Span::raw("  "),
+        Span::styled(" STORAGE ", p.label),
+        Span::styled(
+            format!(" {:.2} GiB ", total_bytes as f64 / 1073741824.0),
+            p.surface,
+        ),
+        Span::raw("  "),
+        Span::styled(" ROOTS/IMPORTS ", p.label),
+        Span::styled(
+            format!(
+                " {} ",
+                app.config.model_roots.len() + app.config.model_imports.len()
+            ),
+            p.surface,
+        ),
+        Span::raw("  "),
+        Span::styled(format!(" {} INVALID ", p.icon(Icon::Warning)), p.label),
+        Span::styled(
+            format!(" {} ", app.invalid_total),
+            if app.invalid_total > 0 {
+                p.surface.fg(p.orange)
+            } else {
+                p.surface
+            },
+        ),
+    ]);
+    let search = Line::from(vec![
+        Span::styled(format!(" {} Search ", p.icon(Icon::Discover)), p.muted),
+        Span::styled(
+            if app.query.is_empty() && !app.searching {
+                "all models".into()
+            } else {
+                format!(
+                    "{}{}",
+                    safe(&app.query),
+                    if app.searching { "▏" } else { "" }
+                )
+            },
+            p.base,
+        ),
+        Span::styled("   Sort ", p.muted),
+        Span::styled(app.sort.label(), p.base),
+        Span::styled("   Filter ", p.muted),
+        Span::styled(
+            if app.only_favorites {
+                "Favorites"
+            } else {
+                "All"
+            },
+            p.base,
+        ),
+    ]);
+    let stats = if area.width < 75 {
+        Line::from(vec![
+            Span::styled(
+                format!(" {}/{} models ", indices.len(), app.candidates.len()),
+                p.heading,
+            ),
+            Span::styled(
+                format!(
+                    " • {:.1} GiB • {} invalid",
+                    total_bytes as f64 / 1073741824.0,
+                    app.invalid_total
+                ),
+                p.base,
+            ),
+        ])
+    } else {
+        stats
+    };
+    frame.render_widget(
+        Paragraph::new(vec![stats, search])
+            .style(p.base)
+            .block(p.panel(" Library ")),
         summary,
     );
-    if app.details && area.width < 100 {
-        let text = app
-            .selected()
-            .map(|g| details(g, &app.config))
-            .unwrap_or_else(|| "No model selected".into());
-        frame.render_widget(
-            Paragraph::new(text)
-                .wrap(Wrap { trim: false })
-                .style(p.base)
-                .block(p.panel(" Model inspector ")),
-            table_area,
-        );
+    if app.details {
+        draw_inspector(frame, table_area, app, p, true);
         return;
     }
     let (list, inspector) = if area.width >= 100 {
@@ -220,7 +213,15 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App, p: &Palette) {
                         Cell::from(name),
                         Cell::from(quantization(m.file_type)),
                         Cell::from(format!("{:.1}", group.bytes() as f64 / 1073741824.0)),
-                        Cell::from(state).style(Style::default().fg(if group.complete {
+                        Cell::from(format!(
+                            "{} {state}",
+                            p.icon(if group.complete {
+                                Icon::Check
+                            } else {
+                                Icon::Warning
+                            })
+                        ))
+                        .style(Style::default().fg(if group.complete {
                             p.green
                         } else {
                             p.orange
@@ -236,7 +237,7 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App, p: &Palette) {
                 Constraint::Min(12),
                 Constraint::Length(11),
                 Constraint::Length(6),
-                Constraint::Length(10),
+                Constraint::Length(12),
             ]
         } else {
             vec![Constraint::Min(6), Constraint::Length(9)]
@@ -253,16 +254,166 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App, p: &Palette) {
         frame.render_widget(table, list);
     }
     if let Some(inspector) = inspector {
-        let text = app
-            .selected()
-            .map(|g| details(g, &app.config))
-            .unwrap_or_else(|| "Select a model to inspect metadata.".into());
-        frame.render_widget(
-            Paragraph::new(text)
-                .style(p.base)
-                .wrap(Wrap { trim: false })
-                .block(p.panel(" Inspector ")),
-            inspector,
-        );
+        draw_inspector(frame, inspector, app, p, false);
     }
+}
+
+fn inspector_widget(app: &App, p: &Palette, expanded: bool) -> Paragraph<'static> {
+    use super::icons::Icon;
+    let mut lines = Vec::new();
+    if let Some(group) = app.selected() {
+        let m = &group.files[0].metadata;
+        let value = |v: &Option<String>| v.as_deref().map(safe).unwrap_or_else(|| "unknown".into());
+        let n = |v: Option<u64>| v.map(|x| x.to_string()).unwrap_or_else(|| "unknown".into());
+        let field = |label: &str, value: String| {
+            Line::from(vec![
+                Span::styled(format!("{label:<14}"), p.muted),
+                Span::styled(value, p.base),
+            ])
+        };
+        let section = |label: &str| Line::styled(format!("─ {label}"), p.heading);
+        lines.push(Line::styled(
+            safe(&group.name),
+            p.heading.add_modifier(Modifier::BOLD),
+        ));
+        lines.push(Line::from(vec![
+            Span::styled(
+                format!(
+                    " {} {} ",
+                    p.icon(if group.complete {
+                        Icon::Check
+                    } else {
+                        Icon::Warning
+                    }),
+                    if group.complete {
+                        "COMPLETE"
+                    } else {
+                        "INCOMPLETE"
+                    }
+                ),
+                if group.complete {
+                    p.surface.fg(p.green)
+                } else {
+                    p.surface.fg(p.orange)
+                },
+            ),
+            Span::raw(" "),
+            Span::styled(format!(" {} ", quantization(m.file_type)), p.label),
+            Span::raw(" "),
+            Span::styled(
+                format!(" {:.2} GiB ", group.bytes() as f64 / 1073741824.0),
+                p.surface,
+            ),
+        ]));
+        lines.push(Line::raw(""));
+        lines.push(section("MODEL"));
+        lines.push(field("Name", value(&m.name)));
+        lines.push(field("Architecture", value(&m.architecture)));
+        lines.push(field("Context", n(m.context)));
+        lines.push(field("Layers", n(m.layers)));
+        lines.push(field("Tokenizer", value(&m.tokenizer)));
+        lines.push(field("Vocabulary", n(m.vocabulary)));
+        lines.push(field("Elements", group.elements().to_string()));
+        lines.push(field(
+            "Shards",
+            format!("{}/{}", group.files.len(), group.expected),
+        ));
+        lines.push(Line::raw(""));
+        lines.push(section("INFERENCE"));
+        let profile = app
+            .config
+            .profiles
+            .get(&identity(group))
+            .cloned()
+            .unwrap_or_default();
+        lines.push(field(
+            "GPU layers",
+            profile
+                .engine
+                .gpu_layers
+                .map(|x| x.to_string())
+                .unwrap_or_else(|| "auto".into()),
+        ));
+        if let Some(e) = crate::models::estimate::estimate(group, &profile) {
+            lines.push(field(
+                "Weights",
+                format!("~{:.2} GiB", e.weights as f64 / 1073741824.0),
+            ));
+            lines.push(field(
+                "KV cache",
+                format!(
+                    "~{:.2} GiB / {} tokens",
+                    e.kv as f64 / 1073741824.0,
+                    e.context
+                ),
+            ));
+        } else {
+            lines.push(Line::raw("KV estimate unavailable."));
+        }
+        lines.push(Line::styled(
+            "Estimate only; excludes runtime overhead.",
+            p.dim,
+        ));
+        lines.push(Line::raw(""));
+        lines.push(section("VALIDATION"));
+        lines.push(Line::styled(
+            if group
+                .files
+                .iter()
+                .all(|f| f.metadata.payload_bounds_checked)
+            {
+                "Known tensor extents verified; loadability untested."
+            } else {
+                "Metadata read; some tensor extents unverified."
+            },
+            p.dim,
+        ));
+        if expanded {
+            lines.push(Line::raw(""));
+            lines.push(section("FILES"));
+            lines.extend(
+                group
+                    .files
+                    .iter()
+                    .map(|f| Line::raw(safe(&f.path.to_string_lossy()))),
+            );
+        } else {
+            lines.push(Line::raw(""));
+            lines.push(Line::styled("Enter expand · p profile · m fit", p.heading));
+        }
+    } else {
+        lines.push(Line::raw("Select a model to inspect metadata."));
+    }
+    Paragraph::new(lines)
+        .style(p.base)
+        .wrap(Wrap { trim: false })
+        .block(p.panel(format!(
+            " {} {} ",
+            p.icon(Icon::Library),
+            if expanded {
+                "Model inspector"
+            } else {
+                "Inspector"
+            }
+        )))
+}
+pub(super) fn scroll_limit(area: Rect, app: &App, p: &Palette) -> u16 {
+    inspector_widget(app, p, true)
+        .line_count(area.width)
+        .saturating_sub(usize::from(area.height))
+        .min(u16::MAX as usize) as u16
+}
+fn draw_inspector(frame: &mut Frame, area: Rect, app: &App, p: &Palette, expanded: bool) {
+    let widget = inspector_widget(app, p, expanded);
+    let scroll = if expanded {
+        app.inspector_scroll.min(
+            widget
+                .line_count(area.width)
+                .saturating_sub(usize::from(area.height))
+                .min(u16::MAX as usize) as u16,
+        )
+    } else {
+        0
+    };
+    frame.render_widget(widget.scroll((scroll, 0)), area);
 }
