@@ -49,4 +49,22 @@ To reproduce, verify the pinned files and use the existing desktop_live harness 
 
 ## Current backend status
 
-Managed official b12721 CPU and Vulkan and b12726 Vulkan passed real single/router inference. Official ROCm installation passes archive verification, but device discovery is blocked by missing compatible HIP/hipBLAS/rocBLAS libraries; historical Unsloth ROCm results above are not a current official-runtime pass. Do not certify ROCm until that test succeeds. The graphical custom-agent launch was verified before the user removed the old agents; interactive OMP/Pi and real tool use remain separate acceptance tests.
+Managed official b12721 CPU and Vulkan and b12726 Vulkan passed real single/router inference. Official ROCm runtime validation now passed after installing the compatible system libraries; see the follow-up below. The graphical custom-agent launch was verified before the user removed the old agents; interactive OMP/Pi and real tool use remain separate acceptance tests.
+
+## Managed ROCm and gated Hub acceptance
+
+CachyOS, official b12726, ROCm 10.1 distribution runtime, RX 9070 XT, 2048 context, eight GPU layers. All six authenticated single/router cases passed with clean shutdown.
+
+| Fixture | Single tok/s | Router tok/s | Actual offload | CPU/GPU KV MiB | GPU model / compute MiB |
+|---|---:|---:|---|---|---|
+| SmolLM2 135M | 281.79 | 280.57 | 8/31 | 34.5 / 10.5 | 42.02 / 17.75 |
+| Qwen2.5 0.5B | 112.61 | 117.93 | 8/25 | 17 / 7 | 205.05 / 41 |
+| Qwen3 0.6B | 115.61 | 110.43 | 8/29 | 168 / 56 | 186 / 32 |
+
+Short-prompt, partial-offload measurements are not peak performance predictions. Actual GPU allocation was confirmed independently using verbose server logs. Both GPUs enumerate with b12721/b12726; the full inference matrix used b12726.
+
+The actual authorized gated download test passed twice for google/gemma-3-1b-it-qat-q4_0-gguf, gemma-3-1b-it-q4_0.gguf (1,003,541,152 bytes), via a private cached fine-grained token. Metadata, authoritative checksum and index validation passed; temporary fixture storage was removed by the test. No credentials or model weights are committed or bundled.
+
+## Desktop agent acceptance follow-up
+
+OMP 19.2.0 and isolated Pi 1.6.0 (Node 22.23.2) passed authenticated streaming, controlled read-tool round trips and real ROCm generation. A 0.6B Qwen3 and a 4B Qwen3 Instruct fixture independently selected and executed the read tool, but the final-answer exact-marker assertion failed in OMP; Pi also failed that assertion on the 4B fixture. A loopback trace confirmed OMP sent the actual tool response in the second chat-completions request. A separate direct llama-server request with tool history and temperature zero reproduced the marker correctly. Thus execution and transport are demonstrated; full end-to-end answer fidelity and ordinary graphical interactive sessions remain open. Do not interpret this as a passed complete agent acceptance test.
