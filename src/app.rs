@@ -32,6 +32,8 @@ pub struct App {
     pub quit: bool,
     pub config: Config,
     pub setting: usize,
+    pub projects: Option<Vec<std::path::PathBuf>>,
+    pub project_cursor: usize,
     pub edit: Option<(Field, String)>,
     pub notice: String,
     pub scanning: bool,

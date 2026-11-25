@@ -2,7 +2,26 @@ use crate::app::{App, TABS};
 use ratatui::layout::Rect;
 
 pub fn content(app: &App, body: Rect) -> (&'static str, String) {
-    if app.backend_open {
+    if let Some(projects) = &app.projects {
+        let (offset, capacity) = super::viewport(app.project_cursor, body.height, 4);
+        let mut lines = vec!["Choose a direct project folder (up to 512).".into()];
+        if projects.is_empty() {
+            lines.push("No visible project folders found.".into());
+        }
+        for (i, p) in projects.iter().enumerate().skip(offset).take(capacity) {
+            lines.push(format!(
+                "{} {}{}",
+                if i == app.project_cursor { ">" } else { " " },
+                super::safe(&p.file_name().unwrap_or_default().to_string_lossy()),
+                if Some(p) == app.config.project_dir.as_ref() {
+                    " [active]"
+                } else {
+                    ""
+                }
+            ));
+        }
+        ("Project workspace", lines.join("\n"))
+    } else if app.backend_open {
         use crate::backends::{self, Kind};
         let mut lines = vec![
             format!(
@@ -133,7 +152,7 @@ pub fn content(app: &App, body: Rect) -> (&'static str, String) {
             ),
         )
     } else if app.help {
-        ("Help", "Tab / arrows / 1–5: navigate; click tab or row, scroll to select\nLibrary: r scan, x cancel, Up/Down select, Enter details\n/: search, s: sort, f: favorite, v: favorites only, p: inference profile, l: start single model, i: invalid files, h: hide model, t: quarantine\nDiscover: / search, Enter open, d queue, n next page\nDownloads: r resume, R run queue, x pause, t quarantine, T restore, z remove entry\nServer: r refresh, D detach, s router  R restart, i probe, x stop, l/u load/unload, a agent, A current terminal, g logs\nSettings: Up/Down select, Enter edit; B backend manager (also Server)\n?: toggle help\nEsc: close help or quit\nq / Ctrl+C: quit".into())
+        ("Help", "Tab / arrows / 1–5: navigate; click tab or row, scroll to select\nLibrary: r scan, x cancel, Up/Down select, Enter details\n/: search, s: sort, f: favorite, v: favorites only, p: inference profile, l: start single model, i: invalid files, h: hide model, t: quarantine\nDiscover: / search, Enter open, d queue, n next page\nDownloads: r resume, R run queue, x pause, t quarantine, T restore, z remove entry\nServer: r refresh, D detach, s router  R restart, i probe, x stop, l/u load/unload, a agent, A current terminal, g logs\nSettings: Up/Down select, Enter edit; B backend manager, P project picker (also Server)\n?: toggle help\nEsc: close help or quit\nq / Ctrl+C: quit".into())
     } else {
         (
             TABS[app.tab],
@@ -278,6 +297,14 @@ pub fn content(app: &App, body: Rect) -> (&'static str, String) {
                                 safe(model.state())
                             ));
                         }
+                    }
+                    if let Some(project) = &app.config.project_dir {
+                        lines.push(format!(
+                            "Project: {} | P switch",
+                            safe(&project.to_string_lossy())
+                        ));
+                    } else if app.config.workspace_root.is_some() {
+                        lines.push("Project: select with P before launching an agent".into());
                     }
                     if !server.version.is_empty() {
                         lines.push(format!("Build: {}", safe(&server.version)));

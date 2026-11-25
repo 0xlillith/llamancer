@@ -259,7 +259,10 @@ fn main() -> io::Result<()> {
                     }
                 }
                 Event::Mouse(mouse)
-                    if !runtime.modal() || runtime.app.backend_open || runtime.app.show_invalid =>
+                    if !runtime.modal()
+                        || runtime.app.backend_open
+                        || runtime.app.show_invalid
+                        || runtime.app.projects.is_some() =>
                 {
                     let size = terminal.size()?;
                     let area = ratatui::layout::Rect::new(0, 0, size.width, size.height);

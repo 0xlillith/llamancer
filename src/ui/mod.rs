@@ -73,6 +73,17 @@ pub(super) fn viewport(cursor: usize, height: u16, reserved: u16) -> (usize, usi
 }
 pub fn row_at(area: Rect, app: &App, column: u16, row: u16) -> Option<usize> {
     let body = regions(area)[2];
+    if let Some(projects) = &app.projects {
+        let row = row.checked_sub(body.y.checked_add(2)?)?;
+        let (offset, capacity) = viewport(app.project_cursor, body.height, 4);
+        let index = offset.checked_add(usize::from(row))?;
+        return (usize::from(row) < capacity
+            && index < projects.len()
+            && column > body.x
+            && column < body.right().saturating_sub(1)
+            && body.y + 2 + row < body.bottom().saturating_sub(1))
+        .then_some(index);
+    }
     if app.backend_open {
         if app.backend_busy || app.backend_confirmation.is_some() {
             return None;
@@ -208,6 +219,7 @@ pub fn draw_themed(frame: &mut Frame, app: &App, theme: &Theme) {
         );
     } else if app.tab == 0
         && !app.backend_open
+        && app.projects.is_none()
         && !app.help
         && app.edit.is_none()
         && app.profile_editor.is_none()
@@ -230,7 +242,9 @@ pub fn draw_themed(frame: &mut Frame, app: &App, theme: &Theme) {
         };
         frame.render_widget(paragraph, body);
     }
-    let footer_text = if app.backend_open && app.backend_confirmation.is_some() {
+    let footer_text = if app.projects.is_some() {
+        "↑↓ choose project  Enter select  Esc cancel"
+    } else if app.backend_open && app.backend_confirmation.is_some() {
         "y confirm / n cancel / Esc back"
     } else if app.backend_open && app.notice.is_empty() {
         "↑↓ select  i install  Enter use  v version  c check  p probe  b benchmark  d remove  x cancel  Esc back"
@@ -239,25 +253,28 @@ pub fn draw_themed(frame: &mut Frame, app: &App, theme: &Theme) {
             0 => "r scan  / search  f favorite  s sort  p profile  l load  i invalid  h hide  t quarantine  ? help",
             1 => "/ search  Enter open  d queue  n next page  Backspace back  ? help",
             2 => "r resume  R run queue  x pause  t quarantine  T restore  z remove entry  ? help",
-            3 => "r refresh  D detach  s router  R restart  i probe  x stop  l/u load/unload  a agent  A current  w web  b btop  g logs  B backends",
-            _ => "↑↓ select  Enter edit  B backends  ? help  q quit",
+            3 => "r refresh  D detach  s router  R restart  i probe  x stop  l/u load/unload  a agent  A current  w web  b btop  g logs  B backends  P project",
+            _ => "↑↓ select  Enter edit  B backends  P project  ? help  q quit",
         }
     } else {
         &app.notice
     };
-    let footer_text =
-        if footer.width < 60 && app.notice.is_empty() && app.backend_confirmation.is_none() {
-            match (app.backend_open, app.tab) {
-                (true, _) => "↑↓ i install Enter use v ver c check p probe d rm",
-                (false, 0) => "r scan / find p profile Enter inspect ? help",
-                (false, 1) => "/ find Enter open d queue ? help",
-                (false, 2) => "r run x pause t move T restore ? help",
-                (false, 3) => "s start x stop a agent B backends ? help",
-                _ => "↑↓ Enter edit B backends ? help q quit",
-            }
-        } else {
-            footer_text
-        };
+    let footer_text = if footer.width < 60
+        && app.notice.is_empty()
+        && app.backend_confirmation.is_none()
+        && app.projects.is_none()
+    {
+        match (app.backend_open, app.tab) {
+            (true, _) => "↑↓ i install Enter use v ver c check p probe d rm",
+            (false, 0) => "r scan / find p profile Enter inspect ? help",
+            (false, 1) => "/ find Enter open d queue ? help",
+            (false, 2) => "r run x pause t move T restore ? help",
+            (false, 3) => "s start x stop a agent B backends ? help",
+            _ => "↑↓ Enter edit B backends ? help q quit",
+        }
+    } else {
+        footer_text
+    };
     frame.render_widget(
         Paragraph::new(safe(footer_text)).style(palette.heading),
         footer,
@@ -386,6 +403,23 @@ mod tests {
                 .join("\n");
             assert!(screen.contains("Remove vulkan b12721?"), "{screen}");
             assert!(screen.contains("y confirm / n cancel"), "{screen}");
+        }
+    }
+    #[test]
+    fn workspace_mouse_rows_match_viewport() {
+        let area = Rect::new(0, 0, 80, 24);
+        let app = App {
+            projects: Some((0..30).map(|i| format!("/tmp/{i}").into()).collect()),
+            project_cursor: 17,
+            ..App::default()
+        };
+        let body = regions(area)[2];
+        let (offset, _) = viewport(17, body.height, 4);
+        assert_eq!(row_at(area, &app, 5, body.y + 2), Some(offset));
+        assert_eq!(row_at(area, &app, 0, body.y + 2), None);
+        for (w, h) in [(1, 1), (40, 12), (80, 24)] {
+            let mut terminal = Terminal::new(TestBackend::new(w, h)).unwrap();
+            terminal.draw(|f| draw(f, &app)).unwrap();
         }
     }
     #[test]
