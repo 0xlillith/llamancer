@@ -99,7 +99,11 @@ pub fn apply(
         }
         Field::AgentTerminal => draft.agent_terminal = value.parse()?,
         Field::Endpoint => {
-            draft.endpoint = crate::llama::client::endpoint(value)?.to_string();
+            let endpoint = crate::llama::client::endpoint(value)?;
+            if endpoint != crate::llama::client::endpoint(&config.endpoint)? {
+                draft.api_key_file = None;
+            }
+            draft.endpoint = endpoint.to_string();
         }
         Field::ApiKeyFile => {
             draft.api_key_file = if value == "none" {
@@ -178,6 +182,33 @@ pub fn apply(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn changing_endpoint_clears_previous_credential() {
+        use std::io::Write;
+        let root = tempfile::tempdir().unwrap();
+        let mut key = tempfile::NamedTempFile::new_in(root.path()).unwrap();
+        writeln!(key, "fixture-only").unwrap();
+        let config = Config {
+            api_key_file: Some(key.path().into()),
+            ..Config::default()
+        };
+        let (same, _) = apply(
+            &config,
+            Field::Endpoint,
+            "http://127.0.0.1:8080/v1",
+            root.path(),
+        )
+        .unwrap();
+        assert_eq!(same.api_key_file, config.api_key_file);
+        let (changed, _) = apply(
+            &config,
+            Field::Endpoint,
+            "https://example.invalid",
+            root.path(),
+        )
+        .unwrap();
+        assert!(changed.api_key_file.is_none());
+    }
     #[test]
     fn validates_and_preserves_original() {
         let root = tempfile::tempdir().unwrap();

@@ -1,6 +1,14 @@
 //! Non-invasive coding-agent launch plans; no shell interpolation or config rewrites.
 use crate::llama::client::endpoint;
 use std::{ffi::OsString, io, path::PathBuf, process::Command};
+// Clear endpoint-specific inherited credentials before injecting the selected
+// session's values. Other agent credentials remain the user's responsibility.
+const SESSION_KEYS: [&str; 4] = [
+    "LLAMA_CPP_API_KEY",
+    "LLAMA_API_KEY",
+    "LLAMANCER_PI_KEY",
+    "LLAMANCER_API_KEY",
+];
 #[derive(Clone)]
 pub struct LaunchPlan {
     pub executable: String,
@@ -38,6 +46,9 @@ impl LaunchPlan {
     }
     pub fn command(&self) -> Command {
         let mut cmd = Command::new(&self.executable);
+        for key in SESSION_KEYS {
+            cmd.env_remove(key);
+        }
         cmd.args(&self.args)
             .envs(self.env.iter().map(|(k, v)| (k, v)))
             .current_dir(&self.cwd);
@@ -75,9 +86,16 @@ impl std::str::FromStr for TerminalMode {
     }
 }
 impl LaunchPlan {
-    pub fn terminal_command(&self, mode: TerminalMode) -> Command {
+    pub fn terminal_command(&self, mode: TerminalMode) -> io::Result<Command> {
         if mode == TerminalMode::Current {
-            return self.command();
+            return Ok(self.command());
+        }
+        if self.env.iter().any(|(name, value)| {
+            name.ends_with("_API_KEY") || (name == "LLAMANCER_PI_KEY" && value != "local")
+        }) {
+            return Err(io::Error::other(
+                "Authenticated agent launch requires current terminal (A)",
+            ));
         }
         let mut cmd = Command::new("kitten");
         cmd.args([
@@ -91,11 +109,14 @@ impl LaunchPlan {
             "--cwd",
         ])
         .arg(&self.cwd);
+        for key in SESSION_KEYS {
+            cmd.arg("--env").arg(key);
+        }
         for (key, value) in &self.env {
             cmd.arg("--env").arg(format!("{key}={value}"));
         }
         cmd.arg("--").arg(&self.executable).args(&self.args);
-        cmd
+        Ok(cmd)
     }
 }
 fn require_executable(name: &str, cwd: &std::path::Path) -> io::Result<()> {
@@ -217,6 +238,21 @@ impl AgentAdapter for Custom<'_> {
 mod tests {
     use super::*;
     #[test]
+    fn command_boundary_rejects_secrets_in_kitty_and_clears_inherited_keys() {
+        let mut plan = Native("omp")
+            .prepare("http://localhost:8080", "fixture", std::env::temp_dir())
+            .unwrap();
+        let cmd = plan.command();
+        for key in SESSION_KEYS {
+            assert!(cmd.get_envs().any(|(k, v)| k == key && v.is_none()));
+        }
+        plan.env
+            .push(("LLAMA_CPP_API_KEY".into(), "fixture-only".into()));
+        assert!(plan.terminal_command(TerminalMode::KittyTab).is_err());
+        assert!(plan.terminal_command(TerminalMode::KittyWindow).is_err());
+        assert!(plan.terminal_command(TerminalMode::Current).is_ok());
+    }
+    #[test]
     fn kitty_preserves_argv_without_shell() {
         let plan = Custom {
             executable: "my-agent",
@@ -228,7 +264,7 @@ mod tests {
             PathBuf::from("/tmp/project with spaces"),
         )
         .unwrap();
-        let cmd = plan.terminal_command(TerminalMode::KittyTab);
+        let cmd = plan.terminal_command(TerminalMode::KittyTab).unwrap();
         let args: Vec<_> = cmd
             .get_args()
             .map(|a| a.to_string_lossy().into_owned())
