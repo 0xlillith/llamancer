@@ -280,9 +280,15 @@ fn main() -> io::Result<()> {
                     let area = ratatui::layout::Rect::new(0, 0, size.width, size.height);
                     match mouse.kind {
                         MouseEventKind::Down(MouseButton::Left) => {
-                            if let Some(index) =
+                            if ui::search_at(area, &runtime.app, mouse.column, mouse.row)
+                                && !runtime.modal()
+                            {
+                                runtime.focus_search();
+                                last_click = None;
+                            } else if let Some(index) =
                                 ui::row_at(area, &runtime.app, mouse.column, mouse.row)
                             {
+                                runtime.blur_search();
                                 let tab = runtime.app.tab;
                                 let eligible =
                                     !runtime.modal() && tab == 1 && !runtime.app.discovery.busy();
@@ -313,12 +319,19 @@ fn main() -> io::Result<()> {
                             } else if !runtime.modal() {
                                 last_click = None;
                                 if let Some(index) = ui::tab_at(area, mouse.column, mouse.row) {
+                                    runtime.blur_search();
                                     runtime.app.dispatch(Action::Select(index));
+                                    if index == 1 {
+                                        runtime.focus_search();
+                                    }
                                 }
                             }
                         }
                         MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
                             last_click = None;
+                            if !runtime.modal() {
+                                runtime.blur_search();
+                            }
                             let code = if mouse.kind == MouseEventKind::ScrollUp {
                                 event::KeyCode::Up
                             } else {

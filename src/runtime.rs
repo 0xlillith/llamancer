@@ -208,6 +208,7 @@ impl Runtime {
             .record(crate::diagnostics::Event::Shutdown, None);
         result.and(downloads)
     }
+    /// Text focus is not a modal dialog: mouse tabs and result rows remain usable.
     pub fn modal(&self) -> bool {
         self.app.backend_open
             || self.app.setup_open
@@ -217,11 +218,26 @@ impl Runtime {
             || self.app.show_invalid
             || self.app.profile_editor.is_some()
             || self.app.edit.is_some()
-            || self.app.searching
-            || self.app.discovery.editing
             || self.app.help
             || self.app.hide_confirmation.is_some()
             || self.app.quarantine_confirmation.is_some()
+    }
+    pub fn focus_search(&mut self) {
+        if self.modal() {
+            return;
+        }
+        match self.app.tab {
+            0 => {
+                self.app.searching = true;
+                self.app.details = false;
+            }
+            1 if !self.app.discovery.busy() => self.app.discovery.editing = true,
+            _ => {}
+        }
+    }
+    pub fn blur_search(&mut self) {
+        self.app.searching = false;
+        self.app.discovery.editing = false;
     }
     pub fn select_row(&mut self, index: usize) {
         if self.app.setup_open {
@@ -514,13 +530,22 @@ impl Runtime {
                 } else {
                     self.app.discovery.search()?;
                 }
-            } else if key.code == KeyCode::Esc {
+            } else if matches!(
+                key.code,
+                KeyCode::Esc | KeyCode::Tab | KeyCode::BackTab | KeyCode::Down | KeyCode::Up
+            ) {
+                if self.app.discovery.repo.is_some() {
+                    self.app.discovery.rebuild_variants();
+                }
                 self.app.discovery.editing = false;
             } else {
                 if self.app.discovery.repo.is_some() {
                     edit_text(&mut self.app.discovery.variant_filter, key, 512);
+                    self.app.discovery.rebuild_variants();
                 } else {
-                    edit_text(&mut self.app.discovery.query, key, 512);
+                    if !(key.code == KeyCode::Char('/') && self.app.discovery.query.is_empty()) {
+                        edit_text(&mut self.app.discovery.query, key, 512);
+                    }
                 }
             }
             return Ok(Effect::None);
@@ -530,7 +555,15 @@ impl Runtime {
             return Ok(Effect::None);
         }
         if self.app.searching {
-            if matches!(key.code, KeyCode::Enter | KeyCode::Esc) {
+            if matches!(
+                key.code,
+                KeyCode::Enter
+                    | KeyCode::Esc
+                    | KeyCode::Tab
+                    | KeyCode::BackTab
+                    | KeyCode::Down
+                    | KeyCode::Up
+            ) {
                 self.app.searching = false;
             } else {
                 edit_text(&mut self.app.query, key, 512);
@@ -540,6 +573,15 @@ impl Runtime {
         }
         if self.app.edit.is_some() {
             self.settings_edit(key)?;
+            return Ok(Effect::None);
+        }
+        if !self.modal()
+            && (key.code == KeyCode::F(3)
+                || (key.code == KeyCode::Char('f')
+                    && key.modifiers.contains(KeyModifiers::CONTROL)))
+            && self.app.tab <= 1
+        {
+            self.focus_search();
             return Ok(Effect::None);
         }
         let global = match key.code {
@@ -1076,7 +1118,7 @@ impl Runtime {
                 }
             }
             KeyCode::Char('n') => self.app.discovery.more()?,
-            KeyCode::Char('/') => self.app.discovery.editing = true,
+            KeyCode::Char('/') if !self.app.discovery.busy() => self.app.discovery.editing = true,
             KeyCode::Up => self.app.discovery.move_cursor(false),
             KeyCode::Down => self.app.discovery.move_cursor(true),
             KeyCode::Backspace => self.app.discovery.back(),

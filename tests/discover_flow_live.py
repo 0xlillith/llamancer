@@ -23,8 +23,9 @@ def main():
    def send(b):os.write(master,b);time.sleep(.12)
    def render():return "\n".join("".join(row) for row in screen.rows)
    wait("LLAMANCER");send(b"G");wait("Guided setup");send(b"\r");wait("Edit settings");wait("default");send(b"\r");wait("Scan complete");assert (root/"data/llamancer/models").is_dir()
-   send(b"2");send(b"/");send(b"@ggml-org/tiny-llamas");send(b"\r");wait("variants",35)
-   send(b"/");send(b"stories260K.gguf");send(b"\r");wait("stories260K.gguf")
+   send(b"2");send(b"@ggml-org/tiny-llamas");send(b"\r");wait("variants · Enter to download",35)
+   # Click the visible filter field (body row 1; one-based terminal coordinates).
+   send(b"\x1b[<0;5;7M\x1b[<0;5;7m");send(b"stories260K.gguf");send(b"\r");wait("stories260K.gguf")
    # Wait for the actual selected row, not the filter text.
    deadline=time.monotonic()+5
    while time.monotonic()<deadline:

@@ -233,24 +233,36 @@ pub fn content(app: &App, body: Rect) -> (&'static str, String) {
                     };
                     let mut lines = vec![
                         format!(
-                            "Hugging Face | {}: {}{}",
+                            "{} [{}{}]",
+                            if d.repo.is_some() {
+                                "Filter variants"
+                            } else {
+                                "Search models"
+                            },
+                            super::search_value(
+                                if d.repo.is_some() {
+                                    &d.variant_filter
+                                } else {
+                                    &d.query
+                                },
+                                d.editing,
+                                usize::from(body.width.saturating_sub(23))
+                            ),
+                            if d.editing { "▏" } else { "" }
+                        ),
+                        format!(
+                            "{} | {}",
                             if d.repo.is_some() {
                                 d.variant_sort.label()
                             } else {
                                 d.ranking.label()
                             },
-                            safe(if d.repo.is_some() {
-                                &d.variant_filter
-                            } else {
-                                &d.query
-                            }),
-                            if d.editing { "▏" } else { "" }
+                            safe(&d.status)
                         ),
-                        safe(&d.status),
                         if d.repo.is_some() {
-                            "/ filter variants | s sort | d download | D choose root | Backspace back".into()
+                            "Click filter | s sort | Enter/d download | Backspace back".into()
                         } else {
-                            "/ search | s ranking | author:owner | license:mit | quant:Q4_K_M | n next".into()
+                            "Click search | s ranking | author:owner | license:mit | quant:Q4_K_M | n next".into()
                         },
                     ];
                     let (offset, capacity) = super::viewport(d.cursor, body.height, 6);

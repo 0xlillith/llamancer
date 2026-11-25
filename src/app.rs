@@ -88,6 +88,7 @@ impl App {
     }
 
     pub fn dispatch(&mut self, action: Action) {
+        let previous = self.tab;
         match action {
             Action::Next if !self.help => self.tab = (self.tab + 1) % TABS.len(),
             Action::Previous if !self.help => self.tab = (self.tab + TABS.len() - 1) % TABS.len(),
@@ -98,6 +99,10 @@ impl App {
             Action::Escape if self.details && self.tab == 0 => self.details = false,
             Action::Escape | Action::Quit => self.quit = true,
             _ => {}
+        }
+        if previous != self.tab {
+            self.searching = false;
+            self.discovery.editing = self.tab == 1 && !self.discovery.busy();
         }
     }
 }
@@ -111,6 +116,16 @@ mod tests {
         assert_eq!(app.tab, 4);
         app.dispatch(Action::Next);
         assert_eq!(app.tab, 0);
+    }
+    #[test]
+    fn entering_discover_focuses_search_and_leaving_clears_focus() {
+        let mut app = App::default();
+        app.dispatch(Action::Select(1));
+        assert!(app.discovery.editing);
+        app.dispatch(Action::Select(2));
+        assert!(!app.discovery.editing);
+        app.dispatch(Action::Previous);
+        assert!(app.discovery.editing);
     }
     #[test]
     fn help_is_modal() {
