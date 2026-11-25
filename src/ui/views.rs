@@ -79,7 +79,8 @@ pub fn content(app: &App, body: Rect) -> (&'static str, String) {
                             if d.editing { "▏" } else { "" }
                         ),
                         safe(&d.status),
-                        "/ search | Enter repository | Backspace back | d queue file/bundle | n next page".into(),
+                        "/ search | @owner/repo | license:mit | quant:Q4_K_M | d queue | n next"
+                            .into(),
                     ];
                     let capacity = usize::from(body.height.saturating_sub(6)).max(1);
                     let offset = d.cursor.saturating_sub(capacity.saturating_sub(1));
