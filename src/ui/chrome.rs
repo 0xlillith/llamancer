@@ -420,6 +420,11 @@ pub fn aside(frame: &mut Frame, area: Rect, app: &App, p: &Palette) {
                             )));
                         }
                         lines.push(Line::raw(""));
+                        if let Some(err) = &item.error {
+                            lines.push(Line::styled("Last error", p.base.fg(p.orange)));
+                            lines.push(Line::raw(safe(err)));
+                            lines.push(Line::raw(""));
+                        }
                         lines.push(Line::styled("Destination", p.muted));
                         lines.push(Line::raw(safe(&item.root.to_string_lossy())));
                     }

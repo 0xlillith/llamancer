@@ -106,6 +106,8 @@ pub struct Item {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     root_identity: Option<RootIdentity>,
     pub state: State,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
     #[serde(default)]
     pub receipt: Option<Receipt>,
 }
@@ -346,10 +348,11 @@ fn verify_file(file: &mut fs::File, item: &Item, cancel: &AtomicBool) -> io::Res
             }
             hash.update(&buffer[..n]);
         }
-        if format!("{:x}", hash.finalize()) != expected.to_ascii_lowercase() {
+        let actual = format!("{:x}", hash.finalize());
+        if actual != expected.to_ascii_lowercase() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                "SHA-256 mismatch; resume to restart the partial file",
+                format!("SHA-256 mismatch; partial retained. Expected {expected}, got {actual}. Move the .part file aside before a fresh retry."),
             ));
         }
     }
@@ -449,17 +452,16 @@ fn transfer_from(
         return Err(io::Error::other("Unsafe partial file link count"));
     }
     let mut offset = file.metadata()?.len();
-    // A full corrupted partial cannot be repaired by appending. A subsequent explicit resume
-    // starts over, while the original failed attempt retains the staging file.
+    // Never truncate a fully downloaded, checksum-invalid file on resume.
+    // Re-verify it and retain evidence. A correct complete partial can publish
+    // immediately, without reading its entire contents twice.
     if offset == item.file.size && item.file.sha256.is_some() {
-        match verify_file(&mut file, item, cancel) {
-            Ok(()) => {}
-            Err(e) if e.kind() == io::ErrorKind::InvalidData => {
-                file.set_len(0)?;
-                offset = 0;
-            }
-            Err(e) => return Err(e),
-        }
+        progress.store(offset, Ordering::Relaxed);
+        file.sync_all()?;
+        verify_file(&mut file, item, cancel)?;
+        cancelled(cancel)?;
+        destination.publish(&file)?;
+        return Ok(Some(Receipt::from_metadata(&file.metadata()?)));
     }
     // Without an authoritative checksum, restart instead of trusting an old prefix.
     if item.file.sha256.is_none() && offset > 0 {
@@ -707,6 +709,7 @@ impl Controller {
                     root: root.clone(),
                     root_identity: Some(root_identity.clone()),
                     state: State::Queued,
+                    error: None,
                     receipt: None,
                 });
             }
@@ -741,6 +744,7 @@ impl Controller {
         let progress = Arc::new(AtomicU64::new(u64::MAX));
         let p = Arc::clone(&progress);
         let job = Job::start(move |cancel| transfer_with_retry(&item, &cancel, &p))?;
+        self.queue.items[index].error = None;
         self.rate = Rate::default();
         self.active = Some((index, job, progress));
         self.status = "Downloading…".into();
@@ -921,7 +925,10 @@ impl Controller {
                     State::Complete
                 }
                 Err(e) if e.kind() == io::ErrorKind::Interrupted => State::Paused,
-                Err(_) => State::Failed,
+                Err(e) => {
+                    self.queue.items[index].error = Some(e.to_string());
+                    State::Failed
+                }
             };
             self.queue.save(&self.path)?;
         }
@@ -964,6 +971,7 @@ impl Controller {
                     Err(e) => (State::Failed, e.to_string()),
                 };
                 let completed = state == State::Complete;
+                self.queue.items[index].error = (state == State::Failed).then(|| status.clone());
                 self.queue.items[index].state = state;
                 self.status = status;
                 if self.queue.save(&self.path).is_err() {
@@ -997,6 +1005,7 @@ mod tests {
             root: root.into(),
             root_identity: None,
             state: State::Queued,
+            error: None,
             receipt: None,
         }
     }
@@ -1080,6 +1089,39 @@ mod tests {
             assert_eq!(fs::read(&dest).unwrap(), b"abcdef");
             assert!(!partial.exists());
         }
+    }
+    #[test]
+    fn full_invalid_partial_is_preserved_on_repeated_resume() {
+        let root = tempfile::tempdir().unwrap();
+        let item = fixture(root.path());
+        let dest = destination(&item).unwrap();
+        let partial = dest.with_file_name("model.gguf.part");
+        fs::write(&partial, b"xxxxxx").unwrap();
+        for _ in 0..2 {
+            let err = transfer_from(
+                &item,
+                &AtomicBool::new(false),
+                &AtomicU64::new(0),
+                url::Url::parse("http://127.0.0.1:1/").unwrap(),
+                |_| Ok(100),
+            )
+            .unwrap_err();
+            assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+            assert!(err.to_string().contains("partial retained"));
+            assert_eq!(fs::read(&partial).unwrap(), b"xxxxxx");
+            assert!(!dest.exists());
+        }
+        fs::write(&partial, b"abcdef").unwrap();
+        assert!(transfer_from(
+            &item,
+            &AtomicBool::new(false),
+            &AtomicU64::new(0),
+            url::Url::parse("http://127.0.0.1:1/").unwrap(),
+            |_| Ok(100)
+        )
+        .unwrap()
+        .is_some());
+        assert_eq!(fs::read(dest).unwrap(), b"abcdef");
     }
     #[test]
     fn rejects_wrong_range_and_changed_object() {
@@ -1375,6 +1417,7 @@ mod tests {
             root: temp.path().into(),
             root_identity: None,
             state: State::Queued,
+            error: None,
             receipt: None,
         };
         let dest = destination(&item).unwrap();
