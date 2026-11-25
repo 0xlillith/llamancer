@@ -167,8 +167,9 @@ impl Runtime {
             job.cancel();
             job.finish();
         }
-        let downloads = self.app.downloads.as_mut().map_or(Ok(()), |d| d.shutdown());
         let result = self.app.server.shutdown();
+        self.app.discovery.shutdown();
+        let downloads = self.app.downloads.as_mut().map_or(Ok(()), |d| d.shutdown());
         let _ = self
             .diagnostics
             .record(crate::diagnostics::Event::Shutdown, None);
@@ -406,6 +407,15 @@ impl Runtime {
                     self.app.backend_status =
                         "Version selected for browsing; install and explicitly use it to switch."
                             .into();
+                    return Ok(());
+                }
+                KeyCode::Char('c') => {
+                    let job = Job::start(|cancel| {
+                        Ok(BackendResult::Message(backends::discovery::check(&cancel)?))
+                    })?;
+                    self.backend = Some((job, Arc::new(AtomicU64::new(0)), 0));
+                    self.app.backend_busy = true;
+                    self.app.backend_status = "Checking upstream releases…".into();
                     return Ok(());
                 }
                 KeyCode::Char('p') => 'p',

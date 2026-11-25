@@ -64,6 +64,47 @@ pub fn config_dir() -> io::Result<PathBuf> {
     Ok(home.join(".config/llamancer"))
 }
 
+/// Read bounded, ordinary local state files without blocking on substituted
+/// FIFOs or following a final-component symlink. User-created regular files
+/// may be world-readable, but must not be writable by other users.
+pub(crate) const MAX_STATE_BYTES: u64 = 16 * 1024 * 1024;
+pub(crate) fn read_state(path: &Path, limit: u64) -> io::Result<String> {
+    use std::{
+        io::Read,
+        os::unix::fs::{MetadataExt, OpenOptionsExt},
+    };
+    let file = fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK | libc::O_NOFOLLOW)
+        .open(path)?;
+    let meta = file.metadata()?;
+    if !meta.is_file()
+        || meta.nlink() != 1
+        || meta.uid() != unsafe { libc::geteuid() }
+        || meta.mode() & 0o022 != 0
+    {
+        return Err(io::Error::other(
+            "Unsafe local state file; use a regular user-owned file not writable by others",
+        ));
+    }
+    if meta.len() > limit {
+        return Err(io::Error::other("Local state exceeds size limit"));
+    }
+    let mut bytes = Vec::new();
+    file.take(limit + 1).read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > limit {
+        return Err(io::Error::other("Local state exceeds size limit"));
+    }
+    String::from_utf8(bytes)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "Local state is not UTF-8"))
+}
+pub(crate) fn check_state_size(contents: &str) -> io::Result<()> {
+    if contents.len() as u64 > MAX_STATE_BYTES {
+        return Err(io::Error::other("Local state exceeds size limit"));
+    }
+    Ok(())
+}
+
 impl Config {
     pub fn scan_roots(&self) -> Vec<PathBuf> {
         self.model_roots
@@ -87,7 +128,7 @@ impl Config {
     }
 
     pub fn load(path: &Path) -> io::Result<Self> {
-        let contents = match fs::read_to_string(path) {
+        let contents = match read_state(path, MAX_STATE_BYTES) {
             Ok(s) => s,
             Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Self::default()),
             Err(e) => return Err(e),
@@ -120,6 +161,7 @@ impl Config {
         let mut tmp = tempfile::NamedTempFile::new_in(parent)?;
         let contents = toml::to_string_pretty(self)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        check_state_size(&contents)?;
         tmp.write_all(contents.as_bytes())?;
         tmp.as_file().sync_all()?;
         tmp.persist(path).map_err(|e| e.error)?;
@@ -131,6 +173,30 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn state_rejects_symlinks_fifos_and_oversized_files() {
+        use std::{
+            ffi::CString,
+            os::unix::{
+                ffi::OsStrExt,
+                fs::{symlink, PermissionsExt},
+            },
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let regular = dir.path().join("regular");
+        fs::write(&regular, "fixture").unwrap();
+        assert_eq!(read_state(&regular, 32).unwrap(), "fixture");
+        assert!(read_state(&regular, 3).is_err());
+        let link = dir.path().join("link");
+        symlink(&regular, &link).unwrap();
+        assert!(read_state(&link, 32).is_err());
+        let fifo = dir.path().join("fifo");
+        let name = CString::new(fifo.as_os_str().as_bytes()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
+        assert!(read_state(&fifo, 32).is_err());
+        fs::set_permissions(&regular, fs::Permissions::from_mode(0o666)).unwrap();
+        assert!(read_state(&regular, 32).is_err());
+    }
     #[test]
     fn roundtrip() {
         let dir = tempfile::tempdir().unwrap();

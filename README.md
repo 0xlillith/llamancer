@@ -57,6 +57,7 @@ Llamancer can install official llama.cpp distributions itself. No Unsloth, packa
 |---|---|
 | Select CPU, Vulkan or ROCm | Up / Down |
 | Browse newer/older reviewed release (upgrade/rollback) | v / u |
+| Check recent upstream releases (read-only) | c |
 | Download and install the pinned official build | i, then y |
 | Probe the backend and list real devices | p |
 | Select the installed backend for inference | Enter |
@@ -66,19 +67,20 @@ Llamancer can install official llama.cpp distributions itself. No Unsloth, packa
 
 The reviewed catalog pins llama.cpp **b12721 and b12726**, with SHA-256 and archive sizes obtained from official GitHub release metadata. CPU and Vulkan are available on x86_64 and aarch64; ROCm is available on x86_64. Installations live under `$XDG_DATA_HOME/llamancer/backends` (default `~/.local/share/llamancer/backends`). Downloads are verified before extraction and published as private versioned directories. GPU selection refuses backends that expose no compatible device. Vulkan and ROCm still require compatible system GPU runtimes; no drivers are installed automatically.
 
-Select a complete single-file GGUF of at most 512 MiB in Library before benchmarking. The quick test uses 128 prompt tokens, 32 generation tokens, two threads, two repetitions and eight GPU layers (zero for CPU). Stop all inference first. Confirm the selected GPU device in Settings, particularly on multi-GPU systems. Do not start unmanaged programs from Llamancer-owned backend directories during removal. External executable paths remain supported. Versions install side-by-side; select an installed version explicitly to switch or roll back. The reviewed catalog is updated through Llamancer releases; arbitrary release discovery and source compilation are not yet implemented.
+Select a complete single-file GGUF of at most 512 MiB in Library before benchmarking. The quick test uses 128 prompt tokens, 32 generation tokens, two threads, two repetitions and eight GPU layers (zero for CPU). Stop all inference first. Confirm the selected GPU device in Settings, particularly on multi-GPU systems. Do not start unmanaged programs from Llamancer-owned backend directories during removal. External executable paths remain supported. Versions install side-by-side; select an installed version explicitly to switch or roll back. The reviewed catalog is updated through Llamancer releases; The read-only upstream check reports compatible newer builds with published SHA-256 metadata; unreviewed builds are not installable. Source compilation is a separate workflow.
 
 Headless installation and diagnostics:
 
 ```sh
 llamancer backend list
+llamancer backend check
 llamancer backend install vulkan
 llamancer backend probe vulkan
 llamancer backend install vulkan b12726
 llamancer backend probe vulkan b12726
 ```
 
-See [Backend Manager](docs/BACKENDS.md) for verification, platform requirements and current limits.
+See [Backend Manager](docs/BACKENDS.md) for verification, platform requirements and current limits. For optional host-native compilation, see [pinned source builds](docs/SOURCE-BUILDS.md).
 
 ## Controls
 
@@ -152,3 +154,5 @@ Meet [Hex](assets/hex-mascot.webp), our llama sorcerer and project mascot. The d
 ## License
 
 MIT. Llamancer is an independent project and is not affiliated with llama.cpp, Oh My Pi, Pi or Hugging Face.
+
+Local TOML settings and download queues are bounded to 16 MiB; custom themes to 64 KiB. Use regular user-owned state files that are not writable by other users. Final-component symlinks and special files are rejected to prevent startup hangs or unintended reads.

@@ -29,6 +29,7 @@ def main():
     parser.add_argument("--layers", type=int, default=0)
     parser.add_argument("--context", type=int, default=8192)
     parser.add_argument("--read-tool", action="store_true")
+    parser.add_argument("--hex-marker", action="store_true", help="Optional harder random identifier copying challenge")
     args = parser.parse_args()
     binary, server, model, executable = (
         p.resolve(strict=True) for p in (args.llamancer, args.server, args.model, args.executable)
@@ -46,7 +47,14 @@ def main():
         config.mkdir(parents=True)
         project = root / "project"
         project.mkdir()
-        marker = "llamancer-fixture-" + secrets.token_hex(6)
+        # Seven independent randomly selected words carry 28 bits of entropy.
+        # This tests an ordinary file-reading task without conflating the
+        # tool transport with the model's ability to copy fragmented hex tokens.
+        words = ("amber", "river", "cedar", "silver", "violet", "cloud", "maple",
+                 "ocean", "winter", "forest", "pearl", "stone", "garden", "moon",
+                 "sunrise", "harbor")
+        marker = ("llamancer-fixture-" + secrets.token_hex(6) if args.hex_marker
+                  else " ".join(secrets.choice(words) for _ in range(7)))
         (project / "fixture.txt").write_text(marker + "\n")
         key_file = root / "api-key"
         token = secrets.token_hex(24)
@@ -122,7 +130,7 @@ def main():
                     flags = ["--extension", str(extension), "--model", f"{provider}/{model_id}",
                              *(["--tools", "read"] if args.read_tool else ["--no-tools"]),
                              "--no-mcp", "--no-session", "--no-context-files", "--offline"]
-                prompt = ("Use the read tool to read fixture.txt, then reply with its exact contents."
+                prompt = ("Read fixture.txt using the read tool. In your final answer, copy the line of text from that file verbatim, preserving the words and spaces. Do not summarize."
                           if args.read_tool else "Reply briefly with a friendly greeting.")
                 result = subprocess.run([str(executable), *flags, "--mode", "json", "-p", prompt],
                                         cwd=project, env=env, stdin=subprocess.DEVNULL,

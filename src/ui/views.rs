@@ -43,7 +43,7 @@ pub fn content(app: &App, body: Rect) -> (&'static str, String) {
             ));
         }
         lines.push(format!(
-            "v/u: switch catalog version ({}/{})",
+            "v/u: switch catalog version ({}/{}) | c: check upstream",
             app.backend_version + 1,
             backends::RELEASES.len()
         ));

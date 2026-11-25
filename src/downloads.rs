@@ -64,7 +64,7 @@ pub struct Queue {
 }
 impl Queue {
     pub fn load(path: &Path) -> io::Result<Self> {
-        match fs::read_to_string(path) {
+        match crate::config::read_state(path, crate::config::MAX_STATE_BYTES) {
             Ok(s) => {
                 let mut queue: Self = toml::from_str(&s).map_err(io::Error::other)?;
                 for item in &mut queue.items {
@@ -85,7 +85,9 @@ impl Queue {
             .parent()
             .ok_or_else(|| io::Error::other("Missing queue parent"))?;
         let mut f = tempfile::NamedTempFile::new_in(parent)?;
-        f.write_all(toml::to_string(self).map_err(io::Error::other)?.as_bytes())?;
+        let contents = toml::to_string(self).map_err(io::Error::other)?;
+        crate::config::check_state_size(&contents)?;
+        f.write_all(contents.as_bytes())?;
         f.as_file().sync_all()?;
         f.persist(path).map_err(|e| e.error)?;
         fs::File::open(parent)?.sync_all()

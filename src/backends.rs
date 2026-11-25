@@ -12,6 +12,7 @@ use std::{
 use url::Url;
 
 mod catalog;
+pub mod discovery;
 pub use catalog::{catalog, catalog_version, Asset, Kind, RELEASE, RELEASES};
 const MAX_EXPANDED: u64 = 8 * 1024 * 1024 * 1024;
 const MAX_ENTRIES: usize = 8192;

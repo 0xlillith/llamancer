@@ -19,36 +19,118 @@ pub fn command_output(binary: &str, args: &[&str]) -> io::Result<String> {
 // Installer calls this only on a verified staged executable while holding the
 // exclusive storage lock.
 pub(crate) fn command_output_unlocked(binary: &str, args: &[&str]) -> io::Result<String> {
-    let out = tempfile::tempfile()?;
-    let err = out.try_clone()?;
-    let mut child = Command::new(binary)
+    use std::os::{
+        fd::{AsRawFd, FromRawFd},
+        unix::process::CommandExt,
+    };
+    const LIMIT: usize = 1024 * 1024;
+    // A single pipe preserves stdout/stderr ordering without ever writing
+    // arbitrary executable output to disk. Only the reader is nonblocking.
+    let mut fds = [-1; 2];
+    if unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let mut reader = unsafe { std::fs::File::from_raw_fd(fds[0]) };
+    let writer = unsafe { std::fs::File::from_raw_fd(fds[1]) };
+    if unsafe { libc::fcntl(reader.as_raw_fd(), libc::F_SETFL, libc::O_NONBLOCK) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let mut command = Command::new(binary);
+    command
+        .process_group(0)
         .args(args)
         .stdin(Stdio::null())
-        .stdout(Stdio::from(out.try_clone()?))
-        .stderr(Stdio::from(err))
-        .spawn()?;
+        .stdout(Stdio::from(writer.try_clone()?))
+        .stderr(Stdio::from(writer));
+    clear_server_env(&mut command);
+    let mut child = command.spawn()?;
+    drop(command);
+    // Observe without reaping the leader, retaining its PGID until cleanup.
     let deadline = Instant::now() + Duration::from_secs(8);
-    loop {
-        if let Some(status) = child.try_wait()? {
-            if !status.success() {
-                return Err(io::Error::other("Executable probe failed"));
+    let mut bytes = Vec::new();
+    let mut buffer = [0u8; 8192];
+    let outcome = (|| -> io::Result<()> {
+        loop {
+            if Instant::now() >= deadline {
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "Executable probe timed out",
+                ));
             }
-            use std::io::{Seek, SeekFrom};
-            let mut out = out;
-            out.seek(SeekFrom::Start(0))?;
-            let mut bytes = Vec::new();
-            out.take(1024 * 1024).read_to_end(&mut bytes)?;
-            return Ok(String::from_utf8_lossy(&bytes).into_owned());
+            match reader.read(&mut buffer) {
+                Ok(0) => {
+                    if !child_running(&child)? {
+                        return Ok(());
+                    }
+                }
+                Ok(n) => {
+                    if n > LIMIT - bytes.len() {
+                        return Err(io::Error::other("Executable probe exceeded output limit"));
+                    }
+                    bytes.extend_from_slice(&buffer[..n]);
+                    continue;
+                }
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                    if !child_running(&child)? {
+                        return Ok(());
+                    }
+                }
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                Err(e) => return Err(e),
+            }
+            thread::sleep(Duration::from_millis(10));
         }
-        if Instant::now() >= deadline {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(io::Error::new(
-                io::ErrorKind::TimedOut,
-                "Executable probe timed out",
-            ));
+    })();
+    // If the leader exited while a descendant retained the output pipe,
+    // terminate that descendant before releasing the group identifier.
+    let cleanup = signal_child_group(&child, libc::SIGKILL);
+    let status = child.wait();
+    outcome?;
+    cleanup?;
+    if !status?.success() {
+        return Err(io::Error::other("Executable probe failed"));
+    }
+    Ok(String::from_utf8_lossy(&bytes).into_owned())
+}
+fn clear_server_env(command: &mut Command) {
+    for (key, _) in std::env::vars_os() {
+        if key.to_string_lossy().starts_with("LLAMA_ARG_") {
+            command.env_remove(key);
         }
-        thread::sleep(Duration::from_millis(40));
+    }
+    command.env_remove("LLAMA_API_KEY");
+}
+fn child_running(child: &Child) -> io::Result<bool> {
+    loop {
+        let mut info = std::mem::MaybeUninit::<libc::siginfo_t>::zeroed();
+        let result = unsafe {
+            libc::waitid(
+                libc::P_PID,
+                child.id(),
+                info.as_mut_ptr(),
+                libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+            )
+        };
+        if result == 0 {
+            return Ok(unsafe { info.assume_init().si_pid() } == 0);
+        }
+        let error = io::Error::last_os_error();
+        if error.kind() != io::ErrorKind::Interrupted {
+            return Err(error);
+        }
+    }
+}
+fn signal_child_group(child: &Child, signal: libc::c_int) -> io::Result<()> {
+    let group = i32::try_from(child.id()).map_err(io::Error::other)?;
+    // Callers create a private process group and have not reaped the leader.
+    if unsafe { libc::kill(-group, signal) } == 0 {
+        return Ok(());
+    }
+    let error = io::Error::last_os_error();
+    if error.raw_os_error() == Some(libc::ESRCH) {
+        Ok(())
+    } else {
+        Err(error)
     }
 }
 pub fn endpoint_args(endpoint_value: &str) -> io::Result<Vec<OsString>> {
@@ -164,13 +246,8 @@ impl Owned {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        // Ignore inherited LLAMA_ARG settings; profiles are the authority for managed processes.
-        for (key, _) in std::env::vars_os() {
-            if key.to_string_lossy().starts_with("LLAMA_ARG_") {
-                cmd.env_remove(key);
-            }
-        }
-        cmd.env_remove("LLAMA_API_KEY");
+        // Profiles, not inherited LLAMA_ARG settings, govern managed processes.
+        clear_server_env(&mut cmd);
         let mut child = cmd.spawn()?;
         let logs = Arc::new(Mutex::new(VecDeque::new()));
         fn drain(stream: impl Read + Send + 'static, logs: Arc<Mutex<VecDeque<String>>>) {
@@ -222,44 +299,13 @@ impl Owned {
         if self.reaped {
             return Ok(false);
         }
-        // WNOWAIT observes exit without reaping the leader. Its PID/PGID stays
-        // reserved until group cleanup, preventing a recycled group from being signaled.
-        loop {
-            let mut info = std::mem::MaybeUninit::<libc::siginfo_t>::zeroed();
-            // SAFETY: live owned child ID, writable siginfo, valid waitid flags.
-            let result = unsafe {
-                libc::waitid(
-                    libc::P_PID,
-                    self.child.id(),
-                    info.as_mut_ptr(),
-                    libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
-                )
-            };
-            if result == 0 {
-                // SAFETY: waitid succeeded and the zeroed result has si_pid=0 if no event.
-                return Ok(unsafe { info.assume_init().si_pid() } == 0);
-            }
-            let error = io::Error::last_os_error();
-            if error.kind() != io::ErrorKind::Interrupted {
-                return Err(error);
-            }
-        }
+        child_running(&self.child)
     }
     fn signal_group(&self, signal: libc::c_int) -> io::Result<()> {
         if self.reaped {
             return Ok(());
         }
-        let group = i32::try_from(self.child.id()).map_err(io::Error::other)?;
-        // SAFETY: process_group(0) made the unreaped owned child its own group leader.
-        if unsafe { libc::kill(-group, signal) } == 0 {
-            return Ok(());
-        }
-        let error = io::Error::last_os_error();
-        if error.raw_os_error() == Some(libc::ESRCH) {
-            Ok(())
-        } else {
-            Err(error)
-        }
+        signal_child_group(&self.child, signal)
     }
     pub fn logs(&self) -> Vec<String> {
         self.logs
@@ -292,6 +338,36 @@ impl Drop for Owned {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn probe_bounds_output_and_rejects_failed_commands() {
+        assert_eq!(
+            command_output_unlocked("/bin/sh", &["-c", "printf hello; printf world >&2"]).unwrap(),
+            "helloworld"
+        );
+        assert!(command_output_unlocked("/bin/sh", &["-c", "exit 7"]).is_err());
+        let error =
+            command_output_unlocked("/bin/sh", &["-c", "head -c 2097152 /dev/zero"]).unwrap_err();
+        assert!(error.to_string().contains("output limit"));
+    }
+    #[test]
+    fn probe_reaps_group_even_if_leader_exits_first() {
+        let root = tempfile::tempdir().unwrap();
+        let heartbeat = root.path().join("heartbeat");
+        let command = format!(
+            "(while :; do printf x >> '{}'; sleep 0.02; done) & printf ready",
+            heartbeat.display()
+        );
+        assert_eq!(
+            command_output_unlocked("/bin/sh", &["-c", &command]).unwrap(),
+            "ready"
+        );
+        let size = std::fs::metadata(&heartbeat).map(|m| m.len()).unwrap_or(0);
+        std::thread::sleep(Duration::from_millis(150));
+        assert_eq!(
+            std::fs::metadata(&heartbeat).map(|m| m.len()).unwrap_or(0),
+            size
+        );
+    }
     #[test]
     fn exited_leader_does_not_leave_owned_worker_alive() {
         let root = tempfile::tempdir().unwrap();
