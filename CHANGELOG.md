@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.0-beta.3 — 2026-11-25
+
+- Two-step model launch from Library with Enter or double click, explicit Run model only and Inspect choices.
+- Independent Kitty agent window by default, with readiness-gated automatic OMP launch and explicit cancellation.
+- Reuse the same owned single model, replace a different owned single session on confirmation, or load a registered router model.
+- Refresh Library automatically after complete model bundles, preserving the selected model.
+- Includes all beta.2 improvements; previous beta.2 candidate was not publicly released.
+
 ## 0.1.0-beta.2 — 2026-11-25
 
 - Directly editable search fields with automatic Discover focus, click-to-filter and keyboard navigation.

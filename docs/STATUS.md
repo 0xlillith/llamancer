@@ -25,3 +25,5 @@ Follow [open issues](https://github.com/0xlillith/llamancer/issues) and [release
 See [desktop validation evidence](DESKTOP-RESULTS.md) for measured AMD backend, native CachyOS, systemd and Kitty results on the initial desktop hardware.
 
 The [beta review](BETA-REVIEW.md) records the current combined review and explicitly distinguishes verified scope from limitations.
+
+The beta.3 Library launch menu uses a separate Kitty window for keyless agent sessions and waits for inference readiness. See [desktop results](DESKTOP-RESULTS.md). CUDA hardware validation and the original large-file checksum discrepancy remain open.
