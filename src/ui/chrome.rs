@@ -68,10 +68,7 @@ pub fn header(frame: &mut Frame, area: Rect, app: &App, p: &Palette) {
         "AGENT",
         safe(&app.config.default_agent),
     ));
-    second.extend(chip(p, Icon::Project, "PROJECT", project));
-    if area.width >= 90 {
-        second.extend(chip(p, Icon::Theme, "THEME", safe(&app.config.theme)));
-    }
+    second.extend(chip(p, Icon::Project, "ACTIVE PROJECT", project));
     if area.width >= 120 {
         second.push(Span::styled(
             if app.nerd_icons() {

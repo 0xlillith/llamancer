@@ -22,7 +22,7 @@ def read_until(master, process, marker, seconds=10):
             data.extend(os.read(master, 65536))
             if marker in data:
                 return bytes(data)
-        if process.poll() is not None:
+        if process.poll() is not None and not select.select([master], [], [], 0)[0]:
             break
     raise AssertionError(f"Missing terminal marker {marker!r}")
 

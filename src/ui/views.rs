@@ -201,9 +201,20 @@ pub fn content(app: &App, body: Rect) -> (&'static str, String) {
         (
             "Edit settings",
             format!(
-                "{}\n\n{}▏\n\nEnter: save   Esc: cancel",
+                "{}\n\n{}▏\n\n{}\n\nEnter: save   Esc: cancel",
                 field.label(),
-                draft
+                draft,
+                if *field == crate::settings::Field::AddRoot {
+                    format!(
+                        "{} Suggested: {}",
+                        field.hint(),
+                        crate::settings::default_model_root()
+                            .map(|p| super::safe(&p.to_string_lossy()))
+                            .unwrap_or_else(|_| "unavailable".into())
+                    )
+                } else {
+                    field.hint().into()
+                }
             ),
         )
     } else if app.help {
@@ -345,7 +356,7 @@ pub fn content(app: &App, body: Rect) -> (&'static str, String) {
                             .collect::<String>()
                     };
                     let mut lines=vec![format!("Endpoint: {}",safe(&app.config.endpoint)),format!("{} | {}",if server.owns_server(){"Managed session"}else{"External / stopped"},safe(&server.status)),
-                    "r refresh | D detach | s router  R restart | i probe | x stop | l/u load/unload | a agent | g logs".into()];
+                    "s Start router | B choose backend | x Stop | a Launch agent | w Web UI | g logs".into()];
                     if server.show_logs {
                         lines.extend(
                             server
@@ -381,6 +392,14 @@ pub fn content(app: &App, body: Rect) -> (&'static str, String) {
                             ));
                         }
                     }
+                    if !server.owns_server() && server.snapshot.is_none() {
+                        lines.push(
+                            "To run a single model: Library (1) → select model → l Run model."
+                                .into(),
+                        );
+                        lines
+                            .push("For multiple models: B choose backend → s Start router.".into());
+                    }
                     if let Some(project) = &app.config.project_dir {
                         lines.push(format!(
                             "Project: {} | P switch",
@@ -408,13 +427,17 @@ pub fn content(app: &App, body: Rect) -> (&'static str, String) {
                         .take(capacity)
                     {
                         lines.push(format!(
-                            "{} {}: {}",
+                            "{} {:<10} | {}: {}",
                             if i == app.setting { ">" } else { " " },
+                            field.category(),
                             field.label(),
                             super::safe(&field.initial(&app.config))
                         ));
                     }
-                    lines.push("Up/Down: select   Enter: edit".into());
+                    lines.push(format!(
+                        "Hint: {}",
+                        crate::settings::Field::ALL[app.setting].hint()
+                    ));
                     lines.push("Model roots:".into());
                     lines.extend(
                         app.config

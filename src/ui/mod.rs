@@ -354,7 +354,7 @@ pub fn draw_themed(frame: &mut Frame, app: &App, theme: &Theme) {
     } else if app.fit_report.is_some() {
         "Esc close  Enter close  p profile (after closing)"
     } else if app.download_destination.is_some() {
-        "↑↓ choose storage  Enter queue  Esc cancel"
+        "↑↓ choose storage  Enter confirm & download  Esc cancel"
     } else if app.projects.is_some() {
         "↑↓ choose project  Enter select  Esc cancel"
     } else if app.backend_open && app.backend_confirmation.is_some() {
@@ -368,15 +368,15 @@ pub fn draw_themed(frame: &mut Frame, app: &App, theme: &Theme) {
     } else if app.searching || app.discovery.editing {
         "Enter search  Esc cancel  Ctrl+U clear"
     } else if app.details && app.tab == 0 {
-        "PgUp/PgDn scroll  Enter close  Esc close  p profile  m fit  l load"
+        "PgUp/PgDn scroll  Enter close  Esc close  p profile  m fit  l Run model"
     } else if app.backend_open {
         "↑↓ select  i install  Enter use  v version  c check  p probe  b benchmark  h compare  d remove  x cancel  Esc back"
     } else {
         match app.tab {
-            0 => "r scan  / search  f favorite  s sort  p profile  m fit  l load  i invalid  h hide  t quarantine  ? help",
-            1 => "/ search/filter  s sort  Enter open  d download  D destination  n next page  Backspace back  ? help",
+            0 => "r scan  / search  f favorite  s sort  p profile  m fit  l Run model  i invalid  h hide  t quarantine  ? help",
+            1 => "/ search/filter  s sort  Enter open/download  d download  D destination  n next page  Backspace back  ? help",
             2 => "r resume  R run queue  x pause  t quarantine  T restore  z remove entry  ? help",
-            3 => "r refresh  D detach  s router  R restart  i probe  x stop  l/u load/unload  a agent  A current  w web  b btop  g logs  B backends  P project",
+            3 => "r refresh  D detach  s Start router  R restart  i probe  x stop  l/u load/unload  a Launch agent  A current  w web  b btop  g logs  B backends  P project",
             _ => "↑↓ select  Enter edit  T theme  I icons  B backends  P project  G setup  ? help  q quit",
         }
     };
