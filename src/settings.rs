@@ -43,7 +43,7 @@ impl Field {
     ];
     pub fn label(self) -> &'static str {
         match self {
-            Self::Theme => "Theme",
+            Self::Theme => "Theme (T to cycle built-ins)",
             Self::Agent => "Default agent",
             Self::AgentTerminal => "Agent terminal (current/kitty-tab/kitty-window)",
             Self::Endpoint => "Endpoint",

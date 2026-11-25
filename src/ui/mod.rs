@@ -162,7 +162,24 @@ pub fn draw_themed(frame: &mut Frame, app: &App, theme: &Theme) {
         Span::styled(" / Summon your models. ", base),
         Span::styled(concat!("v", env!("CARGO_PKG_VERSION")), palette.heading),
     ]);
-    frame.render_widget(Paragraph::new(header_line), header);
+    let project = app
+        .config
+        .project_dir
+        .as_ref()
+        .and_then(|p| p.file_name())
+        .map(|n| safe(&n.to_string_lossy()))
+        .unwrap_or_else(|| "no project".into());
+    let context = Line::from(vec![
+        Span::styled("  MODEL ", palette.muted),
+        Span::styled(app.candidates.len().to_string(), base),
+        Span::styled("   AGENT ", palette.muted),
+        Span::styled(safe(&app.config.default_agent), base),
+        Span::styled("   PROJECT ", palette.muted),
+        Span::styled(project, base),
+        Span::styled("   THEME ", palette.muted),
+        Span::styled(safe(&app.config.theme), base),
+    ]);
+    frame.render_widget(Paragraph::new(vec![header_line, context]), header);
     for (index, rect) in tab_regions(frame.area()).into_iter().enumerate() {
         let style = if index == app.tab {
             base.fg(color(&theme.pink).unwrap_or(Color::Reset))
@@ -179,15 +196,19 @@ pub fn draw_themed(frame: &mut Frame, app: &App, theme: &Theme) {
                 short
             )
         } else if index == app.tab {
-            format!(">{}", TABS[index])
+            format!("> {} {}", index + 1, TABS[index])
         } else {
-            TABS[index].into()
+            format!("  {} {}", index + 1, TABS[index])
         };
         frame.render_widget(
             Paragraph::new(label).style(style).block(
                 Block::bordered()
                     .border_type(BorderType::Rounded)
-                    .border_style(palette.muted),
+                    .border_style(if index == app.tab {
+                        palette.selected.add_modifier(Modifier::BOLD)
+                    } else {
+                        palette.muted
+                    }),
             ),
             rect,
         );
@@ -227,9 +248,21 @@ pub fn draw_themed(frame: &mut Frame, app: &App, theme: &Theme) {
         library::draw(frame, body, app, &palette);
     } else {
         let (title, content) = views::content(app, body);
-        let paragraph = Paragraph::new(content)
+        // Keep selection readable with color and an explicit textual marker.
+        let lines: Vec<Line> = content
+            .lines()
+            .map(|line| {
+                let style = if line.starts_with("> ") {
+                    palette.selected.add_modifier(Modifier::BOLD)
+                } else {
+                    base
+                };
+                Line::styled(line.to_owned(), style)
+            })
+            .collect();
+        let paragraph = Paragraph::new(lines)
             .style(base)
-            .block(palette.panel(title));
+            .block(palette.panel(format!(" {title} ")));
         // Keep list rows on one terminal line, so cursor and pointer geometry agree.
         let paragraph = if app.help
             || app.profile_editor.is_some()
@@ -254,7 +287,7 @@ pub fn draw_themed(frame: &mut Frame, app: &App, theme: &Theme) {
             1 => "/ search  Enter open  d queue  n next page  Backspace back  ? help",
             2 => "r resume  R run queue  x pause  t quarantine  T restore  z remove entry  ? help",
             3 => "r refresh  D detach  s router  R restart  i probe  x stop  l/u load/unload  a agent  A current  w web  b btop  g logs  B backends  P project",
-            _ => "↑↓ select  Enter edit  B backends  P project  ? help  q quit",
+            _ => "↑↓ select  Enter edit  T theme  B backends  P project  ? help  q quit",
         }
     } else {
         &app.notice
@@ -270,7 +303,7 @@ pub fn draw_themed(frame: &mut Frame, app: &App, theme: &Theme) {
             (false, 1) => "/ find Enter open d queue ? help",
             (false, 2) => "r run x pause t move T restore ? help",
             (false, 3) => "s start x stop a agent B backends ? help",
-            _ => "↑↓ Enter edit B backends ? help q quit",
+            _ => "↑↓ Enter edit T theme P project ? help",
         }
     } else {
         footer_text

@@ -36,20 +36,65 @@ pub fn color(value: &str) -> Option<Color> {
     Some(Color::Rgb((n >> 16) as u8, (n >> 8) as u8, n as u8))
 }
 impl Theme {
+    pub const BUILTINS: [&'static str; 8] = [
+        "dracula",
+        "andromeda",
+        "catppuccin-mocha",
+        "tokyo-night",
+        "nord",
+        "rose-pine",
+        "gruvbox-dark",
+        "high-contrast",
+    ];
+    fn builtin(name: &str) -> Option<Self> {
+        let colors = match name {
+            "dracula" => return Some(Self::default()),
+            "andromeda" => [
+                "#171624", "#e7e3f5", "#b7a1f5", "#f5a9d0", "#8fe4ec", "#a6e3b2", "#343048",
+            ],
+            "catppuccin-mocha" => [
+                "#1e1e2e", "#cdd6f4", "#cba6f7", "#f5c2e7", "#89dceb", "#a6e3a1", "#45475a",
+            ],
+            "tokyo-night" => [
+                "#1a1b26", "#c0caf5", "#bb9af7", "#f7768e", "#7dcfff", "#9ece6a", "#33467c",
+            ],
+            "nord" => [
+                "#2e3440", "#eceff4", "#b48ead", "#d8dee9", "#88c0d0", "#a3be8c", "#434c5e",
+            ],
+            "rose-pine" => [
+                "#191724", "#e0def4", "#c4a7e7", "#ebbcba", "#9ccfd8", "#9ccfd8", "#403d52",
+            ],
+            "gruvbox-dark" => [
+                "#282828", "#ebdbb2", "#d3869b", "#fabd2f", "#8ec07c", "#b8bb26", "#504945",
+            ],
+            "high-contrast" => [
+                "#000000", "#ffffff", "#d4bfff", "#ffffff", "#80ffff", "#80ff80", "#303030",
+            ],
+            _ => return None,
+        };
+        let [background, foreground, purple, pink, cyan, green, selection] =
+            colors.map(str::to_owned);
+        Some(Self {
+            background,
+            foreground,
+            purple,
+            pink,
+            cyan,
+            green,
+            selection,
+        })
+    }
+    pub fn next_builtin(name: &str) -> &'static str {
+        Self::BUILTINS
+            .iter()
+            .position(|&n| n == name)
+            .map_or(Self::BUILTINS[0], |i| {
+                Self::BUILTINS[(i + 1) % Self::BUILTINS.len()]
+            })
+    }
     pub fn load(root: &Path, name: &str) -> io::Result<Self> {
-        if name == "dracula" {
-            return Ok(Self::default());
-        }
-        if name == "high-contrast" {
-            return Ok(Self {
-                background: "#000000".into(),
-                foreground: "#ffffff".into(),
-                purple: "#d4bfff".into(),
-                pink: "#ffffff".into(),
-                cyan: "#80ffff".into(),
-                green: "#80ff80".into(),
-                selection: "#303030".into(),
-            });
+        if let Some(theme) = Self::builtin(name) {
+            return Ok(theme);
         }
         if name.is_empty()
             || !name
@@ -94,6 +139,29 @@ mod tests {
         assert_eq!(color("#ff79c6"), Some(Color::Rgb(255, 121, 198)));
         assert!(color("#ああ").is_none());
         assert!(color("#xyzxyz").is_none());
+    }
+    #[test]
+    fn builtins_available_without_theme_files() {
+        let root = tempfile::tempdir().unwrap();
+        for (i, name) in Theme::BUILTINS.iter().enumerate() {
+            let theme = Theme::load(root.path(), name).unwrap();
+            for value in [
+                &theme.background,
+                &theme.foreground,
+                &theme.purple,
+                &theme.pink,
+                &theme.cyan,
+                &theme.green,
+                &theme.selection,
+            ] {
+                assert!(color(value).is_some());
+            }
+            assert_eq!(
+                Theme::next_builtin(name),
+                Theme::BUILTINS[(i + 1) % Theme::BUILTINS.len()]
+            );
+        }
+        assert_eq!(Theme::next_builtin("custom"), "dracula");
     }
     #[test]
     fn traversal_rejected() {

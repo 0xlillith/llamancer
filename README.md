@@ -106,6 +106,9 @@ See [Backend Manager](docs/BACKENDS.md) for verification, platform requirements 
 | Server | r refresh, D detach, i probe backend, s router, x stop owned, l/u load/unload, a agent, A current terminal, g logs, w Web UI, b btop |
 | Profile | Up/Down, Enter edit, a advanced/basic, s save, Esc discard, Ctrl+U clear input |
 
+## Themes
+The default Dracula theme is joined by **Andromeda** (pastel violet, pink and cyan on a deep navy background), Catppuccin Mocha, Tokyo Night, Nord, Rosé Pine, Gruvbox Dark and High Contrast. Press uppercase `T` in Settings to cycle built-ins instantly, or edit the Theme field by name. Custom TOML themes remain supported. The header shows the active agent/project and theme; selected rows retain a textual marker and colored emphasis. No Nerd Font is required.
+
 ## Terminal accessibility
 
 Click a tab or a visible list row to select it; use the mouse wheel or Up/Down to move the selection. Actions retain their contextual keyboard shortcuts. Selected entries have a textual marker as well as a color highlight. Choose the built-in `high-contrast` theme in Settings for increased contrast.
