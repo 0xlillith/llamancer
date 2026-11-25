@@ -22,3 +22,5 @@ The completed CPU-side gates include isolated Arch x86_64 package installation, 
 Before a stable release, validate the actual Arch desktop, AMD Vulkan/ROCm inference, additional model architectures and measured memory overhead, gated access with an authorized fixture, real-model OMP/Pi tool selection and graphical Kitty integration. Review the license inventory and remaining security assumptions manually. Do not publish a stable tag solely because CI passes.
 
 Use the [desktop acceptance runbook](DESKTOP-ACCEPTANCE.md) to execute the remaining gates. Distribution archives include original third-party Cargo notices and a conservative all-target inventory; missing or incomplete notices still require review before publishing.
+
+Binary archives and Arch packages include the README, linked documentation, mascot assets, sample systemd unit, Arch recipe, and optional source-build helper when present. The release workflow validates links before archiving and again after checksum verification and extraction; the Arch smoke workflow validates the installed documentation. These checks use only the checked-out source revision.
