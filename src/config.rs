@@ -26,6 +26,7 @@ pub struct Config {
     pub project_dir: Option<PathBuf>,
     pub workspace_root: Option<PathBuf>,
     pub favorites: BTreeSet<PathBuf>,
+    pub benchmarks: Vec<crate::benchmark::Record>,
     pub profiles: BTreeMap<PathBuf, crate::models::profile::Profile>,
 }
 
@@ -49,6 +50,7 @@ impl Default for Config {
             project_dir: None,
             workspace_root: None,
             favorites: BTreeSet::new(),
+            benchmarks: Vec::new(),
             profiles: BTreeMap::new(),
         }
     }
@@ -149,11 +151,13 @@ impl Config {
         for profile in config.profiles.values() {
             profile.validate()?;
         }
+        crate::benchmark::validate(&config.benchmarks)?;
         Ok(config)
     }
 
     pub fn save(&self, path: &Path) -> io::Result<()> {
         use std::io::Write;
+        crate::benchmark::validate(&self.benchmarks)?;
         for profile in self.profiles.values() {
             profile.validate()?;
         }

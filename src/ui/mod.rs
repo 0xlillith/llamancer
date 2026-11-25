@@ -73,6 +73,20 @@ pub(super) fn viewport(cursor: usize, height: u16, reserved: u16) -> (usize, usi
 }
 pub fn row_at(area: Rect, app: &App, column: u16, row: u16) -> Option<usize> {
     let body = regions(area)[2];
+    if app.setup_open {
+        let row = row.checked_sub(body.y.checked_add(2)?)?;
+        let (offset, capacity) = viewport(app.setup_cursor, body.height, 4);
+        let index = offset.checked_add(usize::from(row))?;
+        return (usize::from(row) < capacity
+            && index < crate::setup::LABELS.len()
+            && column > body.x
+            && column < body.right().saturating_sub(1)
+            && body.y + 2 + row < body.bottom().saturating_sub(1))
+        .then_some(index);
+    }
+    if app.benchmark_open {
+        return None;
+    }
     if let Some(choice) = &app.download_destination {
         let row = row.checked_sub(body.y.checked_add(2)?)?;
         let (offset, capacity) = viewport(choice.cursor, body.height, 4);
@@ -254,6 +268,7 @@ pub fn draw_themed(frame: &mut Frame, app: &App, theme: &Theme) {
         && !app.backend_open
         && app.projects.is_none()
         && app.fit_report.is_none()
+        && !app.setup_open
         && app.download_destination.is_none()
         && !app.help
         && app.edit.is_none()
@@ -290,7 +305,11 @@ pub fn draw_themed(frame: &mut Frame, app: &App, theme: &Theme) {
         };
         frame.render_widget(paragraph, body);
     }
-    let footer_text = if app.fit_report.is_some() {
+    let footer_text = if app.setup_open {
+        "↑↓ choose step  Enter open  Esc skip  G reopen"
+    } else if app.benchmark_open {
+        "Esc / h return to Backend Manager"
+    } else if app.fit_report.is_some() {
         "Esc / Enter close  |  p profile to adjust settings"
     } else if app.download_destination.is_some() {
         "↑↓ choose storage  Enter queue  Esc cancel"
@@ -299,14 +318,14 @@ pub fn draw_themed(frame: &mut Frame, app: &App, theme: &Theme) {
     } else if app.backend_open && app.backend_confirmation.is_some() {
         "y confirm / n cancel / Esc back"
     } else if app.backend_open && app.notice.is_empty() {
-        "↑↓ select  i install  Enter use  v version  c check  p probe  b benchmark  d remove  x cancel  Esc back"
+        "↑↓ select  i install  Enter use  v version  c check  p probe  b benchmark  h compare  d remove  x cancel  Esc back"
     } else if app.notice.is_empty() {
         match app.tab {
             0 => "r scan  / search  f favorite  s sort  p profile  m fit  l load  i invalid  h hide  t quarantine  ? help",
             1 => "/ search  Enter open  d queue  D destination  n next page  Backspace back  ? help",
             2 => "r resume  R run queue  x pause  t quarantine  T restore  z remove entry  ? help",
             3 => "r refresh  D detach  s router  R restart  i probe  x stop  l/u load/unload  a agent  A current  w web  b btop  g logs  B backends  P project",
-            _ => "↑↓ select  Enter edit  T theme  B backends  P project  ? help  q quit",
+            _ => "↑↓ select  Enter edit  T theme  B backends  P project  G setup  ? help  q quit",
         }
     } else {
         &app.notice
@@ -317,6 +336,8 @@ pub fn draw_themed(frame: &mut Frame, app: &App, theme: &Theme) {
         && app.projects.is_none()
         && app.download_destination.is_none()
         && app.fit_report.is_none()
+        && !app.setup_open
+        && !app.benchmark_open
     {
         match (app.backend_open, app.tab) {
             (true, _) => "↑↓ i install Enter use v ver c check p probe d rm",

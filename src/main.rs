@@ -263,7 +263,8 @@ fn main() -> io::Result<()> {
                         || runtime.app.backend_open
                         || runtime.app.show_invalid
                         || runtime.app.projects.is_some()
-                        || runtime.app.download_destination.is_some() =>
+                        || runtime.app.download_destination.is_some()
+                        || runtime.app.setup_open =>
                 {
                     let size = terminal.size()?;
                     let area = ratatui::layout::Rect::new(0, 0, size.width, size.height);

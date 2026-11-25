@@ -64,6 +64,11 @@ Add multiple model roots in Settings and optionally choose a Default download ro
 ## Project workspaces
 Set **Workspace parent directory** in Settings to a directory containing your projects (for example `/home/user/src`). Press `P` in Server or Settings to select an immediate project folder. The selected project becomes the working directory for OMP, Pi or custom agents. Hidden folders and symlink entries are excluded; discovery is bounded. You can also set an explicit Active project directory independently. If a workspace is configured but no project is selected, agent launch asks you to select one. Existing agent settings are untouched.
 
+## Guided setup and benchmark comparison
+Press uppercase `G` in any normal view for a resumable setup checklist: model storage, reviewed backend, device probe, optional agent and workspace root. Enter opens the appropriate existing setting or manager; Esc skips setup and G reopens it. Nothing is installed implicitly.
+
+In Backend Manager, run the quick benchmark with `b`, then `h` to compare saved results for the most recently measured model SHA-256. Only the latest comparable run per backend is shown (PP128/TG32, two threads, two repeats, zero CPU or eight GPU layers). The bounded local history stores hashes, measured throughput and backend/device labels, not model contents or paths. Missing results remain unmeasured.
+
 ## Troubleshooting
 
 Run `llamancer doctor` for an offline local setup report. It checks configured executables, model paths, optional agent/terminal tools and managed backend receipts without starting processes, making network requests, or printing paths, endpoint addresses or tokens. Use Backend Manager or `llamancer backend probe KIND` to check actual runtime device compatibility.
