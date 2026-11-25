@@ -270,6 +270,15 @@ impl Runtime {
             }
             return Ok(Effect::None);
         }
+        if key.code == KeyCode::Char('T') && self.app.tab == 4 && !self.modal() {
+            let mut next = self.app.config.clone();
+            next.theme = Theme::next_builtin(&next.theme).into();
+            let theme = Theme::load(&self.root, &next.theme)?;
+            self.persist(next)?;
+            self.theme = theme;
+            self.app.notice = format!("Theme: {}", self.app.config.theme);
+            return Ok(Effect::None);
+        }
         if key.code == KeyCode::Char('P') && matches!(self.app.tab, 3 | 4) && !self.modal() {
             let root = self.app.config.workspace_root.as_ref().ok_or_else(|| {
                 io::Error::other("Set workspace parent directory in Settings first")

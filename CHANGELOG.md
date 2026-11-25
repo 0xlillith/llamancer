@@ -35,3 +35,5 @@
 - Added an offline, redacted `llamancer doctor` setup report.
 
 - Added workspace parent directories and an active-project picker for agent launches.
+
+- Added six additional built-in palettes and a more expressive terminal header, numbered tabs and highlighted selections.
