@@ -33,7 +33,7 @@ Pre-release development, targeting the first Linux beta. Native Linux x86_64 and
 
 ![Llamancer Library and GGUF inspector, Dracula theme](assets/screenshots/library.png)
 
-[More screenshots and terminal captures](docs/SCREENSHOTS.md): inference profiles, live Hugging Face discovery and the persistent download queue.
+[More screenshots and terminal captures](docs/SCREENSHOTS.md): inference profiles, live Hugging Face discovery, download queue, Backend Manager and active inference router.
 
 ## Quick start
 

@@ -25,3 +25,15 @@ Live public repository lookup, with nine quantization files and their sizes.
 A real file entry queued for download in the isolated demo; no download was started.
 
 ![Persistent download queue](../assets/screenshots/downloads.png)
+
+## Backend Manager
+
+Real installed CPU, Vulkan and ROCm receipts; Vulkan selected on the test host.
+
+![Backend Manager](../assets/screenshots/backends.png)
+
+## Active inference router
+
+A real managed Vulkan router, with Qwen2.5 loaded and three other indexed models available. The isolated loopback server was shut down after capture.
+
+![Active inference router](../assets/screenshots/server.png)
