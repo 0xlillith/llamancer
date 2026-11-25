@@ -8,7 +8,7 @@
 
 [![CI](https://github.com/0xlillith/llamancer/actions/workflows/ci.yml/badge.svg)](https://github.com/0xlillith/llamancer/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-bd93f9.svg)](LICENSE)
-[![Beta: 0.1.0-beta.3](https://img.shields.io/badge/beta-0.1.0--beta.3-bd93f9)](https://github.com/0xlillith/llamancer/releases/tag/v0.1.0-beta.3)
+[![Beta: 0.1.0-beta.4](https://img.shields.io/badge/beta-0.1.0--beta.4-bd93f9)](https://github.com/0xlillith/llamancer/releases/tag/v0.1.0-beta.4)
 
 **A lightweight Rust TUI for llama.cpp model and inference management.**
 **OMP-first. Not OMP-only.**
@@ -19,7 +19,7 @@ Llamancer brings local GGUF model discovery, inference preferences, server contr
 
 ## Status
 
-Linux beta 0.1.0-beta.3. Native Linux x86_64 and aarch64 CI, managed CPU text/vision inference, checksum-verified public and authorized gated Hub downloads, systemd lifecycle, Arch package installation, AMD Vulkan/ROCm text and vision inference, pinned CPU/Vulkan/ROCm source builds, real OMP/Pi tool use and graphical agent exit have passed their documented acceptance tests. Authenticated OMP uses an isolated temporary profile. No general model compatibility, comprehensive security audit or stable-release certification is implied. See [verified status](docs/STATUS.md), [desktop results](docs/DESKTOP-RESULTS.md) and [release review](docs/BETA-REVIEW.md).
+Linux beta 0.1.0-beta.4. Native Linux x86_64 and aarch64 CI, managed CPU text/vision inference, checksum-verified public and authorized gated Hub downloads, systemd lifecycle, Arch package installation, AMD Vulkan/ROCm text and vision inference, pinned CPU/Vulkan/ROCm source builds, real OMP/Pi tool use and graphical agent exit have passed their documented acceptance tests. Authenticated OMP uses an isolated temporary profile. No general model compatibility, comprehensive security audit or stable-release certification is implied. See [verified status](docs/STATUS.md), [desktop results](docs/DESKTOP-RESULTS.md) and [release review](docs/BETA-REVIEW.md).
 
 | Workspace | Current functionality |
 | --- | --- |
@@ -31,7 +31,7 @@ Linux beta 0.1.0-beta.3. Native Linux x86_64 and aarch64 CI, managed CPU text/vi
 
 ## Screenshots
 
-![Llamancer in Kitty with optional Nerd Font icons and Andromeda theme](assets/screenshots/polished-library.png)
+![Llamancer in Kitty with optional Nerd Font icons and Andromeda theme](assets/screenshots/beta4-library.png)
 
 [More screenshots and terminal captures](docs/SCREENSHOTS.md): themes, project workspace, guided setup, memory advisory, benchmark comparison, inference profiles, discovery, downloads and the active router.
 
@@ -55,7 +55,7 @@ Keyless OMP launches use the documented LLAMA_CPP_BASE_URL runtime override; che
 
 ## Installation packages
 
-Beta packages are available for Linux x86_64 and aarch64 on the [GitHub release page](https://github.com/0xlillith/llamancer/releases/tag/v0.1.0-beta.3). Download the matching archive and its SHA-256 file, then run:
+Beta packages are available for Linux x86_64 and aarch64 on the [GitHub release page](https://github.com/0xlillith/llamancer/releases/tag/v0.1.0-beta.4). Download the matching archive and its SHA-256 file, then run:
 
 ```sh
 # Choose x86_64 or aarch64 to match uname -m

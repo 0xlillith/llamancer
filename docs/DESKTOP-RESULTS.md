@@ -135,3 +135,8 @@ On Andromeda, the isolated real Kitty test in tests/easy_launch_kitty_live.py ve
 ## Agent-window lifecycle and context
 
 The isolated real Kitty/OMP test saved a 4096-token global default and a 2048-token model override; the model and agent launched successfully, and closing OMP released the owned single-model listener while Llamancer remained open. An independently started single-model server survived a subsequent agent close and was stopped explicitly. Router automatic release uses the exact owned server generation and model ID; real router close still requires separate acceptance.
+
+
+## Beta.4 mouse-first workflow
+
+The isolated visual_workflow_live.py test exercised actual PTY mouse clicks for model launch, custom 4096 context, 8192 preset and confirmed relaunch, checking the effective context via the running server API; the Stop server control released the port. Theme selection and Discover sort/filter selectors passed. A separate controlled run requested 16384 on SmolLM2 (declared context 8192), but the backend reported 8192 even with one slot. Launch warns above the declared model context; requested and reported values are distinct. The independent real Kitty/OMP test confirmed that the agent-owned server exits when OMP closes and independently started inference survives. Public Hub download-to-inference and modal regressions passed. The tool preflight is diagnostic only; the original IQ3_S corruption is not resolved.

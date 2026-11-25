@@ -342,7 +342,20 @@ pub fn row_at(area: Rect, app: &App, column: u16, row: u16) -> Option<usize> {
             let s = app.server.snapshot.as_ref()?;
             (body, 5, 7, app.server.cursor, s.models.len())
         }
-        4 => (body, 2, 6, app.setting, crate::settings::Field::ALL.len()),
+        4 => {
+            let indices = crate::settings::Field::category_indices(app.setting);
+            let cursor = indices.iter().position(|&i| i == app.setting).unwrap_or(0);
+            let (offset, capacity) = viewport(cursor, body.height, 6);
+            let inner_row = usize::from(row.checked_sub(body.y.checked_add(2)?)?);
+            if column <= body.x
+                || column >= body.right().saturating_sub(1)
+                || row >= body.bottom().saturating_sub(1)
+                || inner_row >= capacity
+            {
+                return None;
+            }
+            return indices.get(offset + inner_row).copied();
+        }
         _ => return None,
     };
     let inner_row = row.checked_sub(rect.y.checked_add(header)?)?;
@@ -690,8 +703,10 @@ mod tests {
             ..App::default()
         };
         let body = regions(area)[2];
-        let (offset, _) = viewport(app.setting, body.height, 6);
-        assert_eq!(row_at(area, &app, 5, body.y + 2), Some(offset));
+        let indices = crate::settings::Field::category_indices(app.setting);
+        let cursor = indices.iter().position(|&i| i == app.setting).unwrap();
+        let (offset, _) = viewport(cursor, body.height, 6);
+        assert_eq!(row_at(area, &app, 5, body.y + 2), Some(indices[offset]));
         assert_eq!(row_at(area, &app, body.x, body.y + 1), None);
         app.help = true;
         assert_eq!(row_at(area, &app, 5, body.y + 1), None);

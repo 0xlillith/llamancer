@@ -41,7 +41,7 @@ def main():
                     if n in reported:return
                 except (OSError,ValueError):pass
                 settle()
-            raise AssertionError(f"server did not report context {n}: {str(last)[:300]}")
+            raise AssertionError(f"server did not report context {n}: {str(last)[:300]}\n"+"\n".join("".join(r) for r in screen.rows))
         try:
             wait("Scan complete");click("Run model");wait("Launch model")
             assert "Advanced settings" in "\n".join("".join(r) for r in screen.rows)
@@ -50,11 +50,11 @@ def main():
             conf=tomllib.loads((cfg/"config.toml").read_text());assert conf["profiles"][str(model)]["engine"]["context_size"]==4096
             click("Advanced settings");wait("OMP thinking:")
             click("Advanced settings");click("Run model only");check_context(4096)
-            wait("Stop server")
+            wait("Connected");wait("Stop server")
             # Click Library tab, reopen same model and change context without stopping manually.
             send(b"1");click("Run model");click("Presets");click("8192");wait("Context for this model: 8192")
             click("Run model only");check_context(8192)
-            wait("Stop server");click("Stop server")
+            wait("Connected");wait("Stop server");click("Stop server")
             wait("Managed server stopped")
             with socket.socket() as sock:sock.settimeout(1);assert sock.connect_ex(("127.0.0.1",port))!=0
             send(b"5");click("Appearance");click("Appearance  Theme",double=True);wait("Choose a value")

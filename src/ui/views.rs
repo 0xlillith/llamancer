@@ -581,13 +581,11 @@ pub fn content(app: &App, body: Rect) -> (&'static str, String) {
                 }
                 _ => {
                     let mut lines = vec!["Settings categories".into()];
-                    let (offset, capacity) = super::viewport(app.setting, body.height, 6);
-                    for (i, field) in crate::settings::Field::ALL
-                        .into_iter()
-                        .enumerate()
-                        .skip(offset)
-                        .take(capacity)
-                    {
+                    let indices = crate::settings::Field::category_indices(app.setting);
+                    let cursor = indices.iter().position(|&i| i == app.setting).unwrap_or(0);
+                    let (offset, capacity) = super::viewport(cursor, body.height, 6);
+                    for &i in indices.iter().skip(offset).take(capacity) {
+                        let field = crate::settings::Field::ALL[i];
                         lines.push(format!(
                             "{} {:<10}  {:<26} {}",
                             if i == app.setting { ">" } else { " " },
@@ -607,30 +605,20 @@ pub fn content(app: &App, body: Rect) -> (&'static str, String) {
                         "Hint: {}",
                         crate::settings::Field::ALL[app.setting].hint()
                     ));
-                    lines.push("Model roots:".into());
-                    lines.extend(
-                        app.config
-                            .model_roots
-                            .iter()
-                            .map(|p| format!("  {}", super::safe(&p.to_string_lossy()))),
-                    );
-                    lines.push(format!(
-                        "Imported file references: {}",
-                        app.config.model_imports.len()
-                    ));
-                    lines.extend(
-                        app.config
-                            .model_imports
-                            .iter()
-                            .map(|p| format!("  {}", super::safe(&p.to_string_lossy()))),
-                    );
-                    lines.push(format!("Hidden models: {}", app.config.hidden_models.len()));
-                    lines.extend(
-                        app.config
-                            .hidden_models
-                            .iter()
-                            .map(|p| format!("  {}", super::safe(&p.to_string_lossy()))),
-                    );
+                    lines.push(String::new());
+                    match crate::settings::Field::ALL[app.setting].category(){
+                        "Storage"=>{
+                            lines.push("Model folders".into());
+                            if app.config.model_roots.is_empty(){lines.push("  None configured".into());}
+                            for p in &app.config.model_roots{lines.push(format!("  {}",super::safe(&p.to_string_lossy())));}
+                            lines.push(format!("{} imported references · {} hidden models",app.config.model_imports.len(),app.config.hidden_models.len()));
+                        },
+                        "Workspace"=>lines.push("Workspace = parent directory. Active project = exact agent working directory.".into()),
+                        "Inference"=>lines.push("Use Backend Manager to install or select llama.cpp. Managed inference binds only to loopback.".into()),
+                        "Agent"=>lines.push("New-window opens an independent Kitty window. Close it to release agent-owned inference.".into()),
+                        _=>lines.push("Select Theme or Icons to preview available values.".into()),
+                    }
+                    lines.push("Enter or double-click a field to edit. Changes are saved after validation.".into());
                     lines.join("\n")
                 }
             },

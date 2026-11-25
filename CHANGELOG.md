@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.0-beta.4 — 2026-11-25
 
 - Compact navigation, searchable model variants, direct ranked sort/filter pickers, categorized settings and enumerated setting choices.
 - Fold advanced launch preferences; choose context presets or custom token counts, with declared model-context warnings.

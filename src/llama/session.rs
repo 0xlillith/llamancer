@@ -25,6 +25,7 @@ enum Outcome {
 pub struct Controller {
     owned: Option<Owned>,
     pending: Option<Job<Outcome>>,
+    refreshing: bool,
     last_refresh: Option<Instant>,
     startup_deadline: Option<Instant>,
     attached: bool,
@@ -123,12 +124,14 @@ impl Controller {
             return Err(io::Error::other("Server operation in progress"));
         }
         self.pending = Some(Job::start(task)?);
+        self.refreshing = false;
         self.discard_pending = false;
         Ok(())
     }
     pub fn refresh(&mut self, config: &Config) -> io::Result<()> {
         let client = Client::from_config(config)?;
         self.submit(move |_| client.snapshot().map(Outcome::Snapshot))?;
+        self.refreshing = true;
         self.attached = true;
         self.last_refresh = Some(Instant::now());
         self.status = "Checking server…".into();
@@ -264,6 +267,7 @@ impl Controller {
     /// Restart only a process owned by this controller, preserving single/router mode.
     /// Router presets use the latest indexed groups and current configuration.
     pub fn restart(&mut self, config: &Config, groups: Vec<Group>) -> io::Result<()> {
+        self.cancel_owned_refresh();
         if self.busy() || !self.owns_server() {
             return Err(io::Error::other("Restart requires an idle owned server"));
         }
@@ -279,6 +283,7 @@ impl Controller {
         Ok(())
     }
     pub fn set_loaded(&mut self, config: &Config, load: bool) -> io::Result<()> {
+        self.cancel_owned_refresh();
         let snapshot = self
             .snapshot
             .as_ref()
@@ -306,7 +311,19 @@ impl Controller {
         .into();
         Ok(())
     }
+    /// A read-only status poll must not obstruct explicit managed session actions.
+    /// Dropping the receiver prevents stale snapshots being applied to a new generation.
+    pub fn cancel_owned_refresh(&mut self) {
+        if self.refreshing && self.owns_server() {
+            if let Some(job) = self.pending.take() {
+                job.cancel();
+            }
+            self.refreshing = false;
+            self.discard_pending = false;
+        }
+    }
     pub fn stop(&mut self) -> io::Result<()> {
+        self.cancel_owned_refresh();
         if self.busy() {
             return Err(io::Error::other("Wait for the current server operation"));
         }
@@ -383,6 +400,7 @@ impl Controller {
                 if let Some(job) = self.pending.take() {
                     job.finish();
                 }
+                self.refreshing = false;
                 if self.discard_pending {
                     self.discard_pending = false;
                     return;
@@ -498,6 +516,40 @@ mod tests {
             assert!(Instant::now() < deadline, "{}", controller.status);
             std::thread::sleep(Duration::from_millis(5));
         }
+    }
+    #[test]
+    fn explicit_stop_supersedes_only_read_only_refresh() {
+        let server = Owned::start(
+            "/bin/sh",
+            &["-c".into(), "while :; do sleep 1; done".into()],
+        )
+        .unwrap();
+        let mut c = Controller {
+            owned: Some(server),
+            attached: true,
+            ..Default::default()
+        };
+        c.submit(|cancel| {
+            while !cancel.load(Ordering::Acquire) {
+                std::thread::yield_now();
+            }
+            Ok(Outcome::Snapshot(Snapshot {
+                router: false,
+                models: vec![],
+            }))
+        })
+        .unwrap();
+        assert!(
+            c.stop().is_err(),
+            "mutating/start operation must not be discarded"
+        );
+        c.refreshing = true;
+        assert!(
+            c.stop().is_ok(),
+            "read-only polling cannot block explicit stop"
+        );
+        assert!(!c.polling());
+        assert!(c.snapshot.is_none());
     }
     #[test]
     fn startup_deadline_stops_owned_server_and_discards_late_refresh() {
