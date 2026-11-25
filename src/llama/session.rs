@@ -215,6 +215,17 @@ impl Controller {
             ))
         }
     }
+    /// Finish a pending bounded operation and release only the process we own.
+    pub fn shutdown(&mut self) -> io::Result<()> {
+        if let Some(job) = self.pending.take() {
+            job.cancel();
+            job.finish();
+        }
+        if self.owned.is_some() {
+            self.stop()?;
+        }
+        Ok(())
+    }
     pub fn tick(&mut self, config: &Config) {
         if let Some(job) = self.pending.as_mut() {
             if let Some(outcome) = job.poll() {

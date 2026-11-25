@@ -10,3 +10,5 @@ pub mod downloads;
 pub mod jobs;
 pub mod runtime;
 pub mod settings;
+
+pub mod service;

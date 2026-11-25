@@ -32,6 +32,33 @@ fn run_child(terminal: &mut ratatui::DefaultTerminal, mut command: Command) -> i
     }
 }
 fn main() -> io::Result<()> {
+    let mut args = std::env::args_os().skip(1);
+    if let Some(arg) = args.next() {
+        if args.next().is_some() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Unexpected argument; see --help",
+            ));
+        }
+        match arg.to_str() {
+            Some("serve") => return llamancer::service::from_config(),
+            Some("--version" | "-V") => {
+                println!("llamancer {}", env!("CARGO_PKG_VERSION"));
+                return Ok(());
+            }
+            Some("--help" | "-h") => {
+                println!("Llamancer — Summon your models.\n\nUsage: llamancer [serve|--help|--version]\n  serve   Supervise a local router without a TUI");
+                return Ok(());
+            }
+            _ => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "Unknown argument; see --help",
+                ))
+            }
+        }
+    }
+
     let mut runtime = Runtime::new()?;
     if !runtime.app.config.model_roots.is_empty() {
         runtime.scan()?;
@@ -49,11 +76,24 @@ fn main() -> io::Result<()> {
                 Event::Key(key) if key.kind == KeyEventKind::Press => {
                     match runtime.handle_key(key) {
                         Ok(Effect::None) => {}
-                        Ok(Effect::Launch(plan)) => {
-                            runtime.app.notice = match run_child(&mut terminal, plan.command()) {
-                                Ok(()) => "Agent session ended".into(),
-                                Err(e) => e.to_string(),
-                            };
+                        Ok(Effect::Launch(plan, mode)) => {
+                            runtime.app.notice =
+                                match run_child(&mut terminal, plan.terminal_command(mode)) {
+                                    Ok(()) => {
+                                        if mode == llamancer::agents::TerminalMode::Current {
+                                            "Agent session ended".into()
+                                        } else {
+                                            "Kitty launch accepted".into()
+                                        }
+                                    }
+                                    Err(e) => {
+                                        if mode == llamancer::agents::TerminalMode::Current {
+                                            e.to_string()
+                                        } else {
+                                            format!("{e}; press A for current terminal")
+                                        }
+                                    }
+                                };
                         }
                         Ok(Effect::Monitor) => {
                             runtime.app.notice =
@@ -102,5 +142,6 @@ fn main() -> io::Result<()> {
     })();
     let mouse_result = execute!(io::stdout(), DisableMouseCapture);
     ratatui::restore();
-    result.and(mouse_result)
+    let shutdown = runtime.app.server.shutdown();
+    result.and(mouse_result).and(shutdown)
 }

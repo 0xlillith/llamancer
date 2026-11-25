@@ -59,7 +59,7 @@ pub fn content(app: &App, body: Rect) -> (&'static str, String) {
             ),
         )
     } else if app.help {
-        ("Help", "Tab / arrows / 1–5: navigate\nLibrary: r scan, x cancel, Up/Down select, Enter details\n/: search, s: sort, f: favorite, v: favorites only, p: inference profile, l: start single model\nDiscover: / search, Enter open, d queue\nDownloads: r resume, R run queue, x pause, z remove entry\nServer: r refresh, s router, i probe, x stop, l/u load/unload, a agent, g logs\nSettings: Up/Down select, Enter edit\n?: toggle help\nEsc: close help or quit\nq / Ctrl+C: quit".into())
+        ("Help", "Tab / arrows / 1–5: navigate\nLibrary: r scan, x cancel, Up/Down select, Enter details\n/: search, s: sort, f: favorite, v: favorites only, p: inference profile, l: start single model\nDiscover: / search, Enter open, d queue, n next page\nDownloads: r resume, R run queue, x pause, z remove entry\nServer: r refresh, s router, i probe, x stop, l/u load/unload, a agent, A current terminal, g logs\nSettings: Up/Down select, Enter edit\n?: toggle help\nEsc: close help or quit\nq / Ctrl+C: quit".into())
     } else {
         (
             TABS[app.tab],
@@ -79,7 +79,7 @@ pub fn content(app: &App, body: Rect) -> (&'static str, String) {
                             if d.editing { "▏" } else { "" }
                         ),
                         safe(&d.status),
-                        "/ search | Enter repository | Backspace back | d queue file/bundle".into(),
+                        "/ search | Enter repository | Backspace back | d queue file/bundle | n next page".into(),
                     ];
                     let capacity = usize::from(body.height.saturating_sub(6)).max(1);
                     let offset = d.cursor.saturating_sub(capacity.saturating_sub(1));
@@ -137,6 +137,16 @@ pub fn content(app: &App, body: Rect) -> (&'static str, String) {
                                     )
                                 })
                                 .unwrap_or_else(|| format!("{:?}", item.state));
+                            let status = if let Some((speed, eta)) = d.speed_eta(i) {
+                                format!(
+                                    "{status} | {:.1} MiB/s | ETA {}m {:02}s",
+                                    speed / 1048576.0,
+                                    eta / 60,
+                                    eta % 60
+                                )
+                            } else {
+                                status
+                            };
                             lines.push(format!(
                                 "{} {} | {}",
                                 if i == d.cursor { ">" } else { " " },

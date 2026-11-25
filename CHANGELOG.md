@@ -17,3 +17,5 @@
 - Implemented the initial inference, Hub download and coding-agent workflows; refactored runtime and UI, added original Hex branding and experimental Arch packaging.
 
 - Hardened partial downloads with exclusive locks and free-space checks, added sequential queue execution, backend/device probing, explicit projector paths, and known GGUF tensor extent validation.
+
+- Added real CPU router integration coverage, optional foreground supervisor and systemd unit, paginated Hub discovery, bounded retries, transfer rates and ETA, and configurable Kitty agent launch plans.
