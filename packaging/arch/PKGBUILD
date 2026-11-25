@@ -11,6 +11,8 @@ makedepends=('git' 'rust')
 optdepends=('btop: resource monitoring' 'xdg-utils: open server Web UI' 'kitty: agent tabs and windows')
 provides=('llamancer')
 conflicts=('llamancer')
+# ring's C/assembly objects must not contain GCC LTO bitcode when Rust links with LLD.
+options=('!lto')
 source=('llamancer::git+https://github.com/0xlillith/llamancer.git')
 sha256sums=('SKIP')
 
