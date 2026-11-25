@@ -55,6 +55,9 @@ Keyless OMP launches use the documented LLAMA_CPP_BASE_URL runtime override; che
 
 For Arch-based systems, see the [experimental VCS package](packaging/arch/README.md). Binary tarballs and checksums are available as [workflow artifacts](https://github.com/0xlillith/llamancer/actions/workflows/release.yml) until a stable release is published.
 
+## Model storage
+Add multiple model roots in Settings and optionally choose a Default download root. In Discover, `d` uses that default (or opens the picker when multiple roots exist without a default), and `D` always opens the destination picker. The picker shows total bundle size and free space per root. Queue entries retain their original destination across restart and default changes. New bundles require space for the full file(s); resume of already queued files still checks the actual remaining bytes.
+
 ## Project workspaces
 Set **Workspace parent directory** in Settings to a directory containing your projects (for example `/home/user/src`). Press `P` in Server or Settings to select an immediate project folder. The selected project becomes the working directory for OMP, Pi or custom agents. Hidden folders and symlink entries are excluded; discovery is bounded. You can also set an explicit Active project directory independently. If a workspace is configured but no project is selected, agent launch asks you to select one. Existing agent settings are untouched.
 

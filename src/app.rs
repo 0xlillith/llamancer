@@ -33,6 +33,7 @@ pub struct App {
     pub config: Config,
     pub setting: usize,
     pub projects: Option<Vec<std::path::PathBuf>>,
+    pub download_destination: Option<crate::downloads::DestinationChoice>,
     pub project_cursor: usize,
     pub edit: Option<(Field, String)>,
     pub notice: String,

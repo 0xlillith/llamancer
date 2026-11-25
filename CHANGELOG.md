@@ -37,3 +37,5 @@
 - Added workspace parent directories and an active-project picker for agent launches.
 
 - Added six additional built-in palettes and a more expressive terminal header, numbered tabs and highlighted selections.
+
+- Added per-bundle download destination selection and disk-space preflight.

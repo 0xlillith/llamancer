@@ -18,13 +18,14 @@ pub enum Field {
     WorkspaceRoot,
     CustomAgent,
     AddRoot,
+    DownloadRoot,
     RemoveRoot,
     ImportModel,
     RestoreModel,
     RemoveImport,
 }
 impl Field {
-    pub const ALL: [Self; 15] = [
+    pub const ALL: [Self; 16] = [
         Self::Theme,
         Self::Agent,
         Self::AgentTerminal,
@@ -40,6 +41,7 @@ impl Field {
         Self::RestoreModel,
         Self::RemoveImport,
         Self::WorkspaceRoot,
+        Self::DownloadRoot,
     ];
     pub fn label(self) -> &'static str {
         match self {
@@ -54,6 +56,7 @@ impl Field {
             Self::WorkspaceRoot => "Workspace parent directory (or none)",
             Self::CustomAgent => "Custom agent executable",
             Self::AddRoot => "Add model root",
+            Self::DownloadRoot => "Default download root (or none)",
             Self::RemoveRoot => "Remove model root (exact path)",
             Self::ImportModel => "Import GGUF by reference (absolute path)",
             Self::RestoreModel => "Restore hidden model (exact identity path)",
@@ -73,6 +76,11 @@ impl Field {
                 .unwrap_or_else(|| "none".into()),
             Self::ServerBinary => config.server_binary.clone(),
             Self::Device => config.device.clone(),
+            Self::DownloadRoot => config
+                .download_root
+                .as_ref()
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|| "none".into()),
             Self::WorkspaceRoot => config
                 .workspace_root
                 .as_ref()
@@ -165,6 +173,17 @@ pub fn apply(
                 draft.project_dir = selected;
             }
         }
+        Field::DownloadRoot => {
+            draft.download_root = if value == "none" {
+                None
+            } else {
+                let path = PathBuf::from(value);
+                if !path.is_absolute() || !draft.model_roots.contains(&path) || !path.is_dir() {
+                    return Err(invalid("Choose an existing configured model root or none"));
+                }
+                Some(path)
+            };
+        }
         Field::AddRoot => {
             let path = PathBuf::from(value);
             if !path.is_absolute() || !path.is_dir() {
@@ -206,6 +225,9 @@ pub fn apply(
         Field::RemoveRoot => {
             let path = PathBuf::from(value);
             draft.model_roots.retain(|p| p != &path);
+            if draft.download_root.as_ref() == Some(&path) {
+                draft.download_root = None;
+            }
         }
     }
     if draft.api_key_file.is_some() {

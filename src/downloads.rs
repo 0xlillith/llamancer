@@ -18,6 +18,79 @@ use std::{
     time::{Duration, Instant},
 };
 
+/// Planning is read-only; the actual transfer rechecks free space and path identity.
+pub fn bundle_bytes(files: &[File]) -> io::Result<u64> {
+    files.iter().try_fold(0u64, |sum, file| {
+        sum.checked_add(file.size)
+            .ok_or_else(|| io::Error::other("Bundle size overflow"))
+    })
+}
+
+pub fn destination_space(root: &Path) -> io::Result<u64> {
+    use std::os::unix::ffi::OsStrExt;
+    if !root.is_absolute() || !root.is_dir() || root.canonicalize()? != root {
+        return Err(io::Error::other("Configured root is missing or changed"));
+    }
+    let name = std::ffi::CString::new(root.as_os_str().as_bytes()).map_err(io::Error::other)?;
+    // SAFETY: valid NUL-terminated path and valid output storage for statvfs.
+    let mut stat = std::mem::MaybeUninit::<libc::statvfs>::uninit();
+    if unsafe { libc::statvfs(name.as_ptr(), stat.as_mut_ptr()) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let stat = unsafe { stat.assume_init() };
+    if stat.f_flag & libc::ST_RDONLY != 0
+        || unsafe {
+            libc::faccessat(
+                libc::AT_FDCWD,
+                name.as_ptr(),
+                libc::W_OK | libc::X_OK,
+                libc::AT_EACCESS,
+            )
+        } != 0
+    {
+        return Err(io::Error::other("Download root is not writable"));
+    }
+    fs2::available_space(root)
+}
+
+pub fn check_destination(root: &Path, required: u64) -> io::Result<()> {
+    if destination_space(root)? < required {
+        return Err(io::Error::other(
+            "Insufficient free space for complete bundle",
+        ));
+    }
+    Ok(())
+}
+
+pub struct DestinationChoice {
+    pub files: Vec<File>,
+    pub roots: Vec<PathBuf>,
+    pub available: Vec<Option<u64>>,
+    pub required: u64,
+    pub cursor: usize,
+}
+impl DestinationChoice {
+    pub fn new(
+        files: Vec<File>,
+        roots: Vec<PathBuf>,
+        preferred: Option<&Path>,
+    ) -> io::Result<Self> {
+        let required = bundle_bytes(&files)?;
+        let cursor = roots
+            .iter()
+            .position(|p| Some(p.as_path()) == preferred)
+            .unwrap_or(0);
+        let available = roots.iter().map(|p| destination_space(p).ok()).collect();
+        Ok(Self {
+            files,
+            roots,
+            available,
+            required,
+            cursor,
+        })
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum State {
     Queued,
@@ -1283,6 +1356,24 @@ mod tests {
         fs::remove_file(&dest).unwrap();
         std::os::unix::fs::symlink("/dev/null", &dest).unwrap();
         assert!(verify(&dest, &item, &AtomicBool::new(false)).is_err());
+    }
+    #[test]
+    fn destination_planning_is_read_only_and_checks_space() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        let file = fixture(&root).file;
+        let choice = DestinationChoice::new(
+            vec![file.clone()],
+            vec![root.clone(), root.join("missing")],
+            Some(&root),
+        )
+        .unwrap();
+        assert_eq!(choice.required, file.size);
+        assert!(choice.available[0].is_some());
+        assert_eq!(choice.available[1], None);
+        assert!(check_destination(&root, u64::MAX).is_err());
+        assert!(check_destination(&root, 0).is_ok());
+        assert_eq!(fs::read_dir(root).unwrap().count(), 0);
     }
     #[test]
     fn queue_roundtrip_and_non_destructive_removal() {
