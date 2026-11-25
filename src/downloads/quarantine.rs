@@ -89,7 +89,8 @@ fn idle_endpoint(endpoint: &str) -> io::Result<Vec<TcpListener>> {
         .collect()
 }
 /// Leases alone do not consistently reject existing mappings on all filesystems.
-/// Inspect visible same-user procfs mappings as an additional fail-closed guard.
+/// Inspect readable same-user procfs mappings in addition to the mandatory lease.
+/// Linux access controls may hide other processes; never claim universal visibility.
 fn reject_mappings(meta: &fs::Metadata, path: &Path) -> io::Result<()> {
     // SAFETY: geteuid has no arguments.
     let uid = unsafe { libc::geteuid() };
@@ -114,7 +115,13 @@ fn reject_mappings(meta: &fs::Metadata, path: &Path) -> io::Result<()> {
         };
         let status = match fs::read_to_string(entry.path().join("status")) {
             Ok(s) => s,
-            Err(e) if gone(&e) => continue,
+            Err(e)
+                if gone(&e)
+                    || (pid != std::process::id()
+                        && e.kind() == io::ErrorKind::PermissionDenied) =>
+            {
+                continue
+            }
             Err(e) => return Err(e),
         };
         let user = status
@@ -129,12 +136,14 @@ fn reject_mappings(meta: &fs::Metadata, path: &Path) -> io::Result<()> {
         }
         let maps = match File::open(entry.path().join("maps")) {
             Ok(f) => f,
-            Err(e) if gone(&e) => continue,
-            Err(_) => {
-                return Err(io::Error::other(
-                    "Cannot inspect same-user mappings; stop inference and retry",
-                ))
+            Err(e)
+                if gone(&e)
+                    || (pid != std::process::id()
+                        && e.kind() == io::ErrorKind::PermissionDenied) =>
+            {
+                continue
             }
+            Err(e) => return Err(e),
         };
         if pid == std::process::id() {
             saw_self = true;
@@ -142,7 +151,13 @@ fn reject_mappings(meta: &fs::Metadata, path: &Path) -> io::Result<()> {
         for line in BufReader::new(maps).split(b'\n') {
             let line = match line {
                 Ok(l) => l,
-                Err(e) if gone(&e) => break,
+                Err(e)
+                    if gone(&e)
+                        || (pid != std::process::id()
+                            && e.kind() == io::ErrorKind::PermissionDenied) =>
+                {
+                    break
+                }
                 Err(e) => return Err(e),
             };
             if mapping_matches(&line, major, minor, meta.ino(), path) {
@@ -423,6 +438,74 @@ mod tests {
             42,
             b"/model.gguf"
         ));
+    }
+    // Spawn the actual test executable with an ignored helper so the mapping
+    // belongs to a separate process; close its stdin to release it.
+    #[test]
+    #[ignore = "child fixture only"]
+    fn mapping_helper() {
+        use std::io::Read;
+        let path = std::env::var_os("LLAMANCER_TEST_MAPPING_PATH").expect("fixture path");
+        let ready = std::env::var_os("LLAMANCER_TEST_MAPPING_READY").expect("ready path");
+        let file = File::open(path).unwrap();
+        // SAFETY: fixture is six bytes and the read-only mapping is held until EOF.
+        let ptr = unsafe {
+            libc::mmap(
+                std::ptr::null_mut(),
+                6,
+                libc::PROT_READ,
+                libc::MAP_SHARED,
+                file.as_raw_fd(),
+                0,
+            )
+        };
+        assert_ne!(ptr, libc::MAP_FAILED);
+        drop(file);
+        fs::write(ready, b"ready").unwrap();
+        std::io::stdin().read_to_end(&mut Vec::new()).unwrap();
+        // SAFETY: successful mapping is still live.
+        assert_eq!(unsafe { libc::munmap(ptr, 6) }, 0);
+    }
+    #[test]
+    fn separately_mapped_file_is_not_moved() {
+        use std::{
+            process::{Command, Stdio},
+            time::{Duration, Instant},
+        };
+        let root = tempfile::tempdir().unwrap();
+        let (item, path) = fixture(root.path());
+        let ready = root.path().join("ready");
+        let mut child = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "downloads::quarantine::tests::mapping_helper",
+                "--ignored",
+            ])
+            .env("LLAMANCER_TEST_MAPPING_PATH", &path)
+            .env("LLAMANCER_TEST_MAPPING_READY", &ready)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !ready.exists() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let result = if ready.exists() {
+            Some(move_items(
+                vec![item],
+                false,
+                &endpoint(),
+                &AtomicBool::new(false),
+            ))
+        } else {
+            None
+        };
+        drop(child.stdin.take());
+        assert!(child.wait().unwrap().success());
+        assert!(result.expect("child mapping ready").is_err());
+        assert!(path.exists());
     }
     #[test]
     fn mapped_file_is_not_moved() {
