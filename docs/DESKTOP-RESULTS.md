@@ -115,3 +115,14 @@ The fixed quick benchmark used the 91,893,088-byte public SmolLM2 fixture (SHA-2
 The GUI persisted all three results under the identical model checksum. These small-model partial-offload results are not peak full-GPU comparisons.
 
 The official x86_64 CUDA 12.8 primary and runtime companion archives (814,939,138 combined bytes) installed successfully in isolated storage, passed staged version verification and reported no compatible device on AMD-only Andromeda. No driver installation, NVIDIA inference or aarch64 hardware validation is claimed. The isolated CUDA installation was removed. Broader hybrid architecture and controlled memory-pressure scenarios remain outstanding.
+
+
+## Additional scoped beta acceptance
+
+On Andromeda, a real public Qwen3.5-0.8B Q4_K_M GGUF (532,517,120 bytes, pinned Hub revision 6ab461498e2023f6e3c1baea90a8f0fe38ab64d0, SHA-256 bd258782e35f7f458f8aced1adc053e6e92e89bc735ba3be89d38a06121dc517) was paused after 4,403,461 bytes and resumed after reopening the persistent queue. The default/root configuration was changed before resume. The original destination was preserved and its SHA-256/ownership receipt verified. A second 1,185,376-byte public fixture downloaded to a separate tmpfs root; both indexed correctly. Missing/read-only roots and insufficient-space preflight were rejected. The offline multipart regression requires every shard before a group becomes complete/loadable; individual files publish separately, not as one filesystem transaction. New queue entries pin directory identity and reject root replacement/redirect on restart.
+
+The same hybrid qwen35 model ran on official b12726 Vulkan0 and ROCm0 with 4,096 context, 99 requested GPU layers and two threads. Authenticated single/router generation and port cleanup passed. KV estimates remained unavailable as intended. Observed single/router generation: Vulkan 348.24/392.27 tok/s; ROCm 225.28/222.08 tok/s. Global dedicated GPU memory increases at load were approximately 0.67 GiB and 0.95 GiB respectively; this includes other allocations and does not prove model/KV/compute placement. The prior 4B/16k conventional-model tests remain separate.
+
+A real CPU Qwen3-4B server was constrained with prlimit to a 1 GiB process virtual address space, producing a genuine mmap allocation failure. The controller observed exit, discarded the session, released its port, accepted a startup cancellation, and recovered with a normal real CPU completion on the same port. No system-wide memory pressure or GPU OOM was induced. Dedicated GPU OOM, larger hybrid architectures and broader hardware remain outside the validated matrix.
+
+Reproduce with the ignored tests in tests/storage_live.rs and tests/memory_pressure_live.rs; run the existing desktop_live test with the downloaded hybrid fixture. No user model or configuration is modified.

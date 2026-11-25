@@ -19,15 +19,15 @@ Llamancer brings local GGUF model discovery, inference preferences, server contr
 
 ## Status
 
-Pre-release development, targeting the first Linux beta. Native Linux x86_64 and aarch64 CI, managed CPU text/vision inference, checksum-verified public and authorized gated Hub downloads, systemd lifecycle, Arch package installation, AMD Vulkan/ROCm text and vision inference, pinned CPU/Vulkan/ROCm source builds, real OMP/Pi tool use and graphical agent exit have passed their documented acceptance tests. Authenticated OMP uses an isolated temporary profile. No general model compatibility, comprehensive security audit or stable-release certification is implied. See [verified status](docs/STATUS.md), [desktop results](docs/DESKTOP-RESULTS.md) and [release review](docs/BETA-REVIEW.md).
+Pre-release candidate for the first Linux beta. Native Linux x86_64 and aarch64 CI, managed CPU text/vision inference, checksum-verified public and authorized gated Hub downloads, systemd lifecycle, Arch package installation, AMD Vulkan/ROCm text and vision inference, pinned CPU/Vulkan/ROCm source builds, real OMP/Pi tool use and graphical agent exit have passed their documented acceptance tests. Authenticated OMP uses an isolated temporary profile. No general model compatibility, comprehensive security audit or stable-release certification is implied. See [verified status](docs/STATUS.md), [desktop results](docs/DESKTOP-RESULTS.md) and [release review](docs/BETA-REVIEW.md).
 
 | Workspace | Current functionality |
 | --- | --- |
 | Library | Read-only GGUF indexing (including Hugging Face cache snapshot links), shard grouping, search, favorites, inspector, inference profiles, import, hide/restore and recoverable managed-file quarantine |
 | Discover | Paginated Hugging Face search, exact repository lookup, license/quantization filters, pinned revisions and shard selection |
-| Downloads | Persistent queue, sequential resumable transfers, bounded retry, throughput and ETA, free-space checks, file locking and integrity validation |
+| Downloads | Persistent queue, sequential resumable transfers, bounded retry, throughput and ETA, explicit per-bundle storage, free-space checks, pinned destination identity, file locking and integrity validation |
 | Server | External attach, managed session, headless router supervisor, router presets, load/unload, logs, Web UI and btop |
-| Settings | XDG TOML preferences, Dracula/high-contrast/custom themes, model roots, agent, server executable, device selection, project directory |
+| Settings | XDG TOML preferences, Eight built-in/custom themes, optional Nerd Font icons, model roots, agent, backend/device, workspace root and active project |
 
 ## Screenshots
 
@@ -53,13 +53,31 @@ cargo run --locked --release
 
 Keyless OMP launches use the documented LLAMA_CPP_BASE_URL runtime override; check for conflicting native provider settings before using it. Authenticated OMP launches use a temporary private agent profile and daemon directory, with an explicit selected provider. Personal OMP settings are not read into this profile or rewritten. The temporary profile and its daemon are cleaned up on exit; do not use this mode for persistent agent history or background jobs. Authenticated Pi launches require the scoped pi adapter rather than pi-native. Pi uses a Llamancer-owned session extension with the selected endpoint and model; choose pi-native for the upstream router provider (LLAMA_BASE_URL). Existing agent settings remain untouched. The compatibility extension supports text only and requires an advertised or configured context size. The configured custom agent receives LLAMANCER_ENDPOINT and LLAMANCER_MODEL.
 
-For Arch-based systems, see the [experimental VCS package](packaging/arch/README.md). Binary tarballs and checksums are available as [workflow artifacts](https://github.com/0xlillith/llamancer/actions/workflows/release.yml) until a stable release is published.
+## Installation packages
+
+Pre-release packages are built for Linux x86_64 and aarch64. Download the matching archive and its SHA-256 file from a successful [Release builds workflow](https://github.com/0xlillith/llamancer/actions/workflows/release.yml), extract the Actions artifact ZIP first, then run:
+
+```sh
+# Choose x86_64 or aarch64 to match uname -m
+arch=$(uname -m)
+sha256sum -c "llamancer-linux-${arch}.tar.gz.sha256"
+tar -xzf "llamancer-linux-${arch}.tar.gz"
+mkdir -p ~/.local/bin
+install -m755 "llamancer-linux-${arch}/llamancer" ~/.local/bin/llamancer
+~/.local/bin/llamancer --version
+```
+
+Keep the extracted documentation and third-party notices. Check the workflow run commit for the source revision. Add ~/.local/bin to PATH if necessary. Archives contain Llamancer, not model weights or GPU runtimes.
+
+For Arch/CachyOS, download the x86_64 package from [Arch package smoke](https://github.com/0xlillith/llamancer/actions/workflows/arch-package.yml), extract the ZIP and install the matching non-debug package with `sudo pacman -U ./llamancer-git-VERSION-x86_64.pkg.tar.zst` (replace the placeholder with the actual filename). Alternatively build from the [VCS package recipe](packaging/arch/README.md). Registry publication is not yet enabled. Candidate package checksums are also generated during independent artifact verification.
+
+Run `llamancer doctor`, then `llamancer` and press G for guided setup. On Linux distributions without compatible system libraries, build from source instead.
 
 ## Model fit advisory
 Press `m` in Library to see the selected model's disk size, conventional attention KV estimate, requested GPU offload and available system RAM. Probe the configured backend with `i` in Server first to include its last reported per-device memory. Full-offload/CPU comparisons flag likely capacity pressure; partial/automatic offload and unsupported hybrid architectures remain explicitly uncertain. This is not a guarantee and does not change settings automatically.
 
 ## Model storage
-Add multiple model roots in Settings and optionally choose a Default download root. In Discover, `d` uses that default (or opens the picker when multiple roots exist without a default), and `D` always opens the destination picker. The picker shows total bundle size and free space per root. Queue entries retain their original destination across restart and default changes. New bundles require space for the full file(s); resume of already queued files still checks the actual remaining bytes.
+Add multiple model roots in Settings and optionally choose a Default download root. In Discover, `d` uses that default (or opens the picker when multiple roots exist without a default), and `D` always opens the destination picker. The picker shows total bundle size and free space per root. Queue entries retain their original destination across restart and default changes. New entries also pin the directory device/inode identity; a replaced directory, symlink or changed mount identity is refused. Restore the original mount/path before resuming. Legacy entries lack the recorded identity, but redirected symlink roots are refused. New bundles require space for the full file(s); resume of already queued files still checks the actual remaining bytes.
 
 ## Project workspaces
 Set **Workspace parent directory** in Settings to a directory containing your projects (for example `/home/user/src`). Press `P` in Server or Settings to select an immediate project folder. The selected project becomes the working directory for OMP, Pi or custom agents. Hidden folders and symlink entries are excluded; discovery is bounded. You can also set an explicit Active project directory independently. If a workspace is configured but no project is selected, agent launch asks you to select one. Existing agent settings are untouched.
@@ -110,11 +128,12 @@ See [Backend Manager](docs/BACKENDS.md) for verification, platform requirements 
 
 | View | Keys |
 | --- | --- |
-| Global | 1–5 or Tab / Shift+Tab, mouse tabs and rows, ? help, q / Ctrl+C quit |
-| Library | r scan, x cancel, / search, s sort, f favorite, v favorites only, Enter details, p profile, l load, i invalid files, h hide, t quarantine |
-| Discover | / search, Enter submit/open repo, Backspace back, n next page, d queue file or shard bundle |
+| Global | 1–5 or Tab / Shift+Tab, mouse tabs and rows, G setup, ? help, q / Ctrl+C quit |
+| Library | r scan, x cancel, / search, s sort, f favorite, v favorites only, Enter details, PgUp/PgDn scroll, p profile, m memory advisory, l load, i invalid files, h hide, t quarantine |
+| Discover | / search, Enter submit/open repo, Backspace back, n next page, d queue file or shard bundle, D choose destination |
 | Downloads | r resume, R run queue, x pause, z remove queue entry (keeps files), t quarantine, T restore |
-| Server | r refresh, D detach, i probe backend, s router, x stop owned, l/u load/unload, a agent, A current terminal, g logs, w Web UI, b btop |
+| Server | r refresh, D detach, i probe backend, s router, x stop owned, l/u load/unload, a agent, A current terminal, g logs, w Web UI, b btop, B backends, P project |
+| Settings | T theme, I icons, B backends, P project |
 | Profile | Up/Down, Enter edit, a advanced/basic, s save, Esc discard, Ctrl+U clear input |
 
 ## Themes
@@ -133,7 +152,7 @@ Click a tab or a visible list row to select it; use the mouse wheel or Up/Down t
 - Models remain in place; indexing never reads tensor weights or deletes files.
 - Configuration and downloads use versioned or typed TOML beneath the XDG config directory. Custom themes live in its themes subdirectory.
 - Managed servers bind to loopback and are session-scoped. They stop when Llamancer exits. External servers remain independent.
-- Downloaded files are stored under the first model root, by repository and pinned revision. Partial files use a .part suffix and are not indexed. Set HF_TOKEN in the environment if a repository requires authentication. Llamancer never sends that token to redirect hosts outside huggingface.co.
+- Downloaded files are stored under the chosen model root, by repository and pinned revision. Partial files use a .part suffix and are not indexed. Set HF_TOKEN in the environment if a repository requires authentication. Llamancer never sends that token to redirect hosts outside huggingface.co.
 - Profiles separate engine options from generation defaults. Auto inherits backend defaults; unsupported CLI flags are rejected during launch. Advanced profiles accept an explicit multimodal projector path; Settings accepts a supported device identifier or automatic selection.
 
 ## Hub discovery and private repositories
