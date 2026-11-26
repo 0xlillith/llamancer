@@ -28,7 +28,7 @@ sampling defaults > embedded GGUF metadata interpreted by llama.cpp > backend
 defaults. No arbitrary remote command, template override, or model-card code
 is executed. A known repository card is not proof that every future revision
 supports the same tool protocol. At runtime, consult `/props` for actual context,
-sampler and capabilities. A successful synthetic tool probe is not a guarantee.
+sampler and capabilities. A successful synthetic tool probe is not a guarantee. The reviewed catalog recognizes managed and standard Hub snapshot layouts, shows exact-revision versus repository-level guidance, and refuses mixed-root shards. The reviewed Qwen3.5-0.8B snapshot uses only the documented default non-thinking text settings; task-dependent vision and explicit thinking settings are not guessed.
 
 ## Implemented in the development workflow
 

@@ -79,6 +79,7 @@ pub const RECOMMENDATION_REV: &str = "096fef2f967efa50c25529adda0c59637e2b4477";
 pub enum Recommendation {
     FlashNext,
     Qwen27B,
+    Qwen35Small,
     DavidAu,
 }
 impl Recommendation {
@@ -88,16 +89,42 @@ impl Recommendation {
         match self {
             Self::FlashNext => "https://huggingface.co/unsloth/Qwen3.8-Flash-Next-GGUF/blob/2c41bd2a0b3f51c503c11f1c7ed2e6bb34036beb/README.md",
             Self::Qwen27B => "https://huggingface.co/unsloth/Qwen3.8-27B-GGUF/blob/408fcc1807ab264d8cd644a7c4c0f58fbd32eebc/README.md",
+            Self::Qwen35Small => "https://huggingface.co/unsloth/Qwen3.5-0.8B-GGUF/blob/6ab461498e2023f6e3c1baea90a8f0fe38ab64d0/README.md",
             Self::DavidAu => "https://huggingface.co/DavidAU/Qwen3.8-Flash-Next-Turbo-Brilliance-50x-Reasoning-Instruct-GSQ-RCO-GGUF/blob/096fef2f967efa50c25529adda0c59637e2b4477/README.md",
         }
     }
     pub fn publisher(self) -> &'static str {
         match self {
-            Self::FlashNext | Self::Qwen27B => "Unsloth / Qwen model card",
+            Self::FlashNext | Self::Qwen27B | Self::Qwen35Small => "Unsloth / Qwen model card",
             Self::DavidAu => "DavidAU pinned model card",
         }
     }
-    fn defaults(self, thinking: Option<Thinking>) -> Option<Generation> {
+    pub fn reviewed_revision(self) -> &'static str {
+        match self {
+            Self::FlashNext => "2c41bd2a0b3f51c503c11f1c7ed2e6bb34036beb",
+            Self::Qwen27B => "408fcc1807ab264d8cd644a7c4c0f58fbd32eebc",
+            Self::Qwen35Small => "6ab461498e2023f6e3c1baea90a8f0fe38ab64d0",
+            Self::DavidAu => RECOMMENDATION_REV,
+        }
+    }
+    fn defaults(self, thinking: Option<Thinking>, vision: bool) -> Option<Generation> {
+        if self == Self::Qwen35Small {
+            // The reviewed 0.8B card defaults to non-thinking text. Its VL
+            // and graded/thinking modes have different task-dependent settings.
+            // Do not guess a sampler for those modes or force graded reasoning.
+            if vision || !matches!(thinking, None | Some(Thinking::Off | Thinking::Auto)) {
+                return None;
+            }
+            return Some(Generation {
+                temperature: Some(1.0),
+                top_p: Some(1.0),
+                top_k: Some(20),
+                min_p: Some(0.0),
+                repeat_penalty: Some(1.0),
+                presence_penalty: Some(2.0),
+                seed: None,
+            });
+        }
         let instruct = thinking == Some(Thinking::Off);
         if self == Self::DavidAu && instruct {
             // The existing DavidAU review covered thinking mode only.
@@ -118,9 +145,58 @@ impl Recommendation {
         })
     }
 }
-fn path_recommendation(path: &std::path::Path) -> Option<(Recommendation, &std::path::Path)> {
-    // Managed layout: owner/repository/revision/[variant directories]/file.
-    // Match full owner and repository, not the filename or a fuzzy model name.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SourceLayout {
+    Managed,
+    HubSnapshot,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RecommendationMatch<'a> {
+    pub preset: Recommendation,
+    pub revision: &'a str,
+    pub layout: SourceLayout,
+    root: &'a std::path::Path,
+}
+impl RecommendationMatch<'_> {
+    pub fn exact_review(self) -> bool {
+        self.revision == self.preset.reviewed_revision()
+    }
+    pub fn summary(self) -> String {
+        format!(
+            "{} · {} card {}",
+            if self.layout == SourceLayout::HubSnapshot {
+                "Hub snapshot"
+            } else {
+                "Managed layout"
+            },
+            if self.exact_review() {
+                "exact revision"
+            } else {
+                "repo guidance"
+            },
+            &self.preset.reviewed_revision()[..8]
+        )
+    }
+}
+fn reviewed(owner: &str, repo: &str, hash: &str) -> Option<Recommendation> {
+    match (owner, repo) {
+        ("unsloth", "Qwen3.8-Flash-Next-GGUF") => Some(Recommendation::FlashNext),
+        ("unsloth", "Qwen3.8-27B-GGUF") => Some(Recommendation::Qwen27B),
+        ("unsloth", "Qwen3.5-0.8B-GGUF")
+            if hash == Recommendation::Qwen35Small.reviewed_revision() =>
+        {
+            Some(Recommendation::Qwen35Small)
+        }
+        ("DavidAU", RECOMMENDATION_REPO) if hash == RECOMMENDATION_REV => {
+            Some(Recommendation::DavidAu)
+        }
+        _ => None,
+    }
+}
+fn path_recommendation(path: &std::path::Path) -> Option<RecommendationMatch<'_>> {
+    // Recognize both Llamancer's managed layout and the actual Hub cache
+    // snapshot layout. A path identifies a candidate for guidance, not a
+    // cryptographic attestation of the weights or template.
     for rev in path.ancestors().skip(1) {
         let Some(hash) = rev.file_name().and_then(|n| n.to_str()) else {
             continue;
@@ -128,25 +204,45 @@ fn path_recommendation(path: &std::path::Path) -> Option<(Recommendation, &std::
         if hash.len() != 40 || !hash.bytes().all(|b| b.is_ascii_hexdigit()) {
             continue;
         }
-        let Some(repo) = rev.parent() else { continue };
-        let name = repo.file_name().and_then(|n| n.to_str());
-        let owner = repo
-            .parent()
-            .and_then(|p| p.file_name())
-            .and_then(|n| n.to_str());
-        let preset = match (owner, name) {
-            (Some("unsloth"), Some("Qwen3.8-Flash-Next-GGUF")) => Recommendation::FlashNext,
-            (Some("unsloth"), Some("Qwen3.8-27B-GGUF")) => Recommendation::Qwen27B,
-            (Some("DavidAU"), Some(RECOMMENDATION_REPO)) if hash == RECOMMENDATION_REV => {
-                Recommendation::DavidAu
-            }
-            _ => continue,
+        let Some(parent) = rev.parent() else { continue };
+        let Some(name) = parent.file_name().and_then(|n| n.to_str()) else {
+            continue;
         };
-        return Some((preset, rev));
+        let (preset, layout) = if name == "snapshots" {
+            let Some(cache) = parent
+                .parent()
+                .and_then(|p| p.file_name())
+                .and_then(|n| n.to_str())
+                .and_then(|n| n.strip_prefix("models--"))
+            else {
+                continue;
+            };
+            let Some((owner, repo)) = cache.split_once("--") else {
+                continue;
+            };
+            (reviewed(owner, repo, hash), SourceLayout::HubSnapshot)
+        } else {
+            let Some(owner) = parent
+                .parent()
+                .and_then(|p| p.file_name())
+                .and_then(|n| n.to_str())
+            else {
+                continue;
+            };
+            (reviewed(owner, name, hash), SourceLayout::Managed)
+        };
+        if let Some(preset) = preset {
+            return Some(RecommendationMatch {
+                preset,
+                revision: hash,
+                layout,
+                root: rev,
+            });
+        }
     }
     None
 }
-pub fn recommendation(group: &super::group::Group) -> Option<Recommendation> {
+pub fn recommendation_match(group: &super::group::Group) -> Option<RecommendationMatch<'_>> {
     if !group.runnable() {
         return None;
     }
@@ -155,7 +251,10 @@ pub fn recommendation(group: &super::group::Group) -> Option<Recommendation> {
         .files
         .iter()
         .all(|f| path_recommendation(&f.path) == Some(first))
-        .then_some(first.0)
+        .then_some(first)
+}
+pub fn recommendation(group: &super::group::Group) -> Option<Recommendation> {
+    recommendation_match(group).map(|m| m.preset)
 }
 pub fn thinking_options(group: &super::group::Group) -> &'static [Option<Thinking>] {
     const QWEN: &[Option<Thinking>] = &[
@@ -178,8 +277,8 @@ pub fn thinking_options(group: &super::group::Group) -> &'static [Option<Thinkin
         Some(Thinking::Auto),
     ];
     match recommendation(group) {
-        Some(_) => QWEN,
-        None => GENERIC,
+        Some(Recommendation::FlashNext | Recommendation::Qwen27B | Recommendation::DavidAu) => QWEN,
+        _ => GENERIC,
     }
 }
 pub fn thinking_label(value: Option<Thinking>) -> &'static str {
@@ -198,7 +297,10 @@ impl Profile {
         }
         recommendation(group).filter(|preset| {
             preset
-                .defaults(if omp { self.agent_thinking } else { None })
+                .defaults(
+                    if omp { self.agent_thinking } else { None },
+                    self.engine.projector.is_some(),
+                )
                 .is_some()
         })
     }
@@ -211,10 +313,13 @@ impl Profile {
         if self.backend_defaults {
             return self;
         }
-        if omp && self.agent_thinking.is_none() {
+        if omp && self.agent_thinking.is_none() && preset != Recommendation::Qwen35Small {
             self.agent_thinking = Some(Thinking::Medium);
         }
-        if let Some(defaults) = preset.defaults(if omp { self.agent_thinking } else { None }) {
+        if let Some(defaults) = preset.defaults(
+            if omp { self.agent_thinking } else { None },
+            self.engine.projector.is_some(),
+        ) {
             let g = &mut self.generation;
             g.temperature = g.temperature.or(defaults.temperature);
             g.top_p = g.top_p.or(defaults.top_p);
@@ -500,6 +605,61 @@ mod tests {
             Profile::default().with_model_defaults(&unrelated, true),
             Profile::default()
         );
+    }
+    #[test]
+    fn hub_snapshots_and_revision_provenance_are_explicit() {
+        let preset = Recommendation::FlashNext;
+        let rev = preset.reviewed_revision();
+        let mut group = sample("unsloth", "Qwen3.8-Flash-Next-GGUF", rev);
+        let matched = recommendation_match(&group).unwrap();
+        assert!(matched.exact_review());
+        assert_eq!(matched.layout, SourceLayout::Managed);
+        group.files[0].path=format!("/cache/hub/models--unsloth--Qwen3.8-Flash-Next-GGUF/snapshots/{rev}/UD-Q4_K_XL/model.gguf").into();
+        let matched = recommendation_match(&group).unwrap();
+        assert_eq!(matched.layout, SourceLayout::HubSnapshot);
+        assert!(matched.exact_review());
+        assert_eq!(
+            Profile::default()
+                .with_model_defaults(&group, true)
+                .generation
+                .top_k,
+            Some(20)
+        );
+        let mut second = group.files[0].clone();
+        second.path = format!(
+            "/different/cache/models--unsloth--Qwen3.8-Flash-Next-GGUF/snapshots/{rev}/model.gguf"
+        )
+        .into();
+        group.files.push(second);
+        group.expected = 2;
+        assert!(recommendation(&group).is_none());
+        let other = sample("unsloth", "Qwen3.8-Flash-Next-GGUF", &"b".repeat(40));
+        assert!(!recommendation_match(&other).unwrap().exact_review());
+        assert!(recommendation(&sample("DavidAU", RECOMMENDATION_REPO, &"b".repeat(40))).is_none());
+    }
+    #[test]
+    fn small_qwen_review_is_exact_text_only_and_preserves_overrides() {
+        let group = sample(
+            "unsloth",
+            "Qwen3.5-0.8B-GGUF",
+            Recommendation::Qwen35Small.reviewed_revision(),
+        );
+        let mut stored = Profile::default();
+        stored.generation.temperature = Some(0.4);
+        let effective = stored.clone().with_model_defaults(&group, true);
+        assert_eq!(effective.agent_thinking, None);
+        assert_eq!(effective.generation.temperature, Some(0.4));
+        assert_eq!(effective.generation.top_p, Some(1.0));
+        assert_eq!(effective.generation.presence_penalty, Some(2.0));
+        assert_eq!(stored.generation.top_p, None);
+        stored.engine.projector = Some("/models/mmproj.gguf".into());
+        assert_eq!(stored.clone().with_model_defaults(&group, true), stored);
+        stored.engine.projector = None;
+        stored.agent_thinking = Some(Thinking::Medium);
+        assert_eq!(stored.clone().with_model_defaults(&group, true), stored);
+        assert!(stored.recommendation_source(&group, true).is_none());
+        let future = sample("unsloth", "Qwen3.5-0.8B-GGUF", &"b".repeat(40));
+        assert!(recommendation(&future).is_none());
     }
     #[test]
     fn valid_preferences_and_auto() {

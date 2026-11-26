@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Distinguish exact reviewed model-card revisions from repository guidance, support standard Hub snapshots, and add the reviewed Qwen3.5-0.8B default text profile without guessing vision or thinking settings.
+
 - Responsive asynchronous KDE/Zenity workspace picker, cancellation and compact workspace actions, plus populated responsive-layout and PTY regression checks.
 
 - Library and CLI SHA-256 audits with per-pass byte progress, persistent mismatch evidence, fail-closed cancellation and headless router exclusion of suspect models.

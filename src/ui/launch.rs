@@ -170,7 +170,12 @@ pub fn draw(f: &mut Frame, area: Rect, app: &App, p: &Palette) {
             if g.runnable() {
                 if app.config.effective_profile(g).backend_defaults {
                     "Backend defaults"
-                } else if crate::models::profile::recommendation(g).is_some() {
+                } else if app
+                    .config
+                    .effective_profile(g)
+                    .recommendation_source(g, app.config.default_agent == "omp")
+                    .is_some()
+                {
                     "Recommended defaults"
                 } else {
                     "Ready to launch"
@@ -327,7 +332,19 @@ pub fn draw(f: &mut Frame, area: Rect, app: &App, p: &Palette) {
             side.width.saturating_sub(2),
             side.height.saturating_sub(2),
         );
-        let text = format!("{}\n{}", source, budget);
+        let provenance = crate::models::profile::recommendation_match(g)
+            .filter(|_| {
+                profile
+                    .recommendation_source(g, app.config.default_agent == "omp")
+                    .is_some()
+            })
+            .map(|m| m.summary());
+        let text = format!(
+            "{}\n{}{}",
+            source,
+            budget,
+            provenance.map(|v| format!("\n{v}")).unwrap_or_default()
+        );
         f.render_widget(
             Paragraph::new(text)
                 .style(p.heading)
