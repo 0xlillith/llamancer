@@ -194,7 +194,8 @@ fn content_regions(body: Rect, app: &App) -> (Rect, Option<Rect>) {
     }
 }
 pub fn search_at(area: Rect, app: &App, column: u16, row: u16) -> bool {
-    if app.launch_menu.is_some()
+    if app.folder_browsing
+        || app.launch_menu.is_some()
         || app.launching_agent
         || app.backend_open
         || app.setup_open
@@ -253,10 +254,16 @@ pub fn launch_hit(
     x: u16,
     y: u16,
 ) -> Option<(Option<usize>, crossterm::event::KeyCode)> {
+    if app.folder_browsing {
+        return None;
+    }
     let (body, _) = content_regions(regions(area)[2], app);
     launch::hit(body, app, x, y).map(|h| (h.index, h.key))
 }
 pub fn row_at(area: Rect, app: &App, column: u16, row: u16) -> Option<usize> {
+    if app.folder_browsing {
+        return None;
+    }
     let (body, _) = content_regions(regions(area)[2], app);
     if app.launch_menu.is_some() {
         return launch::hit(body, app, column, row).and_then(|h| h.index);
@@ -327,6 +334,7 @@ pub fn row_at(area: Rect, app: &App, column: u16, row: u16) -> Option<usize> {
             let list = library::list_area(body);
             (list, 2, 3, app.model_cursor, app.visible().len())
         }
+        1 if body.height < 7 || body.width < 12 => return None,
         1 => (
             body,
             catalog::DISCOVER_HEADER,
@@ -334,6 +342,7 @@ pub fn row_at(area: Rect, app: &App, column: u16, row: u16) -> Option<usize> {
             app.discovery.cursor,
             app.discovery.len(),
         ),
+        2 if body.height < 8 || body.width < 12 => return None,
         2 => {
             let d = app.downloads.as_ref()?;
             let groups = d.bundles();
@@ -405,7 +414,15 @@ pub fn draw_themed(frame: &mut Frame, app: &App, theme: &Theme) {
         chrome::tab(frame, rect, index, app, &palette);
     }
     let (body, aside) = content_regions(body, app);
-    if let Some(action) = app.backend_confirmation.filter(|_| app.backend_open) {
+    if app.folder_browsing {
+        frame.render_widget(
+            Paragraph::new("Choose a folder in the desktop dialog.\n\nEsc cancels.")
+                .style(palette.heading)
+                .wrap(Wrap { trim: true })
+                .block(palette.panel(" Folder selection ")),
+            body,
+        );
+    } else if let Some(action) = app.backend_confirmation.filter(|_| app.backend_open) {
         use crate::backends::{Kind, RELEASES};
         let kind = Kind::ALL[app.backend_cursor].name();
         let release = RELEASES[app.backend_version];
@@ -509,7 +526,9 @@ pub fn draw_themed(frame: &mut Frame, app: &App, theme: &Theme) {
     }
     controls::draw(frame, app, &palette);
     choices::draw(frame, app, &palette);
-    let footer_text = if app.picker.is_some() {
+    let footer_text = if app.folder_browsing {
+        "Esc cancel folder selection"
+    } else if app.picker.is_some() {
         "↑↓ select  Enter choose  Esc cancel"
     } else if app.launch_menu.is_some() {
         "Enter action  ↑↓ choose  C presets  c custom context  Esc back"
@@ -851,6 +870,101 @@ mod tests {
         for (w, h) in [(1, 1), (40, 12), (80, 24)] {
             let mut terminal = Terminal::new(TestBackend::new(w, h)).unwrap();
             terminal.draw(|f| draw(f, &app)).unwrap();
+        }
+    }
+    #[test]
+    fn populated_catalog_transfers_and_workspace_keep_mouse_geometry() {
+        use crate::{
+            downloads::Controller,
+            huggingface::{discovery::Variant, File, Repository},
+            settings::Field,
+        };
+        use crossterm::event::KeyCode;
+        let tmp = tempfile::tempdir().unwrap();
+        let mut app = App::default();
+        let files: Vec<_> = (0..30)
+            .map(|i| File {
+                repo: "fixture/model".into(),
+                revision: "a".repeat(40),
+                name: format!("model-{i:02}.gguf"),
+                size: 1024 * 1024,
+                sha256: None,
+            })
+            .collect();
+        app.discovery.repos = (0..30)
+            .map(|i| Repository {
+                id: format!("fixture/model-{i:02}"),
+                downloads: 1200,
+                likes: 10,
+                trending_score: None,
+                created_at: None,
+                updated_at: None,
+                gated: serde_json::Value::Bool(false),
+                private: false,
+            })
+            .collect();
+        app.discovery.variants = files
+            .iter()
+            .map(|f| Variant {
+                name: f.name.clone(),
+                files: vec![f.clone()],
+                expected: 1,
+            })
+            .collect();
+        let mut downloads = Controller::new(tmp.path().join("queue.toml")).unwrap();
+        downloads.add(files, tmp.path().into()).unwrap();
+        downloads.cursor = 20;
+        app.downloads = Some(downloads);
+        app.discovery.cursor = 20;
+        app.setting = Field::ALL
+            .iter()
+            .position(|f| *f == Field::WorkspaceRoot)
+            .unwrap();
+        for (w, h) in [(30, 12), (50, 14), (80, 24), (120, 36), (180, 50)] {
+            let area = Rect::new(0, 0, w, h);
+            for variant in [false, true] {
+                app.tab = 1;
+                app.discovery.repo = variant.then(|| "fixture/model".into());
+                let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
+                term.draw(|f| draw(f, &app)).unwrap();
+                let (body, _) = content_regions(regions(area)[2], &app);
+                let (offset, cap) = viewport(
+                    app.discovery.cursor,
+                    body.height,
+                    catalog::DISCOVER_RESERVED,
+                );
+                if cap > 0 && body.height >= 7 {
+                    assert_eq!(
+                        row_at(area, &app, body.x + 2, body.y + catalog::DISCOVER_HEADER),
+                        Some(offset)
+                    );
+                }
+            }
+            app.tab = 2;
+            let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
+            term.draw(|f| draw(f, &app)).unwrap();
+            let (body, _) = content_regions(regions(area)[2], &app);
+            let (offset, cap) = viewport(20, body.height, catalog::DOWNLOAD_RESERVED);
+            if cap > 0 && body.height >= 8 {
+                assert_eq!(
+                    row_at(area, &app, body.x + 2, body.y + catalog::DOWNLOAD_HEADER),
+                    Some(offset)
+                );
+            }
+            app.tab = 4;
+            term.draw(|f| draw(f, &app)).unwrap();
+            if w >= 50 {
+                assert!(
+                    (0..h).any(|y| (0..w).any(|x| controls::hit(area, &app, x, y)
+                        == Some(controls::Command::Key(KeyCode::Char('O')))))
+                );
+            }
+            app.folder_browsing = true;
+            term.draw(|f| draw(f, &app)).unwrap();
+            assert!((0..h)
+                .all(|y| (0..w).all(|x| row_at(area, &app, x, y).is_none()
+                    && controls::hit(area, &app, x, y).is_none())));
+            app.folder_browsing = false;
         }
     }
     #[test]

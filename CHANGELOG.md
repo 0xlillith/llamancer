@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Responsive asynchronous KDE/Zenity workspace picker, cancellation and compact workspace actions, plus populated responsive-layout and PTY regression checks.
+
 - Library and CLI SHA-256 audits with per-pass byte progress, persistent mismatch evidence, fail-closed cancellation and headless router exclusion of suspect models.
 
 - Reviewed model-specific sampler recommendations, effective configuration preview and 128K auto-context target with native hybrid memory fitting.

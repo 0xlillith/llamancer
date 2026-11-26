@@ -93,7 +93,7 @@ Set the workspace parent directory to the folder containing your projects.
 Select an actual project subfolder as Active project, which becomes the
 agent's working directory. Choose Project in the launch panel or P in
 Server/Settings. Click Browse folder when KDialog or Zenity is available;
-otherwise enter the path in the terminal. An explicit active project can
+otherwise enter the path in the terminal. The desktop dialog runs asynchronously; press Esc in Llamancer to cancel it without saving, or close the dialog normally. An explicit active project can
 also be configured independently.
 
 OMP is the default optional coding agent. Pi and custom commands are supported.

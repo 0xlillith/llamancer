@@ -178,7 +178,7 @@ impl Discovery {
     }
     pub fn len(&self) -> usize {
         if self.repo.is_some() {
-            self.files.len()
+            self.variants.len()
         } else {
             self.repos.len()
         }
