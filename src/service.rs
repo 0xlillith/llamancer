@@ -9,8 +9,19 @@ use std::{
     time::{Duration, Instant},
 };
 pub fn run(config: Config, stop: Arc<AtomicBool>) -> io::Result<()> {
+    run_checked(config, stop, None)
+}
+fn run_checked(
+    config: Config,
+    stop: Arc<AtomicBool>,
+    downloads: Option<&crate::downloads::Controller>,
+) -> io::Result<()> {
     let scan = models::scan(config.scan_roots(), &stop)?;
-    let groups = config.filter_groups(models::group::group(scan.candidates));
+    let groups = config
+        .filter_groups(models::group::group(scan.candidates))
+        .into_iter()
+        .filter(|g| !downloads.is_some_and(|d| d.integrity_problem(g)))
+        .collect();
     if stop.load(Ordering::Acquire) {
         return Ok(());
     }
@@ -49,6 +60,9 @@ pub fn from_config() -> io::Result<()> {
     signal_hook::flag::register(signal_hook::consts::SIGTERM, Arc::clone(&stop))?;
     signal_hook::flag::register(signal_hook::consts::SIGINT, Arc::clone(&stop))?;
     signal_hook::flag::register(signal_hook::consts::SIGHUP, Arc::clone(&stop))?;
-    let config = Config::load(&crate::config::config_dir()?.join("config.toml"))?;
-    run(config, stop)
+    let root = crate::config::config_dir()?;
+    let _lock = crate::diagnostics::SessionLock::acquire(&root)?;
+    let config = Config::load(&root.join("config.toml"))?;
+    let downloads = crate::downloads::Controller::new(root.join("downloads.toml"))?;
+    run_checked(config, stop, Some(&downloads))
 }

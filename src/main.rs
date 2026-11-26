@@ -281,6 +281,51 @@ fn backend_cli(mut args: impl Iterator<Item = std::ffi::OsString>) -> io::Result
     }
     Ok(())
 }
+fn verify_cli() -> io::Result<()> {
+    let root = llamancer::config::config_dir()?;
+    let _lock = llamancer::diagnostics::SessionLock::acquire(&root)?;
+    let mut d = llamancer::downloads::Controller::new(root.join("downloads.toml"))?;
+    let cancel = Arc::new(AtomicBool::new(false));
+    for signal in [libc::SIGINT, libc::SIGTERM, libc::SIGHUP] {
+        signal_hook::flag::register(signal, Arc::clone(&cancel))?;
+    }
+    d.verify_all()?;
+    let mut last = Instant::now() - Duration::from_secs(2);
+    while d.busy() {
+        if cancel.load(Ordering::Acquire) {
+            d.pause();
+        }
+        if last.elapsed() >= Duration::from_secs(1) {
+            if let Some(a) = d.audit_progress() {
+                eprintln!(
+                    "Part {}/{}: {} — {} bytes / {}",
+                    a.part, a.parts, a.stage, a.bytes, a.total
+                );
+            }
+            last = Instant::now();
+        }
+        d.tick();
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    println!("{}", d.status);
+    for i in &d.queue.items {
+        if let Some(e) = &i.integrity_error {
+            eprintln!(
+                "Integrity failure: {} — {}",
+                i.file
+                    .name
+                    .chars()
+                    .filter(|c| !c.is_control())
+                    .collect::<String>(),
+                e.chars().filter(|c| !c.is_control()).collect::<String>()
+            );
+        }
+    }
+    match d.last_audit {
+        Some(a) if a.failed == 0 && !a.cancelled => Ok(()),
+        _ => Err(io::Error::other("Integrity audit incomplete or failed")),
+    }
+}
 fn main() -> io::Result<()> {
     let mut args = std::env::args_os().skip(1);
     if let Some(arg) = args.next() {
@@ -296,12 +341,13 @@ fn main() -> io::Result<()> {
         match arg.to_str() {
             Some("serve") => return llamancer::service::from_config(),
             Some("doctor") => return llamancer::doctor::run(),
+            Some("verify") => return verify_cli(),
             Some("--version" | "-V") => {
                 println!("llamancer {}", env!("CARGO_PKG_VERSION"));
                 return Ok(());
             }
             Some("--help" | "-h") => {
-                println!("Llamancer — Summon your models.\n\nUsage: llamancer [serve|backend|doctor|--help|--version]\n  serve   Supervise a local router without a TUI\n  doctor  Check local setup offline without exposing paths or tokens\n  backend list | check | install KIND [VERSION] | probe KIND [VERSION]");
+                println!("Llamancer — Summon your models.\n\nUsage: llamancer [serve|backend|doctor|verify|--help|--version]\n  serve   Supervise a local router without a TUI\n  doctor  Check local setup offline without exposing paths or tokens\n  verify  Audit all completed managed model parts with pinned SHA-256\n  backend list | check | install KIND [VERSION] | probe KIND [VERSION]");
                 return Ok(());
             }
             _ => {

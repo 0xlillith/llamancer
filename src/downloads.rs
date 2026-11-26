@@ -336,6 +336,14 @@ fn verify(path: &Path, item: &Item, cancel: &AtomicBool) -> io::Result<()> {
     verify_file(&mut file, item, cancel)
 }
 fn verify_file(file: &mut fs::File, item: &Item, cancel: &AtomicBool) -> io::Result<()> {
+    verify_file_progress(file, item, cancel, &|_| {})
+}
+fn verify_file_progress(
+    file: &mut fs::File,
+    item: &Item,
+    cancel: &AtomicBool,
+    progress: &dyn Fn(u64),
+) -> io::Result<()> {
     let meta = file.metadata()?;
     if !meta.is_file() || meta.len() != item.file.size {
         return Err(io::Error::other("Downloaded size mismatch"));
@@ -344,6 +352,8 @@ fn verify_file(file: &mut fs::File, item: &Item, cancel: &AtomicBool) -> io::Res
         file.seek(SeekFrom::Start(0))?;
         let mut hash = Sha256::new();
         let mut buffer = [0u8; 65536];
+        let mut count = 0u64;
+        progress(0);
         loop {
             cancelled(cancel)?;
             let n = file.read(&mut buffer)?;
@@ -351,6 +361,8 @@ fn verify_file(file: &mut fs::File, item: &Item, cancel: &AtomicBool) -> io::Res
                 break;
             }
             hash.update(&buffer[..n]);
+            count += n as u64;
+            progress(count);
         }
         let after = file.metadata()?;
         if !same_inode(&meta, &after)
@@ -857,7 +869,12 @@ fn reuse_local(
 }
 /// Linux independent direct-read verification. Unsupported alignment or
 /// filesystems are reported, not treated as successful direct verification.
-fn direct_digest(path: &Path, item: &Item, cancel: &AtomicBool) -> io::Result<String> {
+fn direct_digest(
+    path: &Path,
+    item: &Item,
+    cancel: &AtomicBool,
+    progress: &dyn Fn(u64),
+) -> io::Result<String> {
     use std::alloc::{alloc_zeroed, dealloc, Layout};
     const CHUNK: usize = 1024 * 1024;
     struct Aligned(*mut u8, Layout);
@@ -896,6 +913,7 @@ fn direct_digest(path: &Path, item: &Item, cancel: &AtomicBool) -> io::Result<St
         }
         digest.update(&buffer[..n]);
         count += n as u64;
+        progress(count);
     }
     let after = file.metadata()?;
     if !same_inode(&before, &after)
@@ -912,7 +930,47 @@ fn direct_digest(path: &Path, item: &Item, cancel: &AtomicBool) -> io::Result<St
     }
     Ok(format!("{:x}", digest.finalize()))
 }
+#[cfg(test)]
 fn audit_item(item: &Item, cancel: &AtomicBool) -> io::Result<()> {
+    audit_item_progress(item, cancel, &|_, _| {})
+}
+/// Distinguish an inconsistent read from a repeatable mismatch. A cancelled
+/// second pass must never discard a failure already observed on the first.
+fn reconcile_audit(
+    buffered: io::Result<()>,
+    direct: io::Result<String>,
+    expected: &str,
+    prior_inconsistent: bool,
+    retry: impl FnOnce() -> io::Result<()>,
+) -> io::Result<()> {
+    match direct {
+        Ok(actual) if actual==expected && buffered.is_err() => Err(io::Error::other("Buffered SHA-256 failed; independent direct read matches. Inconsistent reads; launch blocked.")),
+        Ok(actual) if actual!=expected => Err(io::Error::other(format!("{}Independent direct SHA-256 mismatch: expected {expected}, got {actual}; buffered result: {}", if prior_inconsistent || buffered.is_ok() {"Inconsistent reads; "} else {""},buffered.as_ref().map(|_|"matched".to_owned()).unwrap_or_else(|e|e.to_string())))),
+        Ok(_) => buffered,
+        Err(e) => {
+            let prefix=if prior_inconsistent {"Inconsistent reads previously observed; "} else {""};
+            if let Err(first)=buffered {
+                return Err(io::Error::other(format!("{prefix}{first}; independent direct read unavailable or incomplete: {e}")));
+            }
+            if e.kind()==io::ErrorKind::Interrupted { return Err(e); }
+            if prior_inconsistent { return Err(io::Error::other(format!("{prefix}direct revalidation unavailable: {e}"))); }
+            retry()
+        }
+    }
+}
+fn same_version(a: &fs::Metadata, b: &fs::Metadata) -> bool {
+    same_inode(a, b)
+        && a.len() == b.len()
+        && a.mtime() == b.mtime()
+        && a.mtime_nsec() == b.mtime_nsec()
+        && a.ctime() == b.ctime()
+        && a.ctime_nsec() == b.ctime_nsec()
+}
+fn audit_item_progress(
+    item: &Item,
+    cancel: &AtomicBool,
+    progress: &dyn Fn(&'static str, u64),
+) -> io::Result<()> {
     let expected = item
         .file
         .sha256
@@ -931,34 +989,50 @@ fn audit_item(item: &Item, cancel: &AtomicBool) -> io::Result<()> {
         .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
         .open(&path)?;
     let before = file.metadata()?;
-    let buffered = verify_file(&mut file, item, cancel);
+    let buffered = verify_file_progress(&mut file, item, cancel, &|n| {
+        progress("Buffered SHA-256", n)
+    });
     if buffered
         .as_ref()
         .is_err_and(|e| e.kind() == io::ErrorKind::Interrupted)
     {
         return buffered;
     }
-    if !same_inode(&before, &fs::symlink_metadata(&path)?) {
+    if !same_version(&before, &fs::symlink_metadata(&path)?) {
         return Err(io::Error::other("Model path changed during verification"));
     }
-    // Independently verify a failure, or revalidation of a previously
-    // suspect file. A passing direct read never overrides a failed buffered read.
     if buffered.is_err() || item.integrity_error.is_some() {
-        match direct_digest(&path,item,cancel) {
-            Ok(actual) if actual==expected && buffered.is_err() => return Err(io::Error::other("Buffered SHA-256 failed; independent direct read matches. Inconsistent reads; launch blocked.")),
-            Ok(actual) if actual!=expected => return Err(io::Error::other(format!("Independent direct SHA-256 mismatch: expected {expected}, got {actual}; buffered result: {}",buffered.as_ref().map(|_|"matched".to_owned()).unwrap_or_else(|e|e.to_string())))),
-            Ok(_) => {},
-            Err(e) if e.kind()==io::ErrorKind::Interrupted => return Err(e),
-            Err(e) => {
-                if let Err(first)=buffered { return Err(io::Error::other(format!("{first}; independent direct read unavailable: {e}"))); }
-                // A second independent buffered read is useful on filesystems
-                // without O_DIRECT; explicitly retain a disagreement flag.
-                if item.integrity_error.as_deref().is_some_and(|e|e.contains("Inconsistent reads")) {
-                    return Err(io::Error::other(format!("Inconsistent reads previously observed; direct revalidation unavailable: {e}")));
+        progress("Independent direct SHA-256", 0);
+        let direct = direct_digest(&path, item, cancel, &|n| {
+            progress("Independent direct SHA-256", n)
+        });
+        let result = reconcile_audit(
+            buffered,
+            direct,
+            &expected,
+            item.integrity_error
+                .as_deref()
+                .is_some_and(|e| e.contains("Inconsistent reads")),
+            || {
+                progress("Repeat buffered SHA-256", 0);
+                let mut second = fs::OpenOptions::new()
+                    .read(true)
+                    .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+                    .open(&path)?;
+                if !same_version(&before, &second.metadata()?) {
+                    return Err(io::Error::other("Model path changed before revalidation"));
                 }
-                verify(&path,item,cancel)?;
-            }
+                verify_file_progress(&mut second, item, cancel, &|n| {
+                    progress("Repeat buffered SHA-256", n)
+                })
+            },
+        );
+        if !same_version(&before, &fs::symlink_metadata(&path)?) {
+            return Err(io::Error::other(
+                "Model path changed during independent verification",
+            ));
         }
+        return result;
     }
     buffered
 }
@@ -1041,7 +1115,28 @@ impl BundleView {
         format!("{} ({}/{})", self.state, self.complete, self.expected)
     }
 }
-type AuditResults = Vec<(usize, Option<String>)>;
+#[derive(Clone, Debug, Default)]
+pub struct AuditProgress {
+    pub name: String,
+    pub part: usize,
+    pub parts: usize,
+    pub bytes: u64,
+    pub total: u64,
+    pub stage: &'static str,
+}
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct AuditSummary {
+    pub checked: usize,
+    pub failed: usize,
+    pub skipped: usize,
+    pub cancelled: bool,
+}
+struct AuditResults {
+    entries: Vec<(usize, Option<String>)>,
+    skipped: usize,
+    cancelled: bool,
+}
+
 pub struct Controller {
     pub queue: Queue,
     pub cursor: usize,
@@ -1050,6 +1145,8 @@ pub struct Controller {
     active: Option<(usize, Job<Option<Receipt>>, Arc<AtomicU64>)>,
     mutation: Option<Job<()>>,
     audit: Option<Job<AuditResults>>,
+    audit_progress: Arc<std::sync::Mutex<AuditProgress>>,
+    pub last_audit: Option<AuditSummary>,
     pub transport: Transport,
     run_queue: bool,
     resume_parts: std::collections::VecDeque<(usize, bool)>,
@@ -1065,6 +1162,8 @@ impl Controller {
             active: None,
             mutation: None,
             audit: None,
+            audit_progress: Default::default(),
+            last_audit: None,
             transport: Transport::default(),
             run_queue: false,
             resume_parts: Default::default(),
@@ -1247,12 +1346,11 @@ impl Controller {
         let g = groups
             .get(self.bundle_cursor(&groups))
             .ok_or_else(|| io::Error::other("Select a model"))?;
-        if g.indices
-            .iter()
-            .any(|&i| self.queue.items[i].receipt.is_some())
-        {
+        if g.indices.iter().any(|&i| {
+            self.queue.items[i].integrity_error.is_some() || self.queue.items[i].receipt.is_some()
+        }) {
             return Err(io::Error::other(
-                "Keep ownership receipts; quarantine the model instead",
+                "Keep ownership receipts and integrity evidence; verify or quarantine the model instead",
             ));
         }
         let old = self.queue.items.clone();
@@ -1290,16 +1388,72 @@ impl Controller {
                 })
         })
     }
+    pub fn audit_progress(&self) -> Option<AuditProgress> {
+        self.audit.as_ref()?;
+        self.audit_progress.lock().ok().map(|p| p.clone())
+    }
     pub fn verify_bundle(&mut self) -> io::Result<()> {
-        if self.busy() {
-            return Err(io::Error::other("Wait for active transfer"));
-        }
         let groups = self.bundles();
         let group = groups
             .get(self.bundle_cursor(&groups))
             .ok_or_else(|| io::Error::other("Select a model"))?;
-        let items: Vec<_> = group
-            .indices
+        self.begin_audit(group.indices.clone())
+    }
+    pub fn verify_all(&mut self) -> io::Result<()> {
+        self.begin_audit((0..self.queue.items.len()).collect())
+    }
+    /// Read-only auditing does not require an ownership receipt (unlike
+    /// quarantine). Match every indexed file to its pinned queue entry.
+    pub fn verify_group(&mut self, group: &crate::models::group::Group) -> io::Result<()> {
+        if !group.complete || group.files.is_empty() {
+            return Err(io::Error::other("Select a complete model"));
+        }
+        let mut indices = Vec::new();
+        for file in &group.files {
+            let matches: Vec<_> = self
+                .queue
+                .items
+                .iter()
+                .enumerate()
+                .filter(|(_, item)| {
+                    item.state == State::Complete
+                        && item.file.sha256.is_some()
+                        && quarantine::expected(item)
+                            .ok()
+                            .is_some_and(|p| p == file.path)
+                })
+                .map(|(i, _)| i)
+                .collect();
+            if matches.len() != 1 {
+                return Err(io::Error::other("Every part must have one pinned SHA-256 in Downloads; imported files are not verifiable here"));
+            }
+            indices.push(matches[0]);
+        }
+        self.begin_audit(indices.clone())?;
+        self.cursor = indices[0];
+        Ok(())
+    }
+    pub fn can_verify_group(&self, group: &crate::models::group::Group) -> bool {
+        group.complete
+            && !group.files.is_empty()
+            && group.files.iter().all(|f| {
+                self.queue
+                    .items
+                    .iter()
+                    .filter(|i| {
+                        i.state == State::Complete
+                            && i.file.sha256.is_some()
+                            && quarantine::expected(i).ok().as_ref() == Some(&f.path)
+                    })
+                    .count()
+                    == 1
+            })
+    }
+    fn begin_audit(&mut self, indices: Vec<usize>) -> io::Result<()> {
+        if self.busy() {
+            return Err(io::Error::other("Wait for active transfer"));
+        }
+        let items: Vec<_> = indices
             .iter()
             .filter_map(|&i| {
                 let item = &self.queue.items[i];
@@ -1310,34 +1464,90 @@ impl Controller {
         if items.is_empty() {
             return Err(io::Error::other("No completed parts with pinned SHA-256"));
         }
+        let skipped = indices.len() - items.len();
+        let parts = items.len();
+        let progress = Arc::clone(&self.audit_progress);
+        *progress
+            .lock()
+            .map_err(|_| io::Error::other("Audit progress unavailable"))? = AuditProgress {
+            parts,
+            ..Default::default()
+        };
+        self.last_audit = None;
         self.audit = Some(Job::start(move |cancel| {
-            let mut results = Vec::new();
-            for (i, item) in items {
+            let mut entries = Vec::new();
+            for (part, (i, item)) in items.into_iter().enumerate() {
                 if cancelled(&cancel).is_err() {
                     break;
                 }
-                let error = match audit_item(&item, &cancel) {
+                if let Ok(mut p) = progress.lock() {
+                    *p = AuditProgress {
+                        name: item.file.name.clone(),
+                        part: part + 1,
+                        parts,
+                        bytes: 0,
+                        total: item.file.size,
+                        stage: "Buffered SHA-256",
+                    };
+                }
+                let error = match audit_item_progress(&item, &cancel, &|stage, bytes| {
+                    if let Ok(mut p) = progress.lock() {
+                        p.stage = stage;
+                        p.bytes = bytes;
+                    }
+                }) {
                     Ok(()) => None,
                     Err(e) if e.kind() == io::ErrorKind::Interrupted => break,
                     Err(e) => Some(e.to_string()),
                 };
-                results.push((i, error));
+                entries.push((i, error));
             }
-            Ok(results)
+            Ok(AuditResults {
+                entries,
+                skipped,
+                cancelled: cancel.load(Ordering::Acquire),
+            })
         })?);
         self.status = "Auditing completed parts against pinned SHA-256…".into();
         Ok(())
     }
-    fn finish_audit(&mut self, results: Vec<(usize, Option<String>)>) -> io::Result<()> {
-        let mut bad = 0;
-        let count = results.len();
-        for (i, error) in results {
-            bad += usize::from(error.is_some());
-            self.queue.items[i].integrity_error = error;
+    fn finish_audit(&mut self, results: AuditResults) -> io::Result<()> {
+        let mut summary = AuditSummary {
+            checked: results.entries.len(),
+            skipped: results.skipped,
+            cancelled: results.cancelled,
+            failed: 0,
+        };
+        for (i, error) in results.entries {
+            summary.failed += usize::from(error.is_some());
+            let item = &mut self.queue.items[i];
+            item.integrity_error = error.map(|e| {
+                if item
+                    .integrity_error
+                    .as_deref()
+                    .is_some_and(|old| old.contains("Inconsistent reads"))
+                    && !e.contains("Inconsistent reads")
+                {
+                    format!("Inconsistent reads previously observed; {e}")
+                } else {
+                    e
+                }
+            });
         }
-        self.status =
-            format!("Integrity audit: {count} checked, {bad} failed; unchecked parts unchanged");
-        self.queue.save(&self.path)
+        self.queue.save(&self.path)?;
+        self.last_audit = Some(summary);
+        self.status = format!(
+            "Integrity audit: {} checked, {} failed, {} skipped{}",
+            summary.checked,
+            summary.failed,
+            summary.skipped,
+            if summary.cancelled {
+                " · cancelled"
+            } else {
+                ""
+            }
+        );
+        Ok(())
     }
     pub fn progress(&self, index: usize) -> Option<u64> {
         self.active
@@ -1688,6 +1898,7 @@ impl Controller {
         }
         if let Some(job) = &self.audit {
             job.cancel();
+            self.status = "Cancelling audit…".into();
         }
         if let Some((_, job, _)) = &self.active {
             job.cancel();
@@ -1823,6 +2034,43 @@ mod tests {
         }
     }
     #[test]
+    fn audit_disagreement_and_cancel_are_fail_closed() {
+        let bad = || Err(io::Error::other("Buffered mismatch"));
+        let interrupted = || Err(io::Error::new(io::ErrorKind::Interrupted, "Cancelled"));
+        assert!(
+            reconcile_audit(bad(), Ok("good".into()), "good", false, || Ok(()))
+                .unwrap_err()
+                .to_string()
+                .contains("Inconsistent reads")
+        );
+        assert!(
+            reconcile_audit(Ok(()), Ok("bad".into()), "good", false, || Ok(()))
+                .unwrap_err()
+                .to_string()
+                .contains("Inconsistent reads")
+        );
+        assert_ne!(
+            reconcile_audit(bad(), interrupted(), "good", false, || Ok(()))
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::Interrupted
+        );
+        assert!(reconcile_audit(
+            Ok(()),
+            Err(io::Error::other("Unsupported")),
+            "good",
+            true,
+            || Ok(())
+        )
+        .is_err());
+        assert!(
+            reconcile_audit(Ok(()), Ok("good".into()), "good", true, || panic!(
+                "unnecessary retry"
+            ))
+            .is_ok()
+        );
+    }
+    #[test]
     fn audit_failure_persists_and_blocks_indexed_group_until_revalidated() {
         let root = tempfile::tempdir().unwrap();
         let mut controller = Controller::new(root.path().join("queue.toml")).unwrap();
@@ -1853,6 +2101,7 @@ mod tests {
             projector: false,
         };
         assert!(controller.integrity_problem(&group));
+        assert!(controller.remove_bundle().is_err());
         let mut controller = Controller::new(root.path().join("queue.toml")).unwrap();
         assert!(controller.integrity_problem(&group));
         fs::write(&path, b"abcdef").unwrap();

@@ -52,12 +52,12 @@ bytes.
 
 On checksum failure, do not bypass verification. Inspect the expected and
 actual digest, then use Retry fresh (F) if you want a fresh transfer while
-preserving the failed partial. Verify SHA-256 (V) audits a completed managed
+preserving the failed partial. Verify SHA-256 (V) in Library or Downloads audits a completed managed
 model against its pinned digests. Failed audits persist and prevent managed
 launch until revalidation succeeds. Independent direct-read checks are
 attempted on mismatch when the filesystem supports them; a matching direct
 read alone does not override a failed buffered hash. Missing checksums
-cannot establish cryptographic integrity.
+cannot establish cryptographic integrity. The audit dashboard shows the part and byte progress of each read pass. Cancel with x. From a terminal, after closing the TUI or headless supervisor, run `llamancer verify` to check all completed managed parts with pinned hashes.
 
 ## 4. Configure and launch inference
 
