@@ -57,7 +57,12 @@ pub fn content(app: &App, body: Rect) -> (&'static str, String) {
                 "Sampling defaults: {} (Enter to choose)",
                 if app.config.effective_profile(g).backend_defaults {
                     "Backend"
-                } else if crate::models::profile::recommendation(g).is_some() {
+                } else if app
+                    .config
+                    .effective_profile(g)
+                    .recommendation_source(g, app.config.default_agent == "omp")
+                    .is_some()
+                {
                     "Recommended"
                 } else {
                     "Backend (no reviewed model card)"

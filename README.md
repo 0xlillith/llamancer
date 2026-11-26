@@ -244,7 +244,7 @@ resolves mode-specific defaults from the reviewed model-card guidance
 ([Flash Next](https://huggingface.co/unsloth/Qwen3.8-Flash-Next-GGUF/blob/2c41bd2a0b3f51c503c11f1c7ed2e6bb34036beb/README.md),
 [27B](https://huggingface.co/unsloth/Qwen3.8-27B-GGUF/blob/408fcc1807ab264d8cd644a7c4c0f58fbd32eebc/README.md)).
 It matches the exact publisher/repository directory layout, including nested
-variant folders, rather than a model filename. This is reviewed repository
+variant folders and standard Hub-cache snapshots, rather than a model filename. The preview and inspector distinguish the exact reviewed card revision from repository-level guidance. This is reviewed repository
 guidance, not certification of all future weight revisions.
 
 Thinking defaults: temperature 1.0, top-p 0.95, top-k 20, min-p 0,
@@ -252,7 +252,7 @@ presence penalty 0, repeat penalty 1.0. Instruct uses temperature 0.7,
 top-p 0.80 and presence penalty 1.5. The previously reviewed DavidAU revision
 has thinking-only recommendations. OMP reasoning choices for these models
 start with reviewed levels; the loaded template reports actual supported and rejected efforts, and Auto avoids forcing an unverified level. Explicit saved overrides win unless rejected by the backend.
-Other models inherit embedded GGUF sampler metadata where present, then backend defaults. Context preferences remain separate.
+The exact reviewed [Qwen3.5-0.8B revision](https://huggingface.co/unsloth/Qwen3.5-0.8B-GGUF/blob/6ab461498e2023f6e3c1baea90a8f0fe38ab64d0/README.md) uses its documented non-thinking text defaults (temperature 1.0, top-p 1.0, presence penalty 2.0); no graded effort is forced. Vision and explicit thinking modes fall back to backend defaults unless manually overridden. Other models inherit embedded GGUF sampler metadata where present, then backend defaults. Context preferences remain separate.
 
 Select Sampling defaults to switch between inherited model guidance and
 backend defaults, or explicitly reset custom sampling overrides. The preview

@@ -346,6 +346,16 @@ fn inspector_widget(app: &App, p: &Palette, expanded: bool) -> Paragraph<'static
         lines.push(Line::raw(""));
         lines.push(section("INFERENCE"));
         let profile = app.config.effective_profile(group);
+        if let Some(m) = crate::models::profile::recommendation_match(group) {
+            lines.push(field("Card provenance", m.summary()));
+            lines.push(field("Model revision", m.revision.to_string()));
+            if profile
+                .recommendation_source(group, app.config.default_agent == "omp")
+                .is_none()
+            {
+                lines.push(Line::styled("Card defaults inactive for this mode.", p.dim));
+            }
+        }
         lines.push(field(
             "GPU layers",
             profile
