@@ -4,7 +4,7 @@ pkgver=0.1.0beta.5.r0
 pkgrel=1
 pkgdesc='Terminal-native local llama.cpp inference and coding agent control center'
 arch=('x86_64' 'aarch64')
-url='https://github.com/0xlillith/llamancer'
+url='https://github.com/selun3/llamancer'
 license=('MIT')
 depends=('gcc-libs' 'glibc')
 makedepends=('git' 'rust' 'python')
@@ -13,7 +13,7 @@ provides=('llamancer')
 conflicts=('llamancer')
 # ring's C/assembly objects must not contain GCC LTO bitcode when Rust links with LLD.
 options=('!lto' 'docs')
-source=('llamancer::git+https://github.com/0xlillith/llamancer.git')
+source=('llamancer::git+https://github.com/selun3/llamancer.git')
 sha256sums=('SKIP')
 
 pkgver() {

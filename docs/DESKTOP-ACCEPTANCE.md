@@ -7,7 +7,7 @@ This is a contributor runbook, not a requirement for ordinary users. Run it on a
 Use a fresh clone or a clean worktree. Do not overwrite an existing development checkout or install/update drivers automatically.
 
 ```bash
-git clone https://github.com/0xlillith/llamancer.git
+git clone https://github.com/selun3/llamancer.git
 cd llamancer
 git rev-parse HEAD
 rustc --version
