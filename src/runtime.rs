@@ -1927,6 +1927,20 @@ impl Runtime {
         }
         self.app.inspector_scroll = 0;
         match key {
+            KeyCode::Char('V') => {
+                self.ensure_quarantine_idle()?;
+                let group = self
+                    .app
+                    .selected()
+                    .cloned()
+                    .ok_or_else(|| io::Error::other("Select a model"))?;
+                self.app
+                    .downloads
+                    .as_mut()
+                    .ok_or_else(|| io::Error::other("Queue unavailable"))?
+                    .verify_group(&group)?;
+                self.app.dispatch(Action::Select(2));
+            }
             KeyCode::Char('i') => self.app.show_invalid = true,
             KeyCode::Char('m') => {
                 let group = self

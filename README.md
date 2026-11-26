@@ -292,3 +292,19 @@ Launch includes a direct project selector. Set Workspace root in Settings
 or Zenity. The terminal path editor remains available on headless machines.
 Open a selected project or its parent with the file manager via xdg-open,
 without changing the active project until explicitly selected.
+
+### Installed model integrity
+
+Select **Verify SHA-256** (V) in Library or Downloads for a complete managed
+model with pinned digests. Downloads shows the current part, read pass and byte
+progress; cancel with x. A failed buffered digest is not cleared merely by a
+matching direct read. Failed audits are persisted separately from ownership
+receipts, and cancellation retains any failure already observed.
+
+Run `llamancer verify` to audit all completed queue parts with authoritative
+SHA-256 values. The command reports checked, failed and skipped parts and exits
+nonzero on audit failure or cancellation. It does not download or modify model
+files. Imported or size-only files without pinned hashes cannot be certified.
+Stop the TUI or headless Llamancer supervisor using the same configuration
+before running this command. The supervisor and TUI both exclude known suspect
+models from managed inference and share the configuration session lock.

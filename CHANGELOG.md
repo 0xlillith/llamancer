@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Library and CLI SHA-256 audits with per-pass byte progress, persistent mismatch evidence, fail-closed cancellation and headless router exclusion of suspect models.
+
 - Reviewed model-specific sampler recommendations, effective configuration preview and 128K auto-context target with native hybrid memory fitting.
 - Optional official Hugging Face CLI download transport, verified same-digest local reuse and explicit fresh retry preserving failed partials.
 - Complete-model SHA-256 audits, independent direct-read checks on Linux when applicable, and persistent launch blocking for failed audits.

@@ -235,7 +235,15 @@ pub fn downloads(f: &mut Frame, area: Rect, app: &App, p: &Palette) {
             "{} models  •  {}  •  {}",
             groups.len(),
             d.transport.label(),
-            safe(&d.status)
+            d.audit_progress()
+                .map(|a| format!(
+                    "{} · {}/{} · {}",
+                    a.stage,
+                    a.part,
+                    a.parts,
+                    chrome::transfer_size(a.bytes, a.total)
+                ))
+                .unwrap_or_else(|| safe(&d.status))
         ))
         .style(p.heading),
         interior(area, 1, 1),

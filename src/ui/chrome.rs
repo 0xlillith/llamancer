@@ -284,6 +284,31 @@ fn transfer_dashboard(frame: &mut Frame, area: Rect, app: &App, p: &Palette) {
     }
     let inner = Rect::new(area.x + 1, area.y + 1, area.width - 2, area.height - 2);
     let Some(d) = &app.downloads else { return };
+    if let Some(a) = d.audit_progress() {
+        let lines = vec![
+            Line::styled("Integrity audit", p.heading),
+            Line::raw(format!("Part {} / {}", a.part, a.parts)),
+            Line::raw(safe(&a.name)),
+            Line::styled(a.stage, p.heading),
+        ];
+        frame.render_widget(
+            Paragraph::new(lines)
+                .style(p.base)
+                .wrap(Wrap { trim: true }),
+            Rect::new(inner.x, inner.y, inner.width, inner.height.min(5)),
+        );
+        if inner.height >= 7 {
+            let ratio = (a.bytes as f64 / a.total.max(1) as f64).clamp(0., 1.);
+            frame.render_widget(
+                Gauge::default()
+                    .ratio(ratio)
+                    .label(transfer_size(a.bytes, a.total))
+                    .gauge_style(p.base.fg(p.green)),
+                Rect::new(inner.x, inner.y + 5, inner.width, 1),
+            );
+        }
+        return;
+    }
     let groups = d.bundles();
     let Some(g) = groups.get(d.bundle_cursor(&groups)) else {
         frame.render_widget(

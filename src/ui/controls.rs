@@ -62,11 +62,23 @@ fn buttons(area: Rect, app: &App) -> Vec<Button> {
                             .as_ref()
                             .is_some_and(|d| d.integrity_problem(g))
                     }) {
-                        "Inspect integrity".into()
+                        "Verify SHA-256".into()
                     } else {
                         "Run model".into()
                     },
-                    Key(Enter),
+                    Key(
+                        if !app.details
+                            && app.selected().is_some_and(|g| {
+                                app.downloads
+                                    .as_ref()
+                                    .is_some_and(|d| d.integrity_problem(g))
+                            })
+                        {
+                            Char('V')
+                        } else {
+                            Enter
+                        },
+                    ),
                 ),
                 ("Inspect".into(), Key(Char('j'))),
                 ("Profile".into(), Key(Char('p'))),
@@ -123,7 +135,14 @@ fn buttons(area: Rect, app: &App) -> Vec<Button> {
             let selected = groups.get(d.bundle_cursor(&groups));
             let mut actions = Vec::new();
             if d.busy() {
-                actions.push(("Pause".into(), Key(Char('x'))));
+                actions.push((
+                    if d.audit_progress().is_some() {
+                        "Cancel audit".into()
+                    } else {
+                        "Pause".into()
+                    },
+                    Key(Char('x')),
+                ));
             } else if selected.is_some_and(|g| g.state == "Failed") {
                 actions.push(("Retry / verify".into(), Key(Enter)));
                 actions.push(("Retry fresh".into(), Key(Char('F'))));
@@ -146,9 +165,10 @@ fn buttons(area: Rect, app: &App) -> Vec<Button> {
             }
             if !d.busy()
                 && selected.is_some_and(|g| {
-                    g.indices
-                        .iter()
-                        .all(|&i| d.queue.items[i].receipt.is_none())
+                    g.indices.iter().all(|&i| {
+                        d.queue.items[i].receipt.is_none()
+                            && d.queue.items[i].integrity_error.is_none()
+                    })
                 })
             {
                 actions.push(("Remove job".into(), Key(Char('z'))));
@@ -229,6 +249,17 @@ fn buttons(area: Rect, app: &App) -> Vec<Button> {
         _ => return vec![],
     };
     let mut items = items;
+    if app.tab == 0
+        && app.projects.is_none()
+        && app.selected().is_some_and(|g| {
+            app.downloads
+                .as_ref()
+                .is_some_and(|d| !d.busy() && d.can_verify_group(g))
+        })
+        && !items.iter().any(|(_, c)| *c == Key(Char('V')))
+    {
+        items.insert(1, ("Verify SHA-256".into(), Key(Char('V'))));
+    }
     if app.tab == 4
         && app.projects.is_none()
         && matches!(
