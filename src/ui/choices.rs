@@ -17,6 +17,9 @@ pub enum Kind {
     Setting(Field),
     Context(bool),
     Category,
+    Thinking,
+    Sampler,
+    RetryFresh,
 }
 pub struct Picker {
     pub kind: Kind,
@@ -26,6 +29,16 @@ pub struct Picker {
 impl Picker {
     pub fn new(kind: Kind, app: &App) -> Self {
         use Kind::*;
+        let thinking_choices = app
+            .launch_menu
+            .as_ref()
+            .map(|g| {
+                crate::models::profile::thinking_options(g)
+                    .iter()
+                    .map(|v| crate::models::profile::thinking_label(*v))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
         let choices: &[&str] = match kind {
             Sort if app.discovery.repo.is_some() => &[
                 "Balanced Q4/Q5 first",
@@ -69,6 +82,16 @@ impl Picker {
                 "BF16",
             ],
             Setting(f) => f.choices(),
+            Thinking => &thinking_choices,
+            RetryFresh => &[
+                "Cancel (keep partial)",
+                "Preserve failed partials and retry fresh",
+            ],
+            Sampler => &[
+                "Use recommended defaults",
+                "Use backend defaults",
+                "Reset custom sampling overrides",
+            ],
             Category => &["Storage", "Inference", "Agent", "Workspace", "Appearance"],
             Context(_) => &[
                 "auto",
@@ -86,6 +109,33 @@ impl Picker {
             Sort => app.discovery.ranking.label().to_owned(),
             Setting(f) => f.initial(&app.config),
             Category => Field::ALL[app.setting].category().into(),
+            Thinking => crate::models::profile::thinking_label(
+                app.launch_menu
+                    .as_ref()
+                    .and_then(|g| {
+                        app.config
+                            .profiles
+                            .get(&crate::models::library::identity(g))
+                    })
+                    .and_then(|p| p.agent_thinking),
+            )
+            .into(),
+            Sampler => {
+                if app
+                    .launch_menu
+                    .as_ref()
+                    .and_then(|g| {
+                        app.config
+                            .profiles
+                            .get(&crate::models::library::identity(g))
+                    })
+                    .is_some_and(|p| p.backend_defaults)
+                {
+                    "Use backend defaults".into()
+                } else {
+                    "Use recommended defaults".into()
+                }
+            }
             Context(global) => if global {
                 app.config.default_context
             } else {
@@ -133,6 +183,9 @@ impl Picker {
             Kind::Setting(_) => "Choose a value",
             Kind::Context(_) => "Context size (tokens)",
             Kind::Category => "Settings category",
+            Kind::Thinking => "Reasoning effort",
+            Kind::Sampler => "Sampling defaults",
+            Kind::RetryFresh => "Keep old bytes; download again?",
         }
     }
 }

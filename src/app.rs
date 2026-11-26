@@ -73,9 +73,9 @@ pub struct App {
 impl App {
     pub fn launch_order(&self) -> &'static [usize] {
         if self.launch_advanced {
-            &[0, 1, 2, 3, 4, 8, 5, 6, 7]
+            &[0, 1, 2, 3, 4, 7, 8, 5, 6]
         } else {
-            &[0, 1, 2, 3, 4, 8]
+            &[0, 1, 2, 3, 4, 7, 8]
         }
     }
 

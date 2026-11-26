@@ -354,7 +354,7 @@ fn verify_file(file: &mut fs::File, item: &Item, cancel: &AtomicBool) -> io::Res
         if actual != expected.to_ascii_lowercase() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!("SHA-256 mismatch; partial retained. Expected {expected}, got {actual}. Move the .part file aside before a fresh retry."),
+                format!("SHA-256 mismatch; partial retained. Expected {expected}, got {actual}. Use Retry fresh to preserve the .part file and start a new transfer."),
             ));
         }
     }
@@ -465,10 +465,11 @@ fn transfer_from(
         destination.publish(&file)?;
         return Ok(Some(Receipt::from_metadata(&file.metadata()?)));
     }
-    // Without an authoritative checksum, restart instead of trusting an old prefix.
+    // Without an authoritative digest, a resumed prefix cannot be trusted.
     if item.file.sha256.is_none() && offset > 0 {
-        file.set_len(0)?;
-        offset = 0;
+        return Err(io::Error::other(
+            "No SHA-256 for resumed prefix; partial retained. Choose Retry fresh.",
+        ));
     }
     if offset > item.file.size {
         return Err(io::Error::other("Partial file exceeds expected size"));
@@ -480,7 +481,7 @@ fn transfer_from(
         return Err(io::Error::other("Insufficient free disk space"));
     }
     if offset < item.file.size {
-        let mut url = source.clone();
+        let mut url = source;
         let http = huggingface::agent();
         let mut response = None;
         for _ in 0..8 {
@@ -491,26 +492,8 @@ fn transfer_from(
             }
             let r = match req.call() {
                 Ok(response) => response,
-                Err(ureq::Error::Status(416, response)) if offset > 0 => {
-                    // Only restart on an explicit total matching the pinned file metadata.
-                    if response
-                        .header("Content-Range")
-                        .and_then(|v| v.strip_prefix("bytes */"))
-                        .and_then(|v| v.parse::<u64>().ok())
-                        != Some(item.file.size)
-                    {
-                        return Err(io::Error::other(
-                            "Server range total differs from pinned model size",
-                        ));
-                    }
-                    file.set_len(0)?;
-                    offset = 0;
-                    progress.store(0, Ordering::Relaxed);
-                    if available_space(parent)? < item.file.size {
-                        return Err(io::Error::other("Insufficient free disk space"));
-                    }
-                    url = source.clone();
-                    continue;
+                Err(ureq::Error::Status(416, _)) if offset > 0 => {
+                    return Err(io::Error::other("Server rejected the resume range (HTTP 416); partial retained. Choose Retry fresh."));
                 }
                 Err(e) => return Err(huggingface::error(e)),
             };
@@ -531,21 +514,31 @@ fn transfer_from(
             break;
         }
         let r = response.ok_or_else(|| io::Error::other("Too many download redirects"))?;
+        if r.header("Content-Encoding")
+            .is_some_and(|v| !v.eq_ignore_ascii_case("identity"))
+        {
+            return Err(io::Error::other(
+                "Unexpected transfer encoding; partial retained",
+            ));
+        }
         match r.status() {
             206 if content_range(
                 r.header("Content-Range").unwrap_or(""),
                 offset,
                 item.file.size,
             ) => {}
-            200 => {
-                file.set_len(0)?;
-                offset = 0;
-                progress.store(0, Ordering::Relaxed);
-                if available_space(parent)? < item.file.size {
-                    return Err(io::Error::other("Insufficient free disk space"));
-                }
-            }
+            200 if offset == 0 => {}
+            200 => return Err(io::Error::other(
+                "Server ignored the resume range (HTTP 200); partial retained. Choose Retry fresh.",
+            )),
             _ => return Err(io::Error::other("Unexpected download range response")),
+        }
+        if let Some(length) = r.header("Content-Length") {
+            if length.parse::<u64>().ok() != Some(item.file.size - offset) {
+                return Err(io::Error::other(
+                    "HTTP response length differs from pinned model size; partial retained",
+                ));
+            }
         }
         file.seek(SeekFrom::Start(offset))?;
         let mut reader = r.into_reader();
@@ -593,6 +586,78 @@ fn retryable(error: &io::Error) -> bool {
             | io::ErrorKind::UnexpectedEof
             | io::ErrorKind::WouldBlock
     )
+}
+fn preserve_failed_partial(item: &Item, cancel: &AtomicBool) -> io::Result<()> {
+    use std::{
+        ffi::CString,
+        os::fd::AsRawFd,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+    if item.state != State::Failed || item.receipt.is_some() {
+        return Err(io::Error::other(
+            "Only a failed partial without ownership receipt can be retried fresh",
+        ));
+    }
+    cancelled(cancel)?;
+    let destination = Destination::open(item)?;
+    match fs::symlink_metadata(destination.path()) {
+        Ok(_) => {
+            return Err(io::Error::other(
+                "Published model exists; verify it instead",
+            ))
+        }
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+        Err(e) => return Err(e),
+    }
+    let file = match fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(destination.partial())
+    {
+        Ok(file) => LockedPartial::new(file)?,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e),
+    };
+    let meta = file.metadata()?;
+    if !meta.is_file()
+        || meta.nlink() != 1
+        || !same_inode(&meta, &fs::symlink_metadata(destination.partial())?)
+    {
+        return Err(io::Error::other("Unsafe or changed partial file"));
+    }
+    if fs2::available_space(Destination::fd_path(&destination.parent))? < item.file.size {
+        return Err(io::Error::other(
+            "Not enough free space to keep the old partial and retry",
+        ));
+    }
+    file.sync_all()?;
+    destination.check_visible()?;
+    cancelled(cancel)?;
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(io::Error::other)?
+        .as_nanos();
+    let old = CString::new(format!("{}.part", destination.leaf)).map_err(io::Error::other)?;
+    let saved = format!("{}.part.saved-{stamp}", destination.leaf);
+    let new = CString::new(saved.as_bytes()).map_err(io::Error::other)?;
+    let fd = destination.parent.as_raw_fd();
+    // SAFETY: both leaf names and the directory descriptor remain valid.
+    // Never replace another file; the old partial remains recoverable.
+    if unsafe { libc::renameat2(fd, old.as_ptr(), fd, new.as_ptr(), libc::RENAME_NOREPLACE) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    destination.parent.sync_all()?;
+    destination.check_visible()?;
+    if !same_inode(
+        &meta,
+        &fs::symlink_metadata(Destination::fd_path(&destination.parent).join(saved))?,
+    ) {
+        return Err(io::Error::other(
+            "Partial changed during preservation; inspect retained files",
+        ));
+    }
+    Ok(())
 }
 fn transfer_with_retry(
     item: &Item,
@@ -681,7 +746,7 @@ pub struct Controller {
     active: Option<(usize, Job<Option<Receipt>>, Arc<AtomicU64>)>,
     mutation: Option<Job<()>>,
     run_queue: bool,
-    resume_parts: std::collections::VecDeque<usize>,
+    resume_parts: std::collections::VecDeque<(usize, bool)>,
     rate: Rate,
 }
 impl Controller {
@@ -803,6 +868,12 @@ impl Controller {
         });
     }
     pub fn resume_bundle(&mut self) -> io::Result<()> {
+        self.start_bundle(false)
+    }
+    pub fn retry_fresh(&mut self) -> io::Result<()> {
+        self.start_bundle(true)
+    }
+    fn start_bundle(&mut self, fresh: bool) -> io::Result<()> {
         if self.busy() {
             return Err(io::Error::other("Pause active transfer first"));
         }
@@ -821,11 +892,20 @@ impl Controller {
         {
             return Err(io::Error::other("Restore quarantined model first"));
         }
+        if fresh
+            && !g
+                .indices
+                .iter()
+                .any(|&i| self.queue.items[i].state == State::Failed)
+        {
+            return Err(io::Error::other("Choose a failed model to retry fresh"));
+        }
         let pending: std::collections::VecDeque<_> = g
             .indices
             .iter()
             .copied()
             .filter(|&i| self.queue.items[i].state != State::Complete)
+            .map(|i| (i, fresh && self.queue.items[i].state == State::Failed))
             .collect();
         if pending.is_empty() {
             return Err(io::Error::other("Model already complete"));
@@ -835,11 +915,11 @@ impl Controller {
         self.start_next_part()
     }
     fn start_next_part(&mut self) -> io::Result<()> {
-        let Some(i) = self.resume_parts.pop_front() else {
+        let Some((i, fresh)) = self.resume_parts.pop_front() else {
             return Ok(());
         };
         self.cursor = i;
-        if let Err(e) = self.start() {
+        if let Err(e) = self.start_mode(fresh) {
             self.resume_parts.clear();
             return Err(e);
         }
@@ -898,6 +978,12 @@ impl Controller {
                 item.last_bytes
             }
         })
+    }
+    pub fn speed_samples(&self, index: usize) -> Vec<u64> {
+        if self.active.as_ref().is_none_or(|(i, _, _)| *i != index) {
+            return Vec::new();
+        }
+        self.rate.history.iter().map(|v| *v as u64).collect()
     }
     pub fn speed_history(&self, index: usize) -> Option<(String, f64)> {
         if self.active.as_ref().is_none_or(|(i, _, _)| *i != index) || self.rate.history.is_empty()
@@ -985,6 +1071,9 @@ impl Controller {
         Ok(())
     }
     pub fn start(&mut self) -> io::Result<()> {
+        self.start_mode(false)
+    }
+    fn start_mode(&mut self, fresh: bool) -> io::Result<()> {
         if self.busy() {
             return Err(io::Error::other("A download is already active"));
         }
@@ -1007,11 +1096,22 @@ impl Controller {
         }
         let progress = Arc::new(AtomicU64::new(u64::MAX));
         let p = Arc::clone(&progress);
-        let job = Job::start(move |cancel| transfer_with_retry(&item, &cancel, &p))?;
+        let job = Job::start(move |cancel| {
+            if fresh {
+                preserve_failed_partial(&item, &cancel)?;
+                p.store(0, Ordering::Relaxed);
+            }
+            transfer_with_retry(&item, &cancel, &p)
+        })?;
         self.queue.items[index].error = None;
         self.rate = Rate::default();
         self.active = Some((index, job, progress));
-        self.status = "Downloading…".into();
+        self.status = if fresh {
+            "Preserving failed partial, then retrying…"
+        } else {
+            "Downloading…"
+        }
+        .into();
         Ok(())
     }
     pub fn start_queue(&mut self) -> io::Result<()> {
@@ -1380,34 +1480,62 @@ mod tests {
         (url, handle)
     }
     #[test]
-    fn resumes_206_and_restarts_200_and_416() {
+    fn resumes_206_and_preserves_partial_when_range_is_ignored_or_rejected() {
         const FULL: &str =
             "HTTP/1.1 200 OK\r\nContent-Length: 6\r\nConnection: close\r\n\r\nabcdef";
-        const REST:&str="HTTP/1.1 206 Partial Content\r\nContent-Length: 3\r\nContent-Range: bytes 3-5/6\r\nConnection: close\r\n\r\ndef";
-        const RANGE:&str="HTTP/1.1 416 Range Not Satisfiable\r\nContent-Length: 0\r\nContent-Range: bytes */6\r\nConnection: close\r\n\r\n";
-        for responses in [
-            vec![("range: bytes=3-", REST)],
-            vec![("range: bytes=3-", FULL)],
-            vec![("range: bytes=3-", RANGE), ("", FULL)],
-        ] {
+        const REST: &str = "HTTP/1.1 206 Partial Content\r\nContent-Length: 3\r\nContent-Range: bytes 3-5/6\r\nConnection: close\r\n\r\ndef";
+        const RANGE: &str = "HTTP/1.1 416 Range Not Satisfiable\r\nContent-Length: 0\r\nContent-Range: bytes */6\r\nConnection: close\r\n\r\n";
+        for (response, ok) in [(REST, true), (FULL, false), (RANGE, false)] {
             let root = tempfile::tempdir().unwrap();
             let item = fixture(root.path());
             let dest = destination(&item).unwrap();
             let partial = dest.with_file_name("model.gguf.part");
             fs::write(&partial, b"abc").unwrap();
-            let (url, worker) = server(responses);
-            transfer_from(
+            let (url, worker) = server(vec![("range: bytes=3-", response)]);
+            let result = transfer_from(
                 &item,
                 &AtomicBool::new(false),
                 &AtomicU64::new(0),
                 url,
                 |_| Ok(100),
-            )
-            .unwrap();
+            );
             worker.join().unwrap();
-            assert_eq!(fs::read(&dest).unwrap(), b"abcdef");
-            assert!(!partial.exists());
+            assert_eq!(result.is_ok(), ok);
+            if ok {
+                assert_eq!(fs::read(&dest).unwrap(), b"abcdef");
+                assert!(!partial.exists());
+            } else {
+                assert_eq!(fs::read(&partial).unwrap(), b"abc");
+                assert!(!dest.exists());
+            }
         }
+    }
+    #[test]
+    fn explicit_retry_archives_failed_partial_without_touching_completed_file() {
+        let root = tempfile::tempdir().unwrap();
+        let mut item = fixture(root.path());
+        item.state = State::Failed;
+        let dest = destination(&item).unwrap();
+        let partial = dest.with_file_name("model.gguf.part");
+        fs::write(&partial, b"wrong!").unwrap();
+        preserve_failed_partial(&item, &AtomicBool::new(false)).unwrap();
+        assert!(!partial.exists());
+        let archives: Vec<_> = fs::read_dir(dest.parent().unwrap())
+            .unwrap()
+            .flatten()
+            .filter(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .starts_with("model.gguf.part.saved-")
+            })
+            .collect();
+        assert_eq!(archives.len(), 1);
+        assert_eq!(fs::read(archives[0].path()).unwrap(), b"wrong!");
+        fs::write(&dest, b"abcdef").unwrap();
+        fs::write(&partial, b"wrong!").unwrap();
+        assert!(preserve_failed_partial(&item, &AtomicBool::new(false)).is_err());
+        assert_eq!(fs::read(dest).unwrap(), b"abcdef");
+        assert_eq!(fs::read(partial).unwrap(), b"wrong!");
     }
     #[test]
     fn auto_queue_starts_only_queued_entries_and_keeps_failed_ones() {

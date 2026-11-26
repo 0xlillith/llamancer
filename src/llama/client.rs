@@ -124,6 +124,7 @@ impl Client {
         Ok(Snapshot { router, models })
     }
     /// Diagnostic only: the advertised functions are synthetic and never executed.
+    /// Inherit the server sampler settings; do not substitute a greedy sampler.
     pub fn tool_preflight(
         &self,
         model: &str,
@@ -141,7 +142,7 @@ impl Client {
         let mut body = serde_json::json!({
             "model":model,"messages":[{"role":"system","content":"You are a precise coding agent. Use a tool when asked."},{"role":"user","content":"Use shell exactly once with command \"git log --oneline -8\" and cwd \"/tmp/llamancer-fixture\". Do not modify any text in the arguments."}],
             "tools":[{"type":"function","function":{"name":"shell","description":"Run shell command in working directory","parameters":{"type":"object","properties":{"command":{"type":"string"},"cwd":{"type":"string"}},"required":["command","cwd"],"additionalProperties":false}}},{"type":"function","function":{"name":"read_file","description":"Read a file","parameters":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}}}],
-            "temperature":0,"seed":42,"max_tokens":256,"stream":false
+            "max_tokens":2048,"stream":false
         });
         if let Some(t) = thinking.filter(|t| *t != crate::models::profile::Thinking::Auto) {
             body["chat_template_kwargs"] =
@@ -154,14 +155,14 @@ impl Client {
                 "tools":body["tools"].as_array().unwrap().iter().map(|t|{
                     let mut f=t["function"].clone();f["type"]=serde_json::json!("function");f
                 }).collect::<Vec<_>>(),
-                "temperature":0,"max_output_tokens":256,"stream":true
+                "max_output_tokens":2048,"stream":true
             });
             if let Some(t) = thinking.filter(|t| *t != crate::models::profile::Thinking::Auto) {
                 input["reasoning"] = serde_json::json!({"effort":if t==crate::models::profile::Thinking::Off{"none"}else{t.label()}});
             }
             let response = self
                 .request("POST", "v1/responses")?
-                .timeout(Duration::from_secs(60))
+                .timeout(Duration::from_secs(180))
                 .send_json(input)
                 .map_err(|e|match e{ureq::Error::Status(400,_)=>io::Error::other("Responses probe rejected (HTTP 400); check reasoning level and backend/template support"),other=>http_error(other)})?;
             let mut bytes = Vec::new();
@@ -176,7 +177,7 @@ impl Client {
         }
         let response = json(
             self.request("POST", "v1/chat/completions")?
-                .timeout(Duration::from_secs(60))
+                .timeout(Duration::from_secs(180))
                 .send_json(body)
                 .map_err(http_error)?,
         )?;

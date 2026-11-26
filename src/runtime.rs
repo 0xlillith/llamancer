@@ -271,8 +271,19 @@ impl Runtime {
                 let id = model.id.clone();
                 let responses = self.app.config.default_agent == "omp";
                 self.probe = Some(Job::start(move |_| {
-                    client.tool_preflight(&id, profile.agent_thinking, responses)
+                    client.tool_preflight(
+                        &id,
+                        if responses {
+                            profile.agent_thinking
+                        } else {
+                            None
+                        },
+                        responses,
+                    )
                 })?);
+                if let Some((_, deadline, _)) = self.pending_agent.as_mut() {
+                    *deadline = std::time::Instant::now() + std::time::Duration::from_secs(190);
+                }
                 self.app.notice = "Checking tool arguments (no commands executed)…".into();
                 return Ok(Effect::None);
             }
@@ -360,6 +371,12 @@ impl Runtime {
         }
         let agent = self.app.launch_cursor == 0;
         if agent {
+            if self.app.config.default_agent == "omp" {
+                self.app
+                    .config
+                    .effective_profile(&group)
+                    .validate_thinking(&group)?;
+            }
             if self.app.config.api_key_file.is_some() {
                 return Err(io::Error::other("Authenticated agent sessions require explicit current-terminal launch (A). Choose Run model only."));
             }
@@ -494,7 +511,7 @@ impl Runtime {
             .unwrap_or_default()
     }
     fn change_launch_preference(&mut self, index: usize, back: bool) -> io::Result<()> {
-        use models::profile::{apply_recommended, recommended, Thinking};
+        use models::profile::thinking_options;
         let group = self
             .app
             .launch_menu
@@ -512,17 +529,7 @@ impl Runtime {
                         "Thinking selector currently supports OMP only",
                     ));
                 }
-                let values = [
-                    None,
-                    Some(Thinking::Off),
-                    Some(Thinking::Minimal),
-                    Some(Thinking::Low),
-                    Some(Thinking::Medium),
-                    Some(Thinking::High),
-                    Some(Thinking::Xhigh),
-                    Some(Thinking::Max),
-                    Some(Thinking::Auto),
-                ];
+                let values = thinking_options(group);
                 let i = values
                     .iter()
                     .position(|v| *v == profile.agent_thinking)
@@ -534,14 +541,6 @@ impl Runtime {
                 }];
             }
             6 => profile.tool_preflight = !profile.tool_preflight,
-            7 => {
-                if !recommended(group) {
-                    return Err(io::Error::other(
-                        "No reviewed model-card preset for this revision",
-                    ));
-                }
-                apply_recommended(profile);
-            }
             _ => return Ok(()),
         }
         profile.validate()?;
@@ -866,6 +865,47 @@ impl Runtime {
                     self.save_context(&value, global)?;
                 }
             }
+            Kind::RetryFresh => {
+                if p.cursor == 1 {
+                    self.app
+                        .downloads
+                        .as_mut()
+                        .ok_or_else(|| io::Error::other("Queue unavailable"))?
+                        .retry_fresh()?;
+                }
+            }
+            Kind::Thinking | Kind::Sampler => {
+                let group = self
+                    .app
+                    .launch_menu
+                    .as_ref()
+                    .ok_or_else(|| io::Error::other("Select a model"))?;
+                let mut next = self.app.config.clone();
+                let profile = next
+                    .profiles
+                    .entry(models::library::identity(group))
+                    .or_default();
+                if p.kind == Kind::Thinking {
+                    profile.agent_thinking = *models::profile::thinking_options(group)
+                        .get(p.cursor)
+                        .ok_or_else(|| io::Error::other("Invalid thinking option"))?;
+                    profile.validate_thinking(group)?;
+                } else {
+                    match p.cursor {
+                        0 => profile.backend_defaults = false,
+                        1 => profile.backend_defaults = true,
+                        2 => {
+                            profile.generation = Default::default();
+                            profile.backend_defaults = false;
+                        }
+                        _ => return Err(io::Error::other("Invalid sampler option")),
+                    }
+                }
+                profile.validate()?;
+                self.persist(next)?;
+                self.app.notice =
+                    "Saved model preferences; inference changes apply on relaunch".into();
+            }
             Kind::Setting(f) => {
                 if value == "Custom value…" {
                     self.app.edit = Some((f, f.initial(&self.app.config)));
@@ -963,6 +1003,17 @@ impl Runtime {
                 }
                 KeyCode::Left | KeyCode::Right if (5..=6).contains(&self.app.launch_cursor) => self
                     .change_launch_preference(self.app.launch_cursor, key.code == KeyCode::Left)?,
+                KeyCode::Enter if self.app.launch_cursor == 5 => {
+                    if self.app.config.default_agent != "omp" {
+                        return Err(io::Error::other(
+                            "Thinking selector currently supports OMP only",
+                        ));
+                    }
+                    self.open_picker(crate::ui::choices::Kind::Thinking);
+                }
+                KeyCode::Enter if self.app.launch_cursor == 7 => {
+                    self.open_picker(crate::ui::choices::Kind::Sampler)
+                }
                 KeyCode::Enter if self.app.launch_cursor >= 5 => {
                     self.change_launch_preference(self.app.launch_cursor, false)?
                 }
@@ -1877,6 +1928,12 @@ impl Runtime {
         Ok(())
     }
     fn download_key(&mut self, key: KeyCode) -> io::Result<()> {
+        if key == KeyCode::Char('F') {
+            if self.app.downloads.as_ref().is_some_and(|d| !d.busy()) {
+                self.open_picker(crate::ui::choices::Kind::RetryFresh);
+            }
+            return Ok(());
+        }
         if matches!(key, KeyCode::Char('t' | 'T')) {
             self.ensure_quarantine_idle()?;
             let d = self

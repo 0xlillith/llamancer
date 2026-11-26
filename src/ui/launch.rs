@@ -157,7 +157,13 @@ pub fn draw(f: &mut Frame, area: Rect, app: &App, p: &Palette) {
             super::safe(&app.config.default_agent),
             (g.bytes() as f64 / 1073741824.0 * 10.).round() / 10.,
             if g.complete && !g.projector {
-                "Ready to launch"
+                if app.config.effective_profile(g).backend_defaults {
+                    "Backend defaults"
+                } else if crate::models::profile::recommendation(g).is_some() {
+                    "Recommended defaults"
+                } else {
+                    "Ready to launch"
+                }
             } else {
                 "Inspection only"
             }
@@ -187,7 +193,7 @@ pub fn draw(f: &mut Frame, area: Rect, app: &App, p: &Palette) {
             p.selected.add_modifier(Modifier::BOLD)
         } else if *index == 0 {
             p.brand
-        } else if *index < 3 || *index == 8 {
+        } else if *index < 3 || *index == 7 || *index == 8 {
             p.surface
         } else {
             p.base
@@ -244,12 +250,45 @@ pub fn draw(f: &mut Frame, area: Rect, app: &App, p: &Palette) {
         .collect::<Vec<_>>()
         .join("\n\n");
     if let Some(side) = l.aside {
-        let text=format!("INFERENCE PREFERENCES\n\n{}\n\nSampler changes apply on relaunch. Tool checks never execute commands.\n\n{details}",if app.config.effective_profile(g).tool_preflight{"Preflight enabled"}else{"Preflight optional"});
+        let profile = app.config.effective_profile(g);
+        let source = if profile.backend_defaults {
+            "Backend defaults + custom overrides"
+        } else {
+            profile
+                .recommendation_source(g, app.config.default_agent == "omp")
+                .map(|r| r.publisher())
+                .unwrap_or("Backend defaults")
+        };
+        use crate::models::profile::Field;
+        let sampler = [
+            Field::Temperature,
+            Field::TopP,
+            Field::TopK,
+            Field::MinP,
+            Field::RepeatPenalty,
+            Field::PresencePenalty,
+        ]
+        .map(|field| {
+            format!(
+                "{}: {}",
+                field.label().trim_start_matches("Generation / "),
+                field.value(&profile)
+            )
+        })
+        .join("\n");
+        let context = profile.engine.context_size.map(u64::from);
+        let max = g.files.first().and_then(|f| f.metadata.context);
+        let budget = if let (Some(n), Some(t)) = (context, max) {
+            format!("{}  {n}/{t} tokens", super::chrome::meter(n, t, 18))
+        } else {
+            "Auto context (backend decides)".into()
+        };
+        let text = format!("EFFECTIVE PROFILE\n{source}\n\nCONTEXT\n{budget}\n\nSAMPLER\n{sampler}\n\nReasoning: {}\nPreflight: {}\n\n{details}", profile.agent_thinking.map(|t|t.label()).unwrap_or("inherit"), if profile.tool_preflight {"ON"} else {"OFF"});
         f.render_widget(
             Paragraph::new(text)
                 .wrap(Wrap { trim: true })
                 .style(p.base)
-                .block(p.panel(" Guidance ")),
+                .block(p.panel(" Configuration preview ")),
             side,
         );
     } else if let Some((_, last)) = l.rows.last() {

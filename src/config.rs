@@ -126,7 +126,7 @@ impl Config {
             .cloned()
             .unwrap_or_default();
         p.engine.context_size = p.engine.context_size.or(self.default_context);
-        p
+        p.with_model_defaults(g, self.default_agent == "omp")
     }
     fn validate_context(&self) -> io::Result<()> {
         if self

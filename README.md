@@ -215,9 +215,9 @@ Local TOML settings and download queues are bounded to 16 MiB; custom themes to 
 
 ### Agent tool compatibility and reasoning
 
-In Library's Launch model menu, OMP thinking can be inherited or set per model. The setting becomes an explicit OMP `--thinking` argument; other agents do not receive this flag. The optional Tool compatibility preflight sends a fixed synthetic two-tool request to the ready local server before the Library's combined model/agent launch. It never runs commands, opens files or sends project content. OMP uses the Responses SSE probe, other agents use Chat Completions; the test checks the exact tool name and arguments, including completion and streamed argument consistency. A failure or rejected request requires explicit Enter to continue or Esc to cancel opening the agent. It is a diagnostic, not a guarantee or a sandbox, and uses a bounded deterministic synthetic request rather than the full coding-agent prompt. Results are scoped to that launch, not reused after model or backend changes. The separate advanced Server agent shortcut does not run this opt-in preflight.
+In Library's Launch model menu, OMP thinking can be inherited or set per model. The setting becomes an explicit OMP `--thinking` argument; other agents do not receive this flag. The optional Tool compatibility preflight sends a fixed synthetic two-tool request to the ready local server before the Library's combined model/agent launch. It never runs commands, opens files or sends project content. OMP uses the Responses SSE probe, other agents use Chat Completions; the test checks the exact tool name and arguments, including completion and streamed argument consistency. A failure or rejected request requires explicit Enter to continue or Esc to cancel opening the agent. It is a diagnostic, not a guarantee or a sandbox, and uses a bounded synthetic request using effective server sampling rather than the full coding-agent prompt. Results are scoped to that launch, not reused after model or backend changes. The separate advanced Server agent shortcut does not run this opt-in preflight.
 
-The reviewed preset is offered only for the managed DavidAU/Qwen3.8-Flash-Next-Turbo-Brilliance-50x-Reasoning-Instruct-GSQ-RCO-GGUF revision `096fef2f967efa50c25529adda0c59637e2b4477` directory layout. [Pinned model card](https://huggingface.co/DavidAU/Qwen3.8-Flash-Next-Turbo-Brilliance-50x-Reasoning-Instruct-GSQ-RCO-GGUF/blob/096fef2f967efa50c25529adda0c59637e2b4477/README.md): temperature 1.0, top-p 0.95, top-k 20, min-p 0, repeat penalty 1.0 in thinking mode. The card also recommends presence penalty 0, which is not explicitly set by this preset. These are server defaults, which a client may override. Medium is selected as an OMP starting point because the tested llama.cpp template advertises low/medium/xhigh, not high. This is not a claim that medium fixes tool generation. Changing engine or sampler preferences restarts a managed single model on confirmed relaunch; router changes require restart. No existing profiles are overwritten without an explicit Apply action.
+Reviewed model-card defaults are resolved per model and reasoning mode (see Model-aware inference defaults below). Explicit overrides are preserved. Changing engine or sampler preferences restarts a managed single model on confirmed relaunch; router changes require restart.
 
 
 ### Visual controls
@@ -226,4 +226,42 @@ The Library, Discover, Downloads and Server views expose clickable action bars; 
 
 ### Beta.4 interaction changes
 
-Use the visible action bars rather than memorizing shortcuts. Discover exposes a ranked sort picker and publisher, license and quantization presets (quantization is applied to the variants inside a repository; custom terms remain available in the query). The Launch panel keeps context controls in the main view; expand Advanced settings for reasoning, model-card sampling and optional tool-call checks. Select Presets to pick a token count, click the arrows to step through choices, or use Enter for a custom count. Requested context is not necessarily effective context: the backend may cap the per-slot context, including at the declared training context. Server reports the actual context when the backend supplies it. Settings categories lead to the relevant fields; enumerated values use a selection dialog. The Downloads list shows model names before aggregate progress and the selected job's measured speed and estimated remaining time. Memory displayed in Server is available system RAM and last-probe device capacity, not measured per-model VRAM.
+Use the visible action bars rather than memorizing shortcuts. Discover exposes a ranked sort picker and publisher, license and quantization presets (quantization is applied to the variants inside a repository; custom terms remain available in the query). The Launch panel keeps context controls in the main view; use Sampling defaults directly, and expand Advanced settings for reasoning and optional tool-call checks. Select Presets to pick a token count, click the arrows to step through choices, or use Enter for a custom count. Requested context is not necessarily effective context: the backend may cap the per-slot context, including at the declared training context. Server reports the actual context when the backend supplies it. Settings categories lead to the relevant fields; enumerated values use a selection dialog. The Downloads list shows model names before aggregate progress and the selected job's measured speed and estimated remaining time. Memory displayed in Server is available system RAM and last-probe device capacity, not measured per-model VRAM.
+
+
+### Model-aware inference defaults
+
+For managed Unsloth Qwen3.8 Flash Next and 27B repositories, the Launch panel
+resolves mode-specific defaults from the reviewed model-card guidance
+([Flash Next](https://huggingface.co/unsloth/Qwen3.8-Flash-Next-GGUF/blob/2c41bd2a0b3f51c503c11f1c7ed2e6bb34036beb/README.md),
+[27B](https://huggingface.co/unsloth/Qwen3.8-27B-GGUF/blob/408fcc1807ab264d8cd644a7c4c0f58fbd32eebc/README.md)).
+It matches the exact publisher/repository directory layout, including nested
+variant folders, rather than a model filename. This is reviewed repository
+guidance, not certification of all future weight revisions.
+
+Thinking defaults: temperature 1.0, top-p 0.95, top-k 20, min-p 0,
+presence penalty 0, repeat penalty 1.0. Instruct uses temperature 0.7,
+top-p 0.80 and presence penalty 1.5. The previously reviewed DavidAU revision
+has thinking-only recommendations. OMP reasoning choices for these models
+are limited to the reviewed levels; explicit saved overrides win.
+Other models keep the backend defaults. Context preferences remain separate.
+
+Select Sampling defaults to switch between inherited model guidance and
+backend defaults, or explicitly reset custom sampling overrides. The preview
+shows effective server parameters, which an API client can still override.
+The optional synthetic tool probe inherits server sampling instead of forcing
+temperature zero, uses a bounded 2,048-token budget, and never runs a tool.
+A failed probe is diagnostic, not proof of corrupt generation.
+
+
+### Download recovery
+
+A resumed transfer must return an exact pinned range. An ignored range
+(HTTP 200) or rejected range (HTTP 416) does not erase the partial. Select
+**Retry fresh** for a failed model and confirm to preserve its failed
+parts as `.part.saved-<timestamp>` files before downloading again.
+Completed shards are not replaced. The transfer checks free space for
+the new copy and validates the pinned size and, when available, the full SHA-256 before publication.
+The Downloads dashboard uses aggregate model progress, actual rate history,
+and explicit verification/part status. Preserved files consume disk space
+and are never indexed as models.

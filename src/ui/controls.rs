@@ -102,16 +102,43 @@ fn buttons(area: Rect, app: &App) -> Vec<Button> {
                 ("Next page".into(), Key(Char('n'))),
             ],
         ),
-        2 if app.downloads.is_some() => (
-            2,
-            vec![
-                ("Resume model".into(), Key(Enter)),
-                ("Pause".into(), Key(Char('x'))),
-                ("Run queue".into(), Key(Char('R'))),
-                ("Discover".into(), Key(Char('2'))),
-                ("Remove job".into(), Key(Char('z'))),
-            ],
-        ),
+        2 if app.downloads.is_some() => {
+            let d = app.downloads.as_ref().unwrap();
+            let groups = d.bundles();
+            let selected = groups.get(d.bundle_cursor(&groups));
+            let mut actions = Vec::new();
+            if d.busy() {
+                actions.push(("Pause".into(), Key(Char('x'))));
+            } else if selected.is_some_and(|g| g.state == "Failed") {
+                actions.push(("Retry / verify".into(), Key(Enter)));
+                actions.push(("Retry fresh".into(), Key(Char('F'))));
+            } else if selected.is_some_and(|g| matches!(g.state, "Queued" | "Paused")) {
+                actions.push(("Resume model".into(), Key(Enter)));
+            } else if selected.is_some_and(|g| g.state == "Complete") {
+                actions.push(("Open Library".into(), Key(Char('1'))));
+            } else if selected.is_some_and(|g| g.state == "Quarantined") {
+                actions.push(("Restore model".into(), Key(Char('T'))));
+            }
+            actions.push(("Discover".into(), Key(Char('2'))));
+            if !d.busy()
+                && d.queue
+                    .items
+                    .iter()
+                    .any(|i| i.state == crate::downloads::State::Queued)
+            {
+                actions.push(("Run queue".into(), Key(Char('R'))));
+            }
+            if !d.busy()
+                && selected.is_some_and(|g| {
+                    g.indices
+                        .iter()
+                        .all(|&i| d.queue.items[i].receipt.is_none())
+                })
+            {
+                actions.push(("Remove job".into(), Key(Char('z'))));
+            }
+            (2, actions)
+        }
         3 if app.server.show_logs => (3, vec![("Back to server".into(), Key(Char('g')))]),
         3 => {
             let s = &app.server;
