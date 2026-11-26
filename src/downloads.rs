@@ -112,6 +112,8 @@ pub struct Item {
     pub last_bytes: Option<u64>,
     #[serde(default)]
     pub receipt: Option<Receipt>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub integrity_error: Option<String>,
 }
 // Directory identity, not mtime: adding files must not invalidate a queued root.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -350,11 +352,21 @@ fn verify_file(file: &mut fs::File, item: &Item, cancel: &AtomicBool) -> io::Res
             }
             hash.update(&buffer[..n]);
         }
+        let after = file.metadata()?;
+        if !same_inode(&meta, &after)
+            || meta.len() != after.len()
+            || meta.mtime() != after.mtime()
+            || meta.mtime_nsec() != after.mtime_nsec()
+            || meta.ctime() != after.ctime()
+            || meta.ctime_nsec() != after.ctime_nsec()
+        {
+            return Err(io::Error::other("File changed during verification"));
+        }
         let actual = format!("{:x}", hash.finalize());
         if actual != expected.to_ascii_lowercase() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!("SHA-256 mismatch; partial retained. Expected {expected}, got {actual}. Move the .part file aside before a fresh retry."),
+                format!("SHA-256 mismatch; partial retained. Expected {expected}, got {actual}. Use Retry fresh to preserve the .part file and start a new transfer."),
             ));
         }
     }
@@ -465,10 +477,11 @@ fn transfer_from(
         destination.publish(&file)?;
         return Ok(Some(Receipt::from_metadata(&file.metadata()?)));
     }
-    // Without an authoritative checksum, restart instead of trusting an old prefix.
+    // Without an authoritative digest, a resumed prefix cannot be trusted.
     if item.file.sha256.is_none() && offset > 0 {
-        file.set_len(0)?;
-        offset = 0;
+        return Err(io::Error::other(
+            "No SHA-256 for resumed prefix; partial retained. Choose Retry fresh.",
+        ));
     }
     if offset > item.file.size {
         return Err(io::Error::other("Partial file exceeds expected size"));
@@ -480,7 +493,7 @@ fn transfer_from(
         return Err(io::Error::other("Insufficient free disk space"));
     }
     if offset < item.file.size {
-        let mut url = source.clone();
+        let mut url = source;
         let http = huggingface::agent();
         let mut response = None;
         for _ in 0..8 {
@@ -491,26 +504,8 @@ fn transfer_from(
             }
             let r = match req.call() {
                 Ok(response) => response,
-                Err(ureq::Error::Status(416, response)) if offset > 0 => {
-                    // Only restart on an explicit total matching the pinned file metadata.
-                    if response
-                        .header("Content-Range")
-                        .and_then(|v| v.strip_prefix("bytes */"))
-                        .and_then(|v| v.parse::<u64>().ok())
-                        != Some(item.file.size)
-                    {
-                        return Err(io::Error::other(
-                            "Server range total differs from pinned model size",
-                        ));
-                    }
-                    file.set_len(0)?;
-                    offset = 0;
-                    progress.store(0, Ordering::Relaxed);
-                    if available_space(parent)? < item.file.size {
-                        return Err(io::Error::other("Insufficient free disk space"));
-                    }
-                    url = source.clone();
-                    continue;
+                Err(ureq::Error::Status(416, _)) if offset > 0 => {
+                    return Err(io::Error::other("Server rejected the resume range (HTTP 416); partial retained. Choose Retry fresh."));
                 }
                 Err(e) => return Err(huggingface::error(e)),
             };
@@ -531,21 +526,31 @@ fn transfer_from(
             break;
         }
         let r = response.ok_or_else(|| io::Error::other("Too many download redirects"))?;
+        if r.header("Content-Encoding")
+            .is_some_and(|v| !v.eq_ignore_ascii_case("identity"))
+        {
+            return Err(io::Error::other(
+                "Unexpected transfer encoding; partial retained",
+            ));
+        }
         match r.status() {
             206 if content_range(
                 r.header("Content-Range").unwrap_or(""),
                 offset,
                 item.file.size,
             ) => {}
-            200 => {
-                file.set_len(0)?;
-                offset = 0;
-                progress.store(0, Ordering::Relaxed);
-                if available_space(parent)? < item.file.size {
-                    return Err(io::Error::other("Insufficient free disk space"));
-                }
-            }
+            200 if offset == 0 => {}
+            200 => return Err(io::Error::other(
+                "Server ignored the resume range (HTTP 200); partial retained. Choose Retry fresh.",
+            )),
             _ => return Err(io::Error::other("Unexpected download range response")),
+        }
+        if let Some(length) = r.header("Content-Length") {
+            if length.parse::<u64>().ok() != Some(item.file.size - offset) {
+                return Err(io::Error::other(
+                    "HTTP response length differs from pinned model size; partial retained",
+                ));
+            }
         }
         file.seek(SeekFrom::Start(offset))?;
         let mut reader = r.into_reader();
@@ -593,6 +598,369 @@ fn retryable(error: &io::Error) -> bool {
             | io::ErrorKind::UnexpectedEof
             | io::ErrorKind::WouldBlock
     )
+}
+fn preserve_failed_partial(item: &Item, cancel: &AtomicBool) -> io::Result<()> {
+    use std::{
+        ffi::CString,
+        os::fd::AsRawFd,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+    if item.state != State::Failed || item.receipt.is_some() {
+        return Err(io::Error::other(
+            "Only a failed partial without ownership receipt can be retried fresh",
+        ));
+    }
+    cancelled(cancel)?;
+    let destination = Destination::open(item)?;
+    match fs::symlink_metadata(destination.path()) {
+        Ok(_) => {
+            return Err(io::Error::other(
+                "Published model exists; verify it instead",
+            ))
+        }
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+        Err(e) => return Err(e),
+    }
+    let file = match fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(destination.partial())
+    {
+        Ok(file) => LockedPartial::new(file)?,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e),
+    };
+    let meta = file.metadata()?;
+    if !meta.is_file()
+        || meta.nlink() != 1
+        || !same_inode(&meta, &fs::symlink_metadata(destination.partial())?)
+    {
+        return Err(io::Error::other("Unsafe or changed partial file"));
+    }
+    if fs2::available_space(Destination::fd_path(&destination.parent))? < item.file.size {
+        return Err(io::Error::other(
+            "Not enough free space to keep the old partial and retry",
+        ));
+    }
+    file.sync_all()?;
+    destination.check_visible()?;
+    cancelled(cancel)?;
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(io::Error::other)?
+        .as_nanos();
+    let old = CString::new(format!("{}.part", destination.leaf)).map_err(io::Error::other)?;
+    let saved = format!("{}.part.saved-{stamp}", destination.leaf);
+    let new = CString::new(saved.as_bytes()).map_err(io::Error::other)?;
+    let fd = destination.parent.as_raw_fd();
+    // SAFETY: both leaf names and the directory descriptor remain valid.
+    // Never replace another file; the old partial remains recoverable.
+    if unsafe { libc::renameat2(fd, old.as_ptr(), fd, new.as_ptr(), libc::RENAME_NOREPLACE) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    destination.parent.sync_all()?;
+    destination.check_visible()?;
+    if !same_inode(
+        &meta,
+        &fs::symlink_metadata(Destination::fd_path(&destination.parent).join(saved))?,
+    ) {
+        return Err(io::Error::other(
+            "Partial changed during preservation; inspect retained files",
+        ));
+    }
+    Ok(())
+}
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Transport {
+    #[default]
+    Native,
+    Hub,
+}
+impl Transport {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Native => "native",
+            Self::Hub => "hub",
+        }
+    }
+}
+/// Optional official Hub transport. The Hub cache remains under the user's
+/// control and can resume or deduplicate chunks. We never publish its mutable
+/// cache symlink directly; stage and independently verify a private copy.
+fn hub_stage(item: &Item, cancel: &AtomicBool, progress: &AtomicU64) -> io::Result<()> {
+    use std::os::unix::process::CommandExt;
+    use std::process::{Command, Stdio};
+    if item.file.sha256.is_none() {
+        return Err(io::Error::other(
+            "Hub transport requires a pinned SHA-256; select Native for size-only transfers",
+        ));
+    }
+    let destination = Destination::open(item)?;
+    if destination.path().exists() || destination.partial().exists() {
+        return Ok(());
+    }
+    let cache = std::env::var_os("HF_HUB_CACHE")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HF_HOME").map(|p| PathBuf::from(p).join("hub")))
+        .or_else(|| {
+            std::env::var_os("XDG_CACHE_HOME").map(|p| PathBuf::from(p).join("huggingface/hub"))
+        })
+        .or_else(|| {
+            std::env::var_os("HOME").map(|p| PathBuf::from(p).join(".cache/huggingface/hub"))
+        })
+        .filter(|p| p.is_absolute())
+        .ok_or_else(|| io::Error::other("No absolute Hub cache directory"))?;
+    fs::create_dir_all(&cache)?;
+    let cache = cache.canonicalize()?;
+    let cache_repo = cache.join(format!("models--{}", item.file.repo.replace('/', "--")));
+    let snapshot = cache_repo
+        .join("snapshots")
+        .join(&item.file.revision)
+        .join(&item.file.name);
+    // Avoid an unexpectedly large second copy on a full filesystem.
+    if !snapshot.is_file() && fs2::available_space(&cache)? < item.file.size {
+        return Err(io::Error::other("Insufficient space in the Hub cache"));
+    }
+    if fs2::available_space(Destination::fd_path(&destination.parent))? < item.file.size {
+        return Err(io::Error::other(
+            "Insufficient space for the verified model copy",
+        ));
+    }
+    if !snapshot.is_file()
+        && fs::metadata(&cache)?.dev() == destination.parent.metadata()?.dev()
+        && fs2::available_space(&cache)? < item.file.size.saturating_mul(2)
+    {
+        return Err(io::Error::other(
+            "Hub cache and destination share a disk; allow space for both copies",
+        ));
+    }
+    // An explicit pinned repo/file, not arbitrary command text. Do not pass
+    // tokens on the command line or retain output that could contain them.
+    let mut child = Command::new("hf")
+        .args(["download", "--revision", &item.file.revision, "--cache-dir"])
+        .arg(&cache)
+        .arg("--quiet")
+        .arg("--")
+        .arg(&item.file.repo)
+        .arg(&item.file.name)
+        .env("HF_ENDPOINT", "https://huggingface.co")
+        .env("HF_HUB_DISABLE_TELEMETRY", "1")
+        .process_group(0)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|_| {
+            io::Error::other(
+                "Optional hf CLI unavailable; install huggingface_hub or select Native",
+            )
+        })?;
+    loop {
+        if cancel.load(Ordering::Acquire) {
+            // SAFETY: terminate only this explicitly spawned process group.
+            unsafe {
+                libc::kill(-(child.id() as i32), libc::SIGKILL);
+            }
+            let _ = child.wait();
+            return Err(io::Error::new(
+                io::ErrorKind::Interrupted,
+                "Hub transfer paused; cache retained",
+            ));
+        }
+        match child.try_wait() {
+            Ok(Some(status)) if status.success() => break,
+            Ok(Some(_)) => {
+                return Err(io::Error::other(
+                    "Hub download failed; cache retained. Check hf CLI or switch to Native.",
+                ))
+            }
+            Ok(None) => std::thread::sleep(Duration::from_millis(100)),
+            Err(e) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(e);
+            }
+        }
+    }
+    let source = snapshot.canonicalize()?;
+    let repo = cache_repo.canonicalize()?;
+    // huggingface_hub 2.x may use a shared content-addressed blob pool.
+    // Both layouts remain inside the configured cache, and bytes are verified.
+    if !repo.starts_with(&cache)
+        || !(source.starts_with(&repo) || source.starts_with(cache.join("blobs")))
+        || !source.is_file()
+    {
+        return Err(io::Error::other("Unexpected Hub cache path"));
+    }
+    if !reuse_local(item, &source, cancel, progress)? {
+        return Err(io::Error::other(
+            "Hub copy destination changed; existing bytes retained",
+        ));
+    }
+    Ok(())
+}
+/// Copy from a same-digest local source into a new staging inode. Never
+/// link mutable model copies together, overwrite an existing prefix, or
+/// trust a publication receipt in lieu of hashing the actual source.
+fn reuse_local(
+    item: &Item,
+    source: &Path,
+    cancel: &AtomicBool,
+    progress: &AtomicU64,
+) -> io::Result<bool> {
+    if item.file.sha256.is_none() {
+        return Ok(false);
+    }
+    let destination = Destination::open(item)?;
+    if fs::symlink_metadata(destination.path()).is_ok()
+        || fs::symlink_metadata(destination.partial()).is_ok()
+    {
+        return Ok(false);
+    }
+    let mut input = fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(source)?;
+    verify_file(&mut input, item, cancel)?;
+    input.seek(SeekFrom::Start(0))?;
+    if fs2::available_space(Destination::fd_path(&destination.parent))? < item.file.size {
+        return Err(io::Error::other(
+            "Insufficient space for verified local copy",
+        ));
+    }
+    let mut output = LockedPartial::new(
+        fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(destination.partial())?,
+    )?;
+    let mut remaining = item.file.size;
+    let mut buf = vec![0u8; 1024 * 1024];
+    while remaining > 0 {
+        cancelled(cancel)?;
+        let count = (remaining.min(buf.len() as u64)) as usize;
+        input.read_exact(&mut buf[..count])?;
+        output.write_all(&buf[..count])?;
+        remaining -= count as u64;
+        progress.store(item.file.size - remaining, Ordering::Relaxed);
+    }
+    output.sync_all()?;
+    verify_file(&mut output, item, cancel)?;
+    // The normal transfer path will verify again and publish atomically.
+    // Keep the staged file on interruption or error.
+    Ok(true)
+}
+/// Linux independent direct-read verification. Unsupported alignment or
+/// filesystems are reported, not treated as successful direct verification.
+fn direct_digest(path: &Path, item: &Item, cancel: &AtomicBool) -> io::Result<String> {
+    use std::alloc::{alloc_zeroed, dealloc, Layout};
+    const CHUNK: usize = 1024 * 1024;
+    struct Aligned(*mut u8, Layout);
+    impl Drop for Aligned {
+        fn drop(&mut self) {
+            unsafe { dealloc(self.0, self.1) }
+        }
+    }
+    let layout = Layout::from_size_align(CHUNK, 4096).map_err(io::Error::other)?;
+    // SAFETY: valid layout; initialize bytes before exposing them to Read.
+    let pointer = unsafe { alloc_zeroed(layout) };
+    if pointer.is_null() {
+        return Err(io::Error::other("Direct-read buffer allocation failed"));
+    }
+    let allocation = Aligned(pointer, layout);
+    let buffer = unsafe { std::slice::from_raw_parts_mut(allocation.0, CHUNK) };
+    let mut file = fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_DIRECT | libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(path)?;
+    let before = file.metadata()?;
+    if !before.is_file() || before.len() != item.file.size {
+        return Err(io::Error::other("Direct-read size mismatch"));
+    }
+    let mut digest = Sha256::new();
+    let mut count = 0u64;
+    while count < item.file.size {
+        cancelled(cancel)?;
+        let n = file.read(buffer)?;
+        if n == 0
+            || count
+                .checked_add(n as u64)
+                .is_none_or(|end| end > item.file.size)
+        {
+            return Err(io::Error::other("Incomplete or oversized direct read"));
+        }
+        digest.update(&buffer[..n]);
+        count += n as u64;
+    }
+    let after = file.metadata()?;
+    if !same_inode(&before, &after)
+        || !same_inode(&before, &fs::symlink_metadata(path)?)
+        || before.len() != after.len()
+        || before.mtime() != after.mtime()
+        || before.mtime_nsec() != after.mtime_nsec()
+        || before.ctime() != after.ctime()
+        || before.ctime_nsec() != after.ctime_nsec()
+    {
+        return Err(io::Error::other(
+            "File changed during independent verification",
+        ));
+    }
+    Ok(format!("{:x}", digest.finalize()))
+}
+fn audit_item(item: &Item, cancel: &AtomicBool) -> io::Result<()> {
+    let expected = item
+        .file
+        .sha256
+        .as_ref()
+        .ok_or_else(|| io::Error::other("No authoritative SHA-256"))?
+        .to_ascii_lowercase();
+    let path = quarantine::expected(item)?;
+    let parent = path
+        .parent()
+        .ok_or_else(|| io::Error::other("Missing parent"))?;
+    if parent.canonicalize()? != parent {
+        return Err(io::Error::other("Model path changed"));
+    }
+    let mut file = fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(&path)?;
+    let before = file.metadata()?;
+    let buffered = verify_file(&mut file, item, cancel);
+    if buffered
+        .as_ref()
+        .is_err_and(|e| e.kind() == io::ErrorKind::Interrupted)
+    {
+        return buffered;
+    }
+    if !same_inode(&before, &fs::symlink_metadata(&path)?) {
+        return Err(io::Error::other("Model path changed during verification"));
+    }
+    // Independently verify a failure, or revalidation of a previously
+    // suspect file. A passing direct read never overrides a failed buffered read.
+    if buffered.is_err() || item.integrity_error.is_some() {
+        match direct_digest(&path,item,cancel) {
+            Ok(actual) if actual==expected && buffered.is_err() => return Err(io::Error::other("Buffered SHA-256 failed; independent direct read matches. Inconsistent reads; launch blocked.")),
+            Ok(actual) if actual!=expected => return Err(io::Error::other(format!("Independent direct SHA-256 mismatch: expected {expected}, got {actual}; buffered result: {}",buffered.as_ref().map(|_|"matched".to_owned()).unwrap_or_else(|e|e.to_string())))),
+            Ok(_) => {},
+            Err(e) if e.kind()==io::ErrorKind::Interrupted => return Err(e),
+            Err(e) => {
+                if let Err(first)=buffered { return Err(io::Error::other(format!("{first}; independent direct read unavailable: {e}"))); }
+                // A second independent buffered read is useful on filesystems
+                // without O_DIRECT; explicitly retain a disagreement flag.
+                if item.integrity_error.as_deref().is_some_and(|e|e.contains("Inconsistent reads")) {
+                    return Err(io::Error::other(format!("Inconsistent reads previously observed; direct revalidation unavailable: {e}")));
+                }
+                verify(&path,item,cancel)?;
+            }
+        }
+    }
+    buffered
 }
 fn transfer_with_retry(
     item: &Item,
@@ -673,6 +1041,7 @@ impl BundleView {
         format!("{} ({}/{})", self.state, self.complete, self.expected)
     }
 }
+type AuditResults = Vec<(usize, Option<String>)>;
 pub struct Controller {
     pub queue: Queue,
     pub cursor: usize,
@@ -680,8 +1049,10 @@ pub struct Controller {
     pub path: PathBuf,
     active: Option<(usize, Job<Option<Receipt>>, Arc<AtomicU64>)>,
     mutation: Option<Job<()>>,
+    audit: Option<Job<AuditResults>>,
+    pub transport: Transport,
     run_queue: bool,
-    resume_parts: std::collections::VecDeque<usize>,
+    resume_parts: std::collections::VecDeque<(usize, bool)>,
     rate: Rate,
 }
 impl Controller {
@@ -693,6 +1064,8 @@ impl Controller {
             path,
             active: None,
             mutation: None,
+            audit: None,
+            transport: Transport::default(),
             run_queue: false,
             resume_parts: Default::default(),
             rate: Rate::default(),
@@ -766,6 +1139,12 @@ impl Controller {
                 .all(|&i| self.queue.items[i].state == State::Quarantined)
             {
                 "Quarantined"
+            } else if g
+                .indices
+                .iter()
+                .any(|&i| self.queue.items[i].integrity_error.is_some())
+            {
+                "Integrity failed"
             } else if g.complete as u64 == g.expected {
                 "Complete"
             } else if has(State::Failed) {
@@ -803,6 +1182,12 @@ impl Controller {
         });
     }
     pub fn resume_bundle(&mut self) -> io::Result<()> {
+        self.start_bundle(false)
+    }
+    pub fn retry_fresh(&mut self) -> io::Result<()> {
+        self.start_bundle(true)
+    }
+    fn start_bundle(&mut self, fresh: bool) -> io::Result<()> {
         if self.busy() {
             return Err(io::Error::other("Pause active transfer first"));
         }
@@ -821,11 +1206,20 @@ impl Controller {
         {
             return Err(io::Error::other("Restore quarantined model first"));
         }
+        if fresh
+            && !g
+                .indices
+                .iter()
+                .any(|&i| self.queue.items[i].state == State::Failed)
+        {
+            return Err(io::Error::other("Choose a failed model to retry fresh"));
+        }
         let pending: std::collections::VecDeque<_> = g
             .indices
             .iter()
             .copied()
             .filter(|&i| self.queue.items[i].state != State::Complete)
+            .map(|i| (i, fresh && self.queue.items[i].state == State::Failed))
             .collect();
         if pending.is_empty() {
             return Err(io::Error::other("Model already complete"));
@@ -835,11 +1229,11 @@ impl Controller {
         self.start_next_part()
     }
     fn start_next_part(&mut self) -> io::Result<()> {
-        let Some(i) = self.resume_parts.pop_front() else {
+        let Some((i, fresh)) = self.resume_parts.pop_front() else {
             return Ok(());
         };
         self.cursor = i;
-        if let Err(e) = self.start() {
+        if let Err(e) = self.start_mode(fresh) {
             self.resume_parts.clear();
             return Err(e);
         }
@@ -877,10 +1271,73 @@ impl Controller {
         Ok(())
     }
     pub fn busy(&self) -> bool {
-        self.active.is_some() || self.mutation.is_some()
+        self.active.is_some() || self.mutation.is_some() || self.audit.is_some()
     }
     pub fn mutating(&self) -> bool {
-        self.mutation.is_some()
+        self.mutation.is_some() || self.audit.is_some()
+    }
+    pub fn integrity_problem(&self, group: &crate::models::group::Group) -> bool {
+        self.queue.items.iter().any(|item| {
+            item.integrity_error.is_some()
+                && quarantine::expected(item).ok().is_some_and(|path| {
+                    group.files.iter().any(|f| {
+                        f.path == path
+                            || path
+                                .canonicalize()
+                                .ok()
+                                .is_some_and(|p| f.path.canonicalize().ok().as_ref() == Some(&p))
+                    })
+                })
+        })
+    }
+    pub fn verify_bundle(&mut self) -> io::Result<()> {
+        if self.busy() {
+            return Err(io::Error::other("Wait for active transfer"));
+        }
+        let groups = self.bundles();
+        let group = groups
+            .get(self.bundle_cursor(&groups))
+            .ok_or_else(|| io::Error::other("Select a model"))?;
+        let items: Vec<_> = group
+            .indices
+            .iter()
+            .filter_map(|&i| {
+                let item = &self.queue.items[i];
+                (item.state == State::Complete && item.file.sha256.is_some())
+                    .then(|| (i, item.clone()))
+            })
+            .collect();
+        if items.is_empty() {
+            return Err(io::Error::other("No completed parts with pinned SHA-256"));
+        }
+        self.audit = Some(Job::start(move |cancel| {
+            let mut results = Vec::new();
+            for (i, item) in items {
+                if cancelled(&cancel).is_err() {
+                    break;
+                }
+                let error = match audit_item(&item, &cancel) {
+                    Ok(()) => None,
+                    Err(e) if e.kind() == io::ErrorKind::Interrupted => break,
+                    Err(e) => Some(e.to_string()),
+                };
+                results.push((i, error));
+            }
+            Ok(results)
+        })?);
+        self.status = "Auditing completed parts against pinned SHA-256…".into();
+        Ok(())
+    }
+    fn finish_audit(&mut self, results: Vec<(usize, Option<String>)>) -> io::Result<()> {
+        let mut bad = 0;
+        let count = results.len();
+        for (i, error) in results {
+            bad += usize::from(error.is_some());
+            self.queue.items[i].integrity_error = error;
+        }
+        self.status =
+            format!("Integrity audit: {count} checked, {bad} failed; unchecked parts unchanged");
+        self.queue.save(&self.path)
     }
     pub fn progress(&self, index: usize) -> Option<u64> {
         self.active
@@ -898,6 +1355,12 @@ impl Controller {
                 item.last_bytes
             }
         })
+    }
+    pub fn speed_samples(&self, index: usize) -> Vec<u64> {
+        if self.active.as_ref().is_none_or(|(i, _, _)| *i != index) {
+            return Vec::new();
+        }
+        self.rate.history.iter().map(|v| *v as u64).collect()
     }
     pub fn speed_history(&self, index: usize) -> Option<(String, f64)> {
         if self.active.as_ref().is_none_or(|(i, _, _)| *i != index) || self.rate.history.is_empty()
@@ -955,6 +1418,7 @@ impl Controller {
                     error: None,
                     last_bytes: None,
                     receipt: None,
+                    integrity_error: None,
                 });
             }
         }
@@ -985,6 +1449,9 @@ impl Controller {
         Ok(())
     }
     pub fn start(&mut self) -> io::Result<()> {
+        self.start_mode(false)
+    }
+    fn start_mode(&mut self, fresh: bool) -> io::Result<()> {
         if self.busy() {
             return Err(io::Error::other("A download is already active"));
         }
@@ -1005,13 +1472,60 @@ impl Controller {
                 "Managed file requires quarantine recovery; do not redownload over it",
             ));
         }
+        let sources: Vec<_> = self
+            .queue
+            .items
+            .iter()
+            .enumerate()
+            .filter_map(|(i, other)| {
+                (i != index
+                    && other.state == State::Complete
+                    && other.integrity_error.is_none()
+                    && item.file.sha256.is_some()
+                    && item.file.sha256 == other.file.sha256
+                    && item.file.size == other.file.size)
+                    .then(|| quarantine::expected(other).ok())
+                    .flatten()
+            })
+            .take(8)
+            .collect();
         let progress = Arc::new(AtomicU64::new(u64::MAX));
         let p = Arc::clone(&progress);
-        let job = Job::start(move |cancel| transfer_with_retry(&item, &cancel, &p))?;
+        let transport = self.transport;
+        let job = Job::start(move |cancel| {
+            if fresh {
+                preserve_failed_partial(&item, &cancel)?;
+                p.store(0, Ordering::Relaxed);
+            }
+            for source in sources {
+                match reuse_local(&item, &source, &cancel, &p) {
+                    Ok(true) => break,
+                    Ok(false) => break,
+                    Err(e) if e.kind() == io::ErrorKind::Interrupted => return Err(e),
+                    Err(_) => {
+                        // Source may have failed verification; keep any staging bytes.
+                        if Destination::open(&item)?.partial().exists() {
+                            break;
+                        }
+                    }
+                }
+            }
+            if transport == Transport::Hub {
+                hub_stage(&item, &cancel, &p)?;
+            }
+            transfer_with_retry(&item, &cancel, &p)
+        })?;
         self.queue.items[index].error = None;
         self.rate = Rate::default();
         self.active = Some((index, job, progress));
-        self.status = "Downloading…".into();
+        self.status = if fresh {
+            "Preserving failed partial, then retrying…"
+        } else if self.transport == Transport::Hub {
+            "Hub transport / verified cache copy…"
+        } else {
+            "Downloading…"
+        }
+        .into();
         Ok(())
     }
     pub fn start_queue(&mut self) -> io::Result<()> {
@@ -1172,6 +1686,9 @@ impl Controller {
         if let Some(job) = &self.mutation {
             job.cancel();
         }
+        if let Some(job) = &self.audit {
+            job.cancel();
+        }
         if let Some((_, job, _)) = &self.active {
             job.cancel();
             self.status = "Pausing…".into();
@@ -1179,6 +1696,10 @@ impl Controller {
     }
     pub fn shutdown(&mut self) -> io::Result<()> {
         self.pause();
+        if let Some(job) = self.audit.take() {
+            let results = job.finish_result()?;
+            self.finish_audit(results)?;
+        }
         if let Some(job) = self.mutation.take() {
             job.finish();
             self.reconcile_mutation()?;
@@ -1204,6 +1725,17 @@ impl Controller {
         Ok(())
     }
     pub fn tick(&mut self) {
+        if let Some(job) = self.audit.as_mut() {
+            if let Some(result) = job.poll() {
+                if let Some(job) = self.audit.take() {
+                    job.finish();
+                }
+                if let Err(e) = result.and_then(|r| self.finish_audit(r)) {
+                    self.status = format!("Audit failed: {e}");
+                }
+            }
+            return;
+        }
         if let Some(job) = self.mutation.as_mut() {
             if let Some(result) = job.poll() {
                 if let Some(job) = self.mutation.take() {
@@ -1287,7 +1819,82 @@ mod tests {
             error: None,
             last_bytes: None,
             receipt: None,
+            integrity_error: None,
         }
+    }
+    #[test]
+    fn audit_failure_persists_and_blocks_indexed_group_until_revalidated() {
+        let root = tempfile::tempdir().unwrap();
+        let mut controller = Controller::new(root.path().join("queue.toml")).unwrap();
+        let item = fixture(root.path());
+        controller
+            .add(vec![item.file.clone()], root.path().to_owned())
+            .unwrap();
+        controller.queue.items[0].state = State::Complete;
+        let path = destination(&item).unwrap();
+        fs::write(&path, b"badbad").unwrap();
+        controller.verify_bundle().unwrap();
+        let limit = Instant::now() + Duration::from_secs(5);
+        while controller.busy() {
+            controller.tick();
+            assert!(Instant::now() < limit);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let group = crate::models::group::Group {
+            name: "fixture".into(),
+            files: vec![crate::models::Candidate {
+                path: path.clone(),
+                bytes: 6,
+                version: 3,
+                metadata: Default::default(),
+            }],
+            expected: 1,
+            complete: true,
+            projector: false,
+        };
+        assert!(controller.integrity_problem(&group));
+        let mut controller = Controller::new(root.path().join("queue.toml")).unwrap();
+        assert!(controller.integrity_problem(&group));
+        fs::write(&path, b"abcdef").unwrap();
+        controller.verify_bundle().unwrap();
+        let limit = Instant::now() + Duration::from_secs(5);
+        while controller.busy() {
+            controller.tick();
+            assert!(Instant::now() < limit);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(
+            !controller.integrity_problem(&group),
+            "{}",
+            controller.status
+        );
+    }
+    #[test]
+    fn same_digest_copy_is_independent_and_audit_detects_changed_bytes() {
+        let root = tempfile::tempdir().unwrap();
+        let mut source = fixture(root.path());
+        let from = destination(&source).unwrap();
+        fs::write(&from, b"abcdef").unwrap();
+        source.state = State::Complete;
+        audit_item(&source, &AtomicBool::new(false)).unwrap();
+        let mut other = source.clone();
+        other.file.repo = "owner/other".into();
+        assert!(reuse_local(&other, &from, &AtomicBool::new(false), &AtomicU64::new(0)).unwrap());
+        let to = destination(&other).unwrap();
+        assert_eq!(
+            fs::read(to.with_file_name("model.gguf.part")).unwrap(),
+            b"abcdef"
+        );
+        assert!(!same_inode(
+            &fs::metadata(&from).unwrap(),
+            &fs::metadata(to.with_file_name("model.gguf.part")).unwrap()
+        ));
+        fs::write(&from, b"badbad").unwrap();
+        assert!(audit_item(&source, &AtomicBool::new(false)).is_err());
+        assert_eq!(
+            fs::read(to.with_file_name("model.gguf.part")).unwrap(),
+            b"abcdef"
+        );
     }
     #[test]
     fn multipart_view_and_resume_all_missing_parts() {
@@ -1380,34 +1987,62 @@ mod tests {
         (url, handle)
     }
     #[test]
-    fn resumes_206_and_restarts_200_and_416() {
+    fn resumes_206_and_preserves_partial_when_range_is_ignored_or_rejected() {
         const FULL: &str =
             "HTTP/1.1 200 OK\r\nContent-Length: 6\r\nConnection: close\r\n\r\nabcdef";
-        const REST:&str="HTTP/1.1 206 Partial Content\r\nContent-Length: 3\r\nContent-Range: bytes 3-5/6\r\nConnection: close\r\n\r\ndef";
-        const RANGE:&str="HTTP/1.1 416 Range Not Satisfiable\r\nContent-Length: 0\r\nContent-Range: bytes */6\r\nConnection: close\r\n\r\n";
-        for responses in [
-            vec![("range: bytes=3-", REST)],
-            vec![("range: bytes=3-", FULL)],
-            vec![("range: bytes=3-", RANGE), ("", FULL)],
-        ] {
+        const REST: &str = "HTTP/1.1 206 Partial Content\r\nContent-Length: 3\r\nContent-Range: bytes 3-5/6\r\nConnection: close\r\n\r\ndef";
+        const RANGE: &str = "HTTP/1.1 416 Range Not Satisfiable\r\nContent-Length: 0\r\nContent-Range: bytes */6\r\nConnection: close\r\n\r\n";
+        for (response, ok) in [(REST, true), (FULL, false), (RANGE, false)] {
             let root = tempfile::tempdir().unwrap();
             let item = fixture(root.path());
             let dest = destination(&item).unwrap();
             let partial = dest.with_file_name("model.gguf.part");
             fs::write(&partial, b"abc").unwrap();
-            let (url, worker) = server(responses);
-            transfer_from(
+            let (url, worker) = server(vec![("range: bytes=3-", response)]);
+            let result = transfer_from(
                 &item,
                 &AtomicBool::new(false),
                 &AtomicU64::new(0),
                 url,
                 |_| Ok(100),
-            )
-            .unwrap();
+            );
             worker.join().unwrap();
-            assert_eq!(fs::read(&dest).unwrap(), b"abcdef");
-            assert!(!partial.exists());
+            assert_eq!(result.is_ok(), ok);
+            if ok {
+                assert_eq!(fs::read(&dest).unwrap(), b"abcdef");
+                assert!(!partial.exists());
+            } else {
+                assert_eq!(fs::read(&partial).unwrap(), b"abc");
+                assert!(!dest.exists());
+            }
         }
+    }
+    #[test]
+    fn explicit_retry_archives_failed_partial_without_touching_completed_file() {
+        let root = tempfile::tempdir().unwrap();
+        let mut item = fixture(root.path());
+        item.state = State::Failed;
+        let dest = destination(&item).unwrap();
+        let partial = dest.with_file_name("model.gguf.part");
+        fs::write(&partial, b"wrong!").unwrap();
+        preserve_failed_partial(&item, &AtomicBool::new(false)).unwrap();
+        assert!(!partial.exists());
+        let archives: Vec<_> = fs::read_dir(dest.parent().unwrap())
+            .unwrap()
+            .flatten()
+            .filter(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .starts_with("model.gguf.part.saved-")
+            })
+            .collect();
+        assert_eq!(archives.len(), 1);
+        assert_eq!(fs::read(archives[0].path()).unwrap(), b"wrong!");
+        fs::write(&dest, b"abcdef").unwrap();
+        fs::write(&partial, b"wrong!").unwrap();
+        assert!(preserve_failed_partial(&item, &AtomicBool::new(false)).is_err());
+        assert_eq!(fs::read(dest).unwrap(), b"abcdef");
+        assert_eq!(fs::read(partial).unwrap(), b"wrong!");
     }
     #[test]
     fn auto_queue_starts_only_queued_entries_and_keeps_failed_ones() {
@@ -1764,6 +2399,7 @@ mod tests {
             error: None,
             last_bytes: None,
             receipt: None,
+            integrity_error: None,
         };
         let dest = destination(&item).unwrap();
         fs::write(&dest, b"bad").unwrap();

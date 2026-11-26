@@ -7,7 +7,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-pub(crate) fn executable(name: &str, path: Option<&OsStr>) -> bool {
+pub fn executable(name: &str, path: Option<&OsStr>) -> bool {
     let candidate = |p: &Path| {
         fs::metadata(p).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
     };

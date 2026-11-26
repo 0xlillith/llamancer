@@ -5,7 +5,7 @@ use crossterm::event::KeyCode;
 use ratatui::{
     layout::{Position, Rect},
     style::Modifier,
-    widgets::{Paragraph, Wrap},
+    widgets::{Gauge, Paragraph, Wrap},
     Frame,
 };
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -45,7 +45,13 @@ fn layout(area: Rect, app: &App) -> Layout {
     };
     let tail = if inner.height >= 3 { 1 } else { 0 };
     let order = app.launch_order();
-    let capacity = usize::from(inner.height.saturating_sub(header + tail)).min(order.len());
+    let row_height = if inner.height >= header + tail + (order.len() as u16) * 2 {
+        2
+    } else {
+        1
+    };
+    let capacity =
+        usize::from(inner.height.saturating_sub(header + tail) / row_height).min(order.len());
     let cursor = order
         .iter()
         .position(|&i| i == app.launch_cursor)
@@ -66,7 +72,12 @@ fn layout(area: Rect, app: &App) -> Layout {
         .map(|(n, i)| {
             (
                 i,
-                Rect::new(inner.x, inner.y + header + n as u16, inner.width, 1),
+                Rect::new(
+                    inner.x,
+                    inner.y + header + n as u16 * row_height,
+                    inner.width,
+                    row_height,
+                ),
             )
         })
         .collect();
@@ -107,7 +118,7 @@ pub fn hit(area: Rect, app: &App, x: u16, y: u16) -> Option<Hit> {
     let pos = Position::new(x, y);
     let l = layout(area, app);
     for (i, r) in l.rows {
-        if !r.contains(pos) {
+        if !r.contains(pos) || y != r.y {
             continue;
         }
         let key = if let Some((left, right)) = stepper(r, i) {
@@ -156,8 +167,14 @@ pub fn draw(f: &mut Frame, area: Rect, app: &App, p: &Palette) {
             super::safe(&g.name),
             super::safe(&app.config.default_agent),
             (g.bytes() as f64 / 1073741824.0 * 10.).round() / 10.,
-            if g.complete && !g.projector {
-                "Ready to launch"
+            if g.runnable() {
+                if app.config.effective_profile(g).backend_defaults {
+                    "Backend defaults"
+                } else if crate::models::profile::recommendation(g).is_some() {
+                    "Recommended defaults"
+                } else {
+                    "Ready to launch"
+                }
             } else {
                 "Inspection only"
             }
@@ -187,12 +204,12 @@ pub fn draw(f: &mut Frame, area: Rect, app: &App, p: &Palette) {
             p.selected.add_modifier(Modifier::BOLD)
         } else if *index == 0 {
             p.brand
-        } else if *index < 3 || *index == 8 {
+        } else if *index < 3 || *index == 7 || *index == 8 || *index == 9 {
             p.surface
         } else {
             p.base
         };
-        let mut text_area = *r;
+        let mut text_area = Rect { height: 1, ..*r };
         if stepper(*r, *index).is_some() {
             text_area.width =
                 text_area
@@ -238,20 +255,142 @@ pub fn draw(f: &mut Frame, area: Rect, app: &App, p: &Palette) {
     }
     let details = lines
         .iter()
-        .skip(12)
+        .skip(14)
         .filter(|line| !line.starts_with("Enter tokens"))
         .copied()
         .collect::<Vec<_>>()
         .join("\n\n");
     if let Some(side) = l.aside {
-        let text=format!("INFERENCE PREFERENCES\n\n{}\n\nSampler changes apply on relaunch. Tool checks never execute commands.\n\n{details}",if app.config.effective_profile(g).tool_preflight{"Preflight enabled"}else{"Preflight optional"});
+        let profile = app.config.effective_profile(g);
+        let source = if profile.backend_defaults {
+            "Backend defaults + custom overrides"
+        } else {
+            profile
+                .recommendation_source(g, app.config.default_agent == "omp")
+                .map(|r| r.publisher())
+                .unwrap_or("Backend defaults")
+        };
+        use crate::models::profile::Field;
+        let stored = app
+            .config
+            .profiles
+            .get(&crate::models::library::identity(g))
+            .cloned()
+            .unwrap_or_default();
+        let embedded = g.files.first().map(|f| &f.metadata.sampling);
+        let sampler = [
+            Field::Temperature,
+            Field::TopP,
+            Field::TopK,
+            Field::MinP,
+            Field::RepeatPenalty,
+            Field::PresencePenalty,
+        ]
+        .map(|field| {
+            let explicit = field.value(&stored);
+            let effective = field.value(&profile);
+            let (value, origin) = if explicit != "auto" {
+                (explicit, "custom")
+            } else if effective != "auto" {
+                (effective, "card")
+            } else if let Some(value) = embedded.and_then(|meta| meta.value(field)) {
+                (value.to_owned(), "GGUF")
+            } else {
+                ("auto".into(), "backend")
+            };
+            format!(
+                "{:<13} {:>5}  {}",
+                field.label().trim_start_matches("Generation / "),
+                value,
+                origin
+            )
+        })
+        .join("\n");
+        let plan = crate::models::fit::context_plan(
+            g,
+            &profile,
+            &app.config.device,
+            &app.server.devices,
+            crate::models::fit::available_ram(),
+        );
+        let context = plan.tokens.map(u64::from);
+        let max = g.files.first().and_then(|f| f.metadata.context);
+        let budget = if let (Some(n), Some(t)) = (context, max) {
+            format!("{n}/{t} tokens · {}", plan.source)
+        } else {
+            "Auto · 128K target (backend fit at launch)".into()
+        };
+        f.render_widget(p.panel(" Configuration preview ").style(p.base), side);
+        let inner = Rect::new(
+            side.x + 1,
+            side.y + 1,
+            side.width.saturating_sub(2),
+            side.height.saturating_sub(2),
+        );
+        let text = format!("{}\n{}", source, budget);
         f.render_widget(
             Paragraph::new(text)
-                .wrap(Wrap { trim: true })
-                .style(p.base)
-                .block(p.panel(" Guidance ")),
-            side,
+                .style(p.heading)
+                .wrap(Wrap { trim: true }),
+            Rect::new(inner.x, inner.y, inner.width, inner.height.min(3)),
         );
+        if inner.height >= 5 {
+            let ratio = context
+                .zip(max)
+                .filter(|(_, m)| *m > 0)
+                .map(|(n, m)| (n as f64 / m as f64).clamp(0., 1.))
+                .unwrap_or(0.);
+            f.render_widget(
+                Gauge::default()
+                    .ratio(ratio)
+                    .label(
+                        context
+                            .map(|n| format!("{}K tokens", n / 1024))
+                            .unwrap_or_else(|| "Backend auto".into()),
+                    )
+                    .gauge_style(p.base.fg(p.green)),
+                Rect::new(inner.x, inner.y + 3, inner.width, 1),
+            );
+            let mut lines = vec![
+                "SAMPLING".to_owned(),
+                sampler,
+                format!(
+                    "Reasoning: {}",
+                    profile
+                        .agent_thinking
+                        .map(|t| t.label())
+                        .unwrap_or("inherit")
+                ),
+                format!(
+                    "Preflight: {}",
+                    if profile.tool_preflight { "ON" } else { "OFF" }
+                ),
+                "Changes apply on next launch.".into(),
+            ];
+            let mut preview = profile.clone();
+            preview.engine.context_size = plan.tokens;
+            if let Some(e) = crate::models::estimate::estimate(g, &preview) {
+                lines.insert(
+                    0,
+                    format!(
+                        "Weights {:.1} GiB  ·  KV {:.1} GiB\n",
+                        e.weights as f64 / 1073741824.,
+                        e.kv as f64 / 1073741824.
+                    ),
+                );
+            }
+            f.render_widget(
+                Paragraph::new(lines.join("\n"))
+                    .style(p.base)
+                    .wrap(Wrap { trim: true }),
+                Rect::new(
+                    inner.x,
+                    inner.y + 5,
+                    inner.width,
+                    inner.height.saturating_sub(5),
+                ),
+            );
+        }
     } else if let Some((_, last)) = l.rows.last() {
         let end = l
             .help

@@ -384,6 +384,7 @@ mod tests {
             error: None,
             last_bytes: None,
             receipt: None,
+            integrity_error: None,
         };
         let path = super::super::destination(&item).unwrap();
         fs::write(&path, b"abcdef").unwrap();

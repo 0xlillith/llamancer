@@ -31,10 +31,107 @@ impl Model {
             .unwrap_or("available")
     }
 }
+#[derive(Debug, Clone, Default)]
+pub struct ModelProperties {
+    pub context: Option<u64>,
+    pub generation: crate::models::profile::Generation,
+    pub tools: Option<bool>,
+    pub reasoning_effort: Option<bool>,
+    pub levels: Vec<crate::models::profile::Thinking>,
+    pub rejected: Vec<crate::models::profile::Thinking>,
+}
+impl ModelProperties {
+    pub fn from_props(props: &serde_json::Value) -> Self {
+        use crate::models::profile::{Generation, Thinking};
+        let defaults = &props["default_generation_settings"];
+        let params = &defaults["params"];
+        let float = |key: &str, min: f64, max: f64| {
+            params[key]
+                .as_f64()
+                .filter(|v| v.is_finite() && *v >= min && *v <= max)
+                .map(|v| v as f32)
+        };
+        let generation = Generation {
+            temperature: float("temperature", 0., f32::MAX as f64),
+            top_p: float("top_p", 0., 1.),
+            top_k: params["top_k"].as_u64().and_then(|n| u32::try_from(n).ok()),
+            min_p: float("min_p", 0., 1.),
+            repeat_penalty: float("repeat_penalty", f32::MIN_POSITIVE as f64, f32::MAX as f64),
+            presence_penalty: float("presence_penalty", -2., 2.),
+            seed: None,
+        };
+        let caps = &props["chat_template_caps"];
+        let levels = |key: &str| {
+            caps[key]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .take(32)
+                .filter_map(|value| {
+                    let label = value.as_str()?;
+                    if label == "none" {
+                        return Some(Thinking::Off);
+                    }
+                    Thinking::ALL.iter().copied().find(|t| t.label() == label)
+                })
+                .collect::<Vec<_>>()
+        };
+        Self {
+            context: defaults["n_ctx"].as_u64().filter(|n| *n >= 128),
+            generation,
+            tools: caps["supports_tool_calls"]
+                .as_bool()
+                .or_else(|| caps["supports_tools"].as_bool()),
+            reasoning_effort: caps["supports_reasoning_effort"].as_bool(),
+            levels: levels("reasoning_effort_levels"),
+            rejected: levels("reasoning_effort_rejected"),
+        }
+    }
+    /// Manual preferences are not silently downgraded. Auto is conservative
+    /// when a backend has no evidence for graded reasoning.
+    pub fn choose_thinking(
+        &self,
+        explicit: Option<crate::models::profile::Thinking>,
+        suggested: Option<crate::models::profile::Thinking>,
+    ) -> io::Result<Option<crate::models::profile::Thinking>> {
+        use crate::models::profile::Thinking;
+        if let Some(value) = explicit {
+            if self.rejected.contains(&value)
+                || (!self.levels.is_empty()
+                    && !matches!(value, Thinking::Off | Thinking::Auto)
+                    && !self.levels.contains(&value))
+            {
+                return Err(io::Error::other("Loaded template rejects this reasoning effort; choose a supported level or Auto"));
+            }
+            return Ok((value != Thinking::Auto).then_some(value));
+        }
+        if let Some(value) =
+            suggested.filter(|v| self.levels.contains(v) && !self.rejected.contains(v))
+        {
+            return Ok(Some(value));
+        }
+        if suggested.is_some() && self.reasoning_effort == Some(true) {
+            for value in [
+                Thinking::Medium,
+                Thinking::Low,
+                Thinking::High,
+                Thinking::Xhigh,
+                Thinking::Minimal,
+                Thinking::Max,
+            ] {
+                if self.levels.contains(&value) && !self.rejected.contains(&value) {
+                    return Ok(Some(value));
+                }
+            }
+        }
+        Ok(None)
+    }
+}
 #[derive(Debug, Clone)]
 pub struct Snapshot {
     pub router: bool,
     pub models: Vec<Model>,
+    pub properties: std::collections::BTreeMap<String, ModelProperties>,
 }
 #[derive(Clone)]
 pub struct Client {
@@ -119,11 +216,32 @@ impl Client {
         };
         let data = self.get(if router { "models" } else { "v1/models" })?;
         let list = data.get("data").cloned().unwrap_or(data);
-        let models =
+        let models: Vec<Model> =
             serde_json::from_value(list).map_err(|_| io::Error::other("Invalid model list"))?;
-        Ok(Snapshot { router, models })
+        let mut properties = std::collections::BTreeMap::new();
+        if router {
+            // Managed routers load one model at a time. Bound queries for
+            // attached external routers and never trigger an automatic load.
+            for model in models.iter().filter(|m| m.state() == "loaded").take(1) {
+                let query = url::form_urlencoded::Serializer::new(String::new())
+                    .append_pair("model", &model.id)
+                    .append_pair("autoload", "false")
+                    .finish();
+                if let Ok(value) = self.get(&format!("props?{query}")) {
+                    properties.insert(model.id.clone(), ModelProperties::from_props(&value));
+                }
+            }
+        } else if let Some(model) = models.first() {
+            properties.insert(model.id.clone(), ModelProperties::from_props(&props));
+        }
+        Ok(Snapshot {
+            router,
+            models,
+            properties,
+        })
     }
     /// Diagnostic only: the advertised functions are synthetic and never executed.
+    /// Inherit the server sampler settings; do not substitute a greedy sampler.
     pub fn tool_preflight(
         &self,
         model: &str,
@@ -141,7 +259,7 @@ impl Client {
         let mut body = serde_json::json!({
             "model":model,"messages":[{"role":"system","content":"You are a precise coding agent. Use a tool when asked."},{"role":"user","content":"Use shell exactly once with command \"git log --oneline -8\" and cwd \"/tmp/llamancer-fixture\". Do not modify any text in the arguments."}],
             "tools":[{"type":"function","function":{"name":"shell","description":"Run shell command in working directory","parameters":{"type":"object","properties":{"command":{"type":"string"},"cwd":{"type":"string"}},"required":["command","cwd"],"additionalProperties":false}}},{"type":"function","function":{"name":"read_file","description":"Read a file","parameters":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}}}],
-            "temperature":0,"seed":42,"max_tokens":256,"stream":false
+            "max_tokens":2048,"stream":false
         });
         if let Some(t) = thinking.filter(|t| *t != crate::models::profile::Thinking::Auto) {
             body["chat_template_kwargs"] =
@@ -154,14 +272,14 @@ impl Client {
                 "tools":body["tools"].as_array().unwrap().iter().map(|t|{
                     let mut f=t["function"].clone();f["type"]=serde_json::json!("function");f
                 }).collect::<Vec<_>>(),
-                "temperature":0,"max_output_tokens":256,"stream":true
+                "max_output_tokens":2048,"stream":true
             });
             if let Some(t) = thinking.filter(|t| *t != crate::models::profile::Thinking::Auto) {
                 input["reasoning"] = serde_json::json!({"effort":if t==crate::models::profile::Thinking::Off{"none"}else{t.label()}});
             }
             let response = self
                 .request("POST", "v1/responses")?
-                .timeout(Duration::from_secs(60))
+                .timeout(Duration::from_secs(180))
                 .send_json(input)
                 .map_err(|e|match e{ureq::Error::Status(400,_)=>io::Error::other("Responses probe rejected (HTTP 400); check reasoning level and backend/template support"),other=>http_error(other)})?;
             let mut bytes = Vec::new();
@@ -176,7 +294,7 @@ impl Client {
         }
         let response = json(
             self.request("POST", "v1/chat/completions")?
-                .timeout(Duration::from_secs(60))
+                .timeout(Duration::from_secs(180))
                 .send_json(body)
                 .map_err(http_error)?,
         )?;
@@ -194,6 +312,31 @@ impl Client {
         } else {
             Err(io::Error::other("Router did not confirm operation"))
         }
+    }
+}
+#[cfg(test)]
+mod property_tests {
+    use super::*;
+    use crate::models::profile::Thinking;
+    #[test]
+    fn runtime_reasoning_caps_and_real_parameters() {
+        let p = ModelProperties::from_props(
+            &serde_json::json!({"default_generation_settings":{"n_ctx":131072,"params":{"temperature":0.7,"top_k":20,"presence_penalty":1.5}},"chat_template_caps":{"supports_tool_calls":true,"supports_reasoning_effort":true,"reasoning_effort_levels":["low","medium","xhigh"],"reasoning_effort_rejected":["high"]}}),
+        );
+        assert_eq!(p.context, Some(131072));
+        assert_eq!(p.generation.temperature, Some(0.7));
+        assert_eq!(
+            p.choose_thinking(None, Some(Thinking::Medium)).unwrap(),
+            Some(Thinking::Medium)
+        );
+        assert!(p.choose_thinking(Some(Thinking::High), None).is_err());
+        assert_eq!(p.choose_thinking(Some(Thinking::Auto), None).unwrap(), None);
+        assert_eq!(
+            ModelProperties::default()
+                .choose_thinking(None, Some(Thinking::Medium))
+                .unwrap(),
+            None
+        );
     }
 }
 fn validate_responses_probe(bytes: &[u8]) -> io::Result<()> {

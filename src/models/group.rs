@@ -12,7 +12,19 @@ pub struct Group {
     pub complete: bool,
     pub projector: bool,
 }
+/// Known publisher naming convention for separate MTP draft weights.
+/// Do not infer standalone compatibility from a quantization name.
+pub fn mtp_draft(path: &Path) -> bool {
+    path.file_name()
+        .is_some_and(|n| n.to_string_lossy().to_ascii_lowercase().starts_with("mtp-"))
+}
 impl Group {
+    pub fn draft(&self) -> bool {
+        self.files.first().is_some_and(|f| mtp_draft(&f.path))
+    }
+    pub fn runnable(&self) -> bool {
+        self.complete && !self.projector && !self.draft()
+    }
     pub fn bytes(&self) -> u64 {
         self.files
             .iter()

@@ -53,11 +53,26 @@ pub fn content(app: &App, body: Rect) -> (&'static str, String) {
                     "OFF"
                 }
             ),
-            if crate::models::profile::recommended(g) {
-                "Apply reviewed model-card thinking sampler (Enter)"
-            } else {
-                "Model-card sampler: no reviewed preset"
-            },
+            &format!(
+                "Sampling defaults: {} (Enter to choose)",
+                if app.config.effective_profile(g).backend_defaults {
+                    "Backend"
+                } else if crate::models::profile::recommendation(g).is_some() {
+                    "Recommended"
+                } else {
+                    "Backend (no reviewed model card)"
+                }
+            ),
+            "Advanced settings",
+            &format!(
+                "Project: {}",
+                app.config
+                    .project_dir
+                    .as_ref()
+                    .and_then(|p| p.file_name())
+                    .map(|p| super::safe(&p.to_string_lossy()))
+                    .unwrap_or_else(|| "Choose project".into())
+            ),
         ]
         .iter()
         .enumerate()
@@ -74,10 +89,7 @@ pub fn content(app: &App, body: Rect) -> (&'static str, String) {
                 super::safe(input)
             ));
         }
-        lines.push(
-            "Saved immediately. Higher context increases KV memory; auto inherits model/default."
-                .into(),
-        );
+        lines.push("Saved immediately. Auto targets 128K where memory and model permit.".into());
         if let Some(e) = crate::models::estimate::estimate(g, &app.config.effective_profile(g)) {
             lines.push(format!("Advisory: {:.2} GiB weights + {:.2} GiB KV at {} tokens (excludes runtime overhead)",e.weights as f64/1073741824.0,e.kv as f64/1073741824.0,e.context));
         } else {
@@ -113,10 +125,10 @@ pub fn content(app: &App, body: Rect) -> (&'static str, String) {
         if app.config.api_key_file.is_some() {
             lines.push("Authenticated agents: Run model only, then explicit A in Server.".into());
         }
-        lines.push(if g.complete && !g.projector {
+        lines.push(if g.runnable() {
             "Enter or click an action. Esc goes back.".into()
         } else {
-            "Incomplete model or projector: inspection only.".into()
+            "Incomplete model or auxiliary weights: inspection only.".into()
         });
         ("Launch model", lines.join("\n"))
     } else if app.setup_open {
@@ -175,7 +187,7 @@ pub fn content(app: &App, body: Rect) -> (&'static str, String) {
         ("Download destination", lines.join("\n"))
     } else if let Some(projects) = &app.projects {
         let (offset, capacity) = super::viewport(app.project_cursor, body.height, 4);
-        let mut lines = vec!["Choose a direct project folder (up to 512).".into()];
+        let mut lines = vec!["Select a folder or open it in your file manager.".into()];
         if projects.is_empty() {
             lines.push("No visible project folders found.".into());
         }
@@ -280,7 +292,7 @@ pub fn content(app: &App, body: Rect) -> (&'static str, String) {
         let mut lines = vec![
             filename,
             format!(
-                "{} mode | auto = inherit backend default",
+                "{} mode | auto = inherit model or backend default",
                 if editor.advanced { "Advanced" } else { "Basic" }
             ),
         ];
@@ -335,7 +347,7 @@ pub fn content(app: &App, body: Rect) -> (&'static str, String) {
             ),
         )
     } else if app.help {
-        ("Help", "Tab / arrows / 1–5: navigate; click tab or row, scroll to select\nLibrary: r scan, x cancel, Up/Down select, Enter launch menu, j details (PgUp/PgDn scroll)\n/: search, s: sort, f: favorite, v: favorites only, p: inference profile, m: memory advisory, l: start single model, i: invalid files, h: hide model, t: quarantine\nDiscover: / search, Enter open, d queue, n next page\nDownloads: r resume, R run queue, x pause, t quarantine, T restore, z remove entry\nServer: r refresh, D detach, s router  R restart, i probe, x stop, l/u load/unload, a agent, A current terminal, g logs\nG guided setup (any view). Settings: Up/Down select, Enter edit; T next theme; I icon mode; B backend manager, P project picker (also Server)\n?: toggle help\nEsc: close help or quit\nq / Ctrl+C: quit".into())
+        ("Help", "Tab / arrows / 1–5: navigate; click tab or row, scroll to select\nLibrary: r scan, x cancel, Up/Down select, Enter launch menu, j details (PgUp/PgDn scroll)\n/: search, s: sort, f: favorite, v: favorites only, p: inference profile, m: memory advisory, l: start single model, i: invalid files, h: hide model, t: quarantine\nDiscover: / search, Enter open, d queue, n next page\nDownloads: r resume, F retry fresh (keeps partial), R run queue, x pause, t quarantine, T restore, z remove entry\nServer: r refresh, D detach, s router  R restart, i probe, x stop, l/u load/unload, a agent, A current terminal, g logs\nG guided setup (any view). Settings: Up/Down select, Enter edit; T next theme; I icon mode; B backend manager, P project picker (also Server)\n?: toggle help\nEsc: close help or quit\nq / Ctrl+C: quit".into())
     } else {
         (
             TABS[app.tab],
@@ -423,7 +435,8 @@ pub fn content(app: &App, body: Rect) -> (&'static str, String) {
                         };
                         let mut lines = vec![
                             safe(&d.status),
-                            "Enter/r resume model | R all queued | x pause | t quarantine | T restore | z remove model".into(),
+                            "Enter/r resume model | F retry fresh (preserves partials) | x pause"
+                                .into(),
                         ];
                         let groups = d.bundles();
                         let cursor = d.bundle_cursor(&groups);

@@ -15,26 +15,30 @@ pub enum Field {
     ApiKeyFile,
     ServerBinary,
     Device,
+    DefaultContext,
     ProjectDir,
     WorkspaceRoot,
     CustomAgent,
     AddRoot,
     DownloadRoot,
+    DownloadTransport,
     RemoveRoot,
     ImportModel,
     RestoreModel,
     RemoveImport,
 }
 impl Field {
-    pub const ALL: [Self; 17] = [
+    pub const ALL: [Self; 19] = [
         Self::AddRoot,
         Self::DownloadRoot,
+        Self::DownloadTransport,
         Self::ImportModel,
         Self::RemoveRoot,
         Self::RemoveImport,
         Self::RestoreModel,
         Self::ServerBinary,
         Self::Device,
+        Self::DefaultContext,
         Self::Endpoint,
         Self::ApiKeyFile,
         Self::Agent,
@@ -70,6 +74,15 @@ impl Field {
             Self::Agent => &["omp", "pi", "pi-native", "custom"],
             Self::AgentTerminal => &["new-window", "current", "kitty-tab", "kitty-window"],
             Self::Device => &["auto", "none", "Custom value…"],
+            Self::DownloadTransport => &["native", "hub"],
+            Self::DefaultContext => &[
+                "auto",
+                "32768",
+                "65536",
+                "131072",
+                "262144",
+                "Custom value…",
+            ],
             _ => &[],
         }
     }
@@ -83,11 +96,13 @@ impl Field {
             Self::ApiKeyFile => "API key file",
             Self::ServerBinary => "llama-server executable",
             Self::Device => "GPU device",
+            Self::DefaultContext => "Default context",
             Self::ProjectDir => "Active project",
             Self::WorkspaceRoot => "Workspace root",
             Self::CustomAgent => "Custom agent executable",
             Self::AddRoot => "Add model root",
             Self::DownloadRoot => "Default download root",
+            Self::DownloadTransport => "Download transport",
             Self::RemoveRoot => "Remove model root",
             Self::ImportModel => "Import GGUF reference",
             Self::RestoreModel => "Restore hidden model",
@@ -97,6 +112,7 @@ impl Field {
     pub fn hint(self) -> &'static str {
         match self {
             Self::AddRoot=>"Required for downloading. Enter default to create the suggested private model folder, or choose an existing absolute folder.",
+            Self::DownloadTransport=>"Native is built in. Hub uses the optional official hf CLI and its resumable Xet-capable cache; allow space for a verified local copy.",
             Self::DownloadRoot=>"Optional. none asks which configured folder to use when there are several.",
             Self::RemoveRoot=>"Removes a library reference, not the files.",
             Self::ImportModel=>"Optional. Index one existing GGUF without copying it.",
@@ -110,8 +126,9 @@ impl Field {
             Self::ApiKeyFile=>"Optional. none is normal for local managed sessions. Use a private key file for external servers.",
             Self::ServerBinary=>"Normally select an installed llama.cpp backend with B rather than typing a path.",
             Self::Device=>"auto lets the backend choose. none forces CPU. B selects a tested GPU.",
-            Self::ProjectDir=>"Active project: the exact folder in which the coding agent works. Press P to switch.",
-            Self::WorkspaceRoot=>"Optional parent of your projects, e.g. /home/user/src. P selects an individual project.",
+            Self::DefaultContext=>"Auto targets 128K tokens within the model and memory budget. A fixed value overrides auto; individual model settings take precedence.",
+            Self::ProjectDir=>"Active project: the exact folder in which the coding agent works. Use Projects or Browse folder.",
+            Self::WorkspaceRoot=>"Optional parent of your projects, e.g. /home/user/src. Browse folder to choose it; Projects selects a child.",
             Self::CustomAgent=>"Only required when Default agent is custom.",
         }
     }
@@ -120,6 +137,7 @@ impl Field {
             Self::Theme | Self::Icons => "Appearance",
             Self::AddRoot
             | Self::RemoveRoot
+            | Self::DownloadTransport
             | Self::DownloadRoot
             | Self::ImportModel
             | Self::RemoveImport
@@ -150,6 +168,11 @@ impl Field {
                 .unwrap_or_else(|| "none".into()),
             Self::ServerBinary => config.server_binary.clone(),
             Self::Device => config.device.clone(),
+            Self::DefaultContext => config
+                .default_context
+                .map(|n| n.to_string())
+                .unwrap_or_else(|| "auto".into()),
+            Self::DownloadTransport => config.download_transport.label().into(),
             Self::DownloadRoot => config
                 .download_root
                 .as_ref()
@@ -237,6 +260,11 @@ pub fn apply(
             }
             draft.device = value.into();
         }
+        Field::DefaultContext => {
+            let mut profile = crate::models::profile::Profile::default();
+            crate::models::profile::Field::Context.set(&mut profile, value)?;
+            draft.default_context = profile.engine.context_size;
+        }
         Field::CustomAgent => draft.custom_agent = value.into(),
         Field::ProjectDir | Field::WorkspaceRoot => {
             let selected = if value == "none" {
@@ -250,9 +278,24 @@ pub fn apply(
             };
             if field == Field::WorkspaceRoot {
                 draft.workspace_root = selected;
+                if draft.workspace_root.is_some()
+                    && draft
+                        .project_dir
+                        .as_ref()
+                        .is_some_and(|p| p.parent() != draft.workspace_root.as_deref())
+                {
+                    draft.project_dir = None;
+                }
             } else {
                 draft.project_dir = selected;
             }
+        }
+        Field::DownloadTransport => {
+            draft.download_transport = match value {
+                "native" => crate::downloads::Transport::Native,
+                "hub" => crate::downloads::Transport::Hub,
+                _ => return Err(invalid("Choose native or hub")),
+            };
         }
         Field::DownloadRoot => {
             draft.download_root = if value == "none" {

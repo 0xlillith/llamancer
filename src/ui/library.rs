@@ -194,7 +194,15 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App, p: &Palette) {
                 let group = &app.candidates[index];
                 let m = &group.files[0].metadata;
                 let fav = app.config.favorites.contains(&identity(group));
-                let state = if group.projector {
+                let suspect = app
+                    .downloads
+                    .as_ref()
+                    .is_some_and(|d| d.integrity_problem(group));
+                let state = if suspect {
+                    "Integrity failed"
+                } else if group.draft() {
+                    "MTP draft"
+                } else if group.projector {
                     "Projector"
                 } else if !group.complete {
                     "Incomplete"
@@ -230,17 +238,19 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App, p: &Palette) {
                         Cell::from(format!("{:.1}", group.bytes() as f64 / 1073741824.0)),
                         Cell::from(format!(
                             "{} {state}",
-                            p.icon(if group.complete {
+                            p.icon(if group.complete && !suspect {
                                 Icon::Check
                             } else {
                                 Icon::Warning
                             })
                         ))
-                        .style(Style::default().fg(if group.complete {
-                            p.green
-                        } else {
-                            p.orange
-                        })),
+                        .style(Style::default().fg(
+                            if group.complete && !suspect {
+                                p.green
+                            } else {
+                                p.orange
+                            },
+                        )),
                     ]
                 } else {
                     vec![Cell::from(name), Cell::from(quantization(m.file_type))]

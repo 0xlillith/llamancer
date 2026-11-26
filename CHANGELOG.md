@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- Reviewed model-specific sampler recommendations, effective configuration preview and 128K auto-context target with native hybrid memory fitting.
+- Optional official Hugging Face CLI download transport, verified same-digest local reuse and explicit fresh retry preserving failed partials.
+- Complete-model SHA-256 audits, independent direct-read checks on Linux when applicable, and persistent launch blocking for failed audits.
+- Real tables and transfer gauges, contextual controls, direct text search and graphical workspace-folder selection when available.
+- Separate known MTP draft weights from standalone models; do not rank them first or offer unsupported draft attachment.
+- Illustrated user guide and reproducible real terminal screenshot gallery.
+
 ## 0.1.0-beta.4 — 2026-11-25
 
 - Compact navigation, searchable model variants, direct ranked sort/filter pickers, categorized settings and enumerated setting choices.

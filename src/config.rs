@@ -14,6 +14,7 @@ pub struct Config {
     pub icon_mode: crate::ui::icons::Mode,
     pub model_roots: Vec<PathBuf>,
     pub download_root: Option<PathBuf>,
+    pub download_transport: crate::downloads::Transport,
     pub model_imports: Vec<PathBuf>,
     pub hidden_models: BTreeSet<PathBuf>,
     pub default_agent: String,
@@ -40,6 +41,7 @@ impl Default for Config {
             icon_mode: Default::default(),
             model_roots: Vec::new(),
             download_root: None,
+            download_transport: Default::default(),
             model_imports: Vec::new(),
             hidden_models: BTreeSet::new(),
             default_agent: "omp".into(),
@@ -126,7 +128,7 @@ impl Config {
             .cloned()
             .unwrap_or_default();
         p.engine.context_size = p.engine.context_size.or(self.default_context);
-        p
+        p.with_model_defaults(g, self.default_agent == "omp")
     }
     fn validate_context(&self) -> io::Result<()> {
         if self

@@ -12,7 +12,7 @@ def main():
   root=Path(scratch);cfg=root/"config/llamancer";cfg.mkdir(parents=True)
   with socket.socket() as sock:
    sock.bind(("127.0.0.1",0));port=sock.getsockname()[1]
-  (cfg/"config.toml").write_text(f"server_binary={json.dumps(str(backend))}\ndevice=\"none\"\nendpoint=\"http://127.0.0.1:{port}\"\n")
+  (cfg/"config.toml").write_text(f"server_binary={json.dumps(str(backend))}\ndevice=\"none\"\ndownload_transport={json.dumps(os.environ.get("LLAMANCER_TEST_TRANSPORT","native"))}\nendpoint=\"http://127.0.0.1:{port}\"\n")
   master,slave=pty.openpty();proc=None
   try:
    fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack("HHHH",36,120,0,0))
@@ -23,14 +23,14 @@ def main():
    def send(b):os.write(master,b);time.sleep(.12)
    def render():return "\n".join("".join(row) for row in screen.rows)
    wait("LLAMANCER");send(b"G");wait("Guided setup");send(b"\r");wait("Edit settings");wait("default");send(b"\r");wait("Scan complete");assert (root/"data/llamancer/models").is_dir()
-   send(b"2");send(b"@ggml-org/tiny-llamas");send(b"\r");wait("variants · Enter to download",35)
+   send(b"2");send(b"@unsloth/Qwen3.8-Flash-Next-GGUF");wait("@unsloth/Qwen3.8-Flash-Next-GGUF");send(b"\x15");send(b"@ggml-org/tiny-llamas");send(b"\r");wait("stories260K.gguf",35)
    # Click the visible filter field (body row 1; one-based terminal coordinates).
    send(b"\x1b[<0;5;7M\x1b[<0;5;7m");send(b"stories260K.gguf");send(b"\r");wait("stories260K.gguf")
    # Wait for the actual selected row, not the filter text.
    deadline=time.monotonic()+5
    while time.monotonic()<deadline:
     if select.select([master],[],[],.1)[0]:screen.feed(os.read(master,65536))
-    rows=[i for i,r in enumerate(screen.rows) if "> " in "".join(r) and "stories260K.gguf" in "".join(r)]
+    rows=[i for i,r in enumerate(screen.rows) if "› " in "".join(r) and "stories260K.gguf" in "".join(r)]
     if rows:break
    assert len(rows)==1,render()
    y=rows[0]+1

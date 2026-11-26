@@ -19,7 +19,7 @@ Llamancer brings local GGUF model discovery, inference preferences, server contr
 
 ## Status
 
-Linux beta 0.1.0-beta.4. Native Linux x86_64 and aarch64 CI, managed CPU text/vision inference, checksum-verified public and authorized gated Hub downloads, systemd lifecycle, Arch package installation, AMD Vulkan/ROCm text and vision inference, pinned CPU/Vulkan/ROCm source builds, real OMP/Pi tool use and graphical agent exit have passed their documented acceptance tests. Authenticated OMP uses an isolated temporary profile. No general model compatibility, comprehensive security audit or stable-release certification is implied. See [verified status](docs/STATUS.md), [desktop results](docs/DESKTOP-RESULTS.md) and [release review](docs/BETA-REVIEW.md).
+Latest published Linux beta: 0.1.0-beta.4. This development branch adds the workflow documented in [the user guide](docs/USAGE.md); those changes require a source build until the next release. Native Linux x86_64 and aarch64 CI, managed CPU text/vision inference, checksum-verified public and authorized gated Hub downloads, systemd lifecycle, Arch package installation, AMD Vulkan/ROCm text and vision inference, pinned CPU/Vulkan/ROCm source builds, real OMP/Pi tool use and graphical agent exit have passed their documented acceptance tests. Authenticated OMP uses an isolated temporary profile. No general model compatibility, comprehensive security audit or stable-release certification is implied. See [verified status](docs/STATUS.md), [desktop results](docs/DESKTOP-RESULTS.md) and [release review](docs/BETA-REVIEW.md).
 
 | Workspace | Current functionality |
 | --- | --- |
@@ -31,9 +31,17 @@ Linux beta 0.1.0-beta.4. Native Linux x86_64 and aarch64 CI, managed CPU text/vi
 
 ## Screenshots
 
-![Llamancer in Kitty with optional Nerd Font icons and Andromeda theme](assets/screenshots/beta4-library.png)
+Real terminal captures from the development workflow following beta.4 (Andromeda theme, optional Nerd Font icons). See the [illustrated user guide](docs/USAGE.md) for the full workflow.
 
-[More screenshots and terminal captures](docs/SCREENSHOTS.md): themes, project workspace, guided setup, memory advisory, benchmark comparison, inference profiles, discovery, downloads and the active router.
+![Library: indexed models and metadata](assets/screenshots/workflow-library.png)
+
+![Launch: project, context and configuration preview](assets/screenshots/workflow-launch.png)
+
+![Discover: grouped quantizations and auxiliary weights](assets/screenshots/workflow-discover.png)
+
+![Downloads: verification and model-level transfer progress](assets/screenshots/workflow-downloads.png)
+
+[Full screenshot gallery](docs/SCREENSHOTS.md) includes workspace selection, active inference, settings and earlier theme examples.
 
 ## Quick start
 
@@ -77,16 +85,16 @@ Run `llamancer doctor`, then `llamancer` and press G for guided setup. On Linux 
 Press `m` in Library to see the selected model's disk size, conventional attention KV estimate, requested GPU offload and available system RAM. Probe the configured backend with `i` in Server first to include its last reported per-device memory. Full-offload/CPU comparisons flag likely capacity pressure; partial/automatic offload and unsupported hybrid architectures remain explicitly uncertain. This is not a guarantee and does not change settings automatically.
 
 ## Discover models
-Discover opens with the search field focused: type immediately and press Enter. Click the search/filter field or press F3 (Ctrl+F or / also works) to focus it again. Tab/Esc returns focus to results; mouse tabs and rows remain active. Double-click or press Enter on a repository to open it, then on a variant to confirm storage and start downloading. Press `s` to cycle real Hugging Face rankings: most downloaded, trending, newest, recently updated and most liked. Search supports `author:unsloth`, `license:mit`, `quant:Q4_K_M` and exact `@owner/repo`. Inside a repository, `/` filters variant names and `s` sorts balanced Q4/Q5 first, smallest, largest or alphabetically. Multipart variants are grouped into one row with aggregate size and completeness. Confirm once to queue every shard of the selected quantization. Downloads shows one model job with combined progress; Enter/r resumes all unfinished parts of that model, skipping completed parts. Per-part checksums and ownership receipts remain separate. Optional mmproj projectors are separate downloads; unrelated quantizations are never mixed. Balanced ordering is a filename heuristic, not measured per-variant popularity; the Hub does not supply file download counts through this API.
+Discover opens with the search field focused: type immediately and press Enter. Click the search/filter field or press F3 (Ctrl+F or / also works) to focus it again. Tab/Esc returns focus to results; mouse tabs and rows remain active. Double-click or press Enter on a repository to open it, then on a variant to confirm storage and start downloading. Press `s` to cycle real Hugging Face rankings: most downloaded, trending, newest, recently updated and most liked. Search supports `author:unsloth`, `license:mit`, `quant:Q4_K_M` and exact `@owner/repo`. Inside a repository, `/` filters variant names and `s` sorts balanced Q4/Q5 first, smallest, largest or alphabetically. Multipart variants are grouped into one row with aggregate size and completeness. Confirm once to queue every shard of the selected quantization. Downloads shows one model job with combined progress; Enter/r resumes all unfinished parts of that model, skipping completed parts. Per-part checksums and ownership receipts remain separate. Optional mmproj projectors are separate downloads; known mtp- draft weights are listed as auxiliary, not offered as standalone models. Unrelated quantizations are never mixed. Balanced ordering is a filename heuristic, not measured per-variant popularity; the Hub does not supply file download counts through this API.
 
 ## Everyday workflow
-Use G for guided setup, B to choose a backend, Discover to select a variant, then confirm its storage. Downloads start automatically, and the Library refreshes on completion. Select a complete model in Library, press Enter, then Enter again for model + agent in a separate window. The alternate Run model only and Inspect actions are available in the same menu. Context for this model and Default context (all models) are editable directly in the menu: arrow left/right cycles Auto, 8K, 16K, 32K, 64K, 128K and 256K; Enter accepts a custom token count. Changes persist immediately. Auto on a model inherits the global preference, otherwise the backend default. Relaunching the same owned single model with changed context restarts it; router presets require a router restart. High context can exceed available memory and the model training context; estimates are advisory. If no executable is configured the Backend Manager opens first. Server provides `w` Web UI, `a` Launch agent and `x` Stop. Settings groups storage, inference, agent, workspace and appearance, and editing shows a contextual hint. The first model-folder editor offers `default` (creates the per-user XDG data model directory only on confirmation), or an existing absolute path of your choice. Defaults keep the local loopback endpoint, automatic device and independent Kitty window. Existing configurations are preserved.
+Use G for guided setup, B to choose a backend, Discover to select a variant, then confirm its storage. Downloads start automatically, and the Library refreshes on completion. Select a complete model in Library, press Enter, then Enter again for model + agent in a separate window. The alternate Run model only and Inspect actions are available in the same menu. Context for this model and Default context (all models) are editable directly in the menu: arrow left/right cycles Auto, 8K, 16K, 32K, 64K, 128K and 256K; Enter accepts a custom token count. Changes persist immediately. Auto inherits a fixed global context, otherwise targets 128K within declared context and available memory; conventional architectures use a conservative estimate and supported hybrid models can use the native llama-fit-params helper. The backend remains authoritative when fitting is unavailable. Relaunching the same owned single model with changed context restarts it; router presets require a router restart. High context can exceed available memory and the model training context; estimates are advisory. If no executable is configured the Backend Manager opens first. Server provides `w` Web UI, `a` Launch agent and `x` Stop. Settings groups storage, inference, agent, workspace and appearance, and editing shows a contextual hint. The first model-folder editor offers `default` (creates the per-user XDG data model directory only on confirmation), or an existing absolute path of your choice. Defaults keep the local loopback endpoint, automatic device and independent Kitty window. Existing configurations are preserved.
 
 ## Model storage
-Add multiple model roots in Settings and optionally choose a Default download root. In Discover, `d` uses that default (or opens the picker when multiple roots exist without a default), and `D` always opens the destination picker. Newly added downloads start automatically and continue through queued files; paused and failed entries require explicit resume. Completed downloads trigger a Library rescan. Recent transfer speed history and byte counts appear in Downloads. The picker shows total bundle size and free space per root. Queue entries retain their original destination across restart and default changes. New entries also pin the directory device/inode identity; a replaced directory, symlink or changed mount identity is refused. Restore the original mount/path before resuming. Legacy entries lack the recorded identity, but redirected symlink roots are refused. New bundles require space for the full file(s); resume of already queued files still checks the actual remaining bytes. A full checksum-invalid partial is retained on repeated resume; move it aside manually before deliberately starting a fresh transfer. The last failure is recorded per queue entry.
+Add multiple model roots in Settings and optionally choose a Default download root. In Discover, `d` uses that default (or opens the picker when multiple roots exist without a default), and `D` always opens the destination picker. Newly added downloads start automatically and continue through queued files; paused and failed entries require explicit resume. Completed downloads trigger a Library rescan. Recent transfer speed history and byte counts appear in Downloads. The picker shows total bundle size and free space per root. Queue entries retain their original destination across restart and default changes. New entries also pin the directory device/inode identity; a replaced directory, symlink or changed mount identity is refused. Restore the original mount/path before resuming. Legacy entries lack the recorded identity, but redirected symlink roots are refused. New bundles require space for the full file(s); resume of already queued files still checks the actual remaining bytes. A full checksum-invalid partial is retained. Use Retry fresh (F) to preserve it and explicitly begin a fresh transfer. Use Verify SHA-256 (V) on a completed job to audit the installed files; a failed audit blocks managed launch until revalidation succeeds. Optional Hub transport uses the installed official hf CLI and verifies a separate local copy. The last failure is recorded per queue entry.
 
 ## Project workspaces
-Set **Workspace parent directory** in Settings to a directory containing your projects (for example `/home/user/src`). Press `P` in Server or Settings to select an immediate project folder. The header shows ACTIVE PROJECT, not the workspace root. The selected project becomes the working directory for OMP, Pi or custom agents. Hidden folders and symlink entries are excluded; discovery is bounded. You can also set an explicit Active project directory independently. If a workspace is configured but no project is selected, agent launch asks you to select one. Existing agent settings are untouched.
+Set **Workspace parent directory** in Settings to a directory containing your projects (for example `/home/user/src`). Choose Project in the launch panel, or press `P` in Server or Settings to select an immediate project folder. On a graphical session, Browse folder uses KDialog or Zenity when installed; the terminal editor remains available. The header shows ACTIVE PROJECT, not the workspace root. The selected project becomes the working directory for OMP, Pi or custom agents. Hidden folders and symlink entries are excluded; discovery is bounded. You can also set an explicit Active project directory independently. If a workspace is configured but no project is selected, agent launch asks you to select one. Existing agent settings are untouched.
 
 ## Guided setup and benchmark comparison
 Press uppercase `G` in any normal view for a resumable setup checklist: model storage, reviewed backend, device probe, optional agent and workspace root. Enter opens the appropriate existing setting or manager; Esc skips setup and G reopens it. Nothing is installed implicitly.
@@ -137,7 +145,7 @@ See [Backend Manager](docs/BACKENDS.md) for verification, platform requirements 
 | Global | 1–5 or Tab / Shift+Tab, mouse tabs and rows, G setup, ? help, q / Ctrl+C quit |
 | Library | r scan, x cancel, / search, s sort, f favorite, v favorites only, Enter launch menu, j details, PgUp/PgDn scroll, p profile, m memory advisory, l load, i invalid files, h hide, t quarantine |
 | Discover | / search, Enter submit/open repo, Backspace back, n next page, d queue file or shard bundle, D choose destination |
-| Downloads | r resume, R run queue, x pause, z remove queue entry (keeps files), t quarantine, T restore |
+| Downloads | r resume, R run queue, x pause, V verify SHA-256, F retry fresh (preserve failed partial), z remove queue entry (keeps files), t quarantine, T restore |
 | Server | r refresh, D detach, i probe backend, s router, x stop owned, l/u load/unload, a agent, A current terminal, g logs, w Web UI, b btop, B backends, P project |
 | Settings | T theme, I icons, B backends, P project |
 | Profile | Up/Down, Enter edit, a advanced/basic, s save, Esc discard, Ctrl+U clear input |
@@ -215,9 +223,9 @@ Local TOML settings and download queues are bounded to 16 MiB; custom themes to 
 
 ### Agent tool compatibility and reasoning
 
-In Library's Launch model menu, OMP thinking can be inherited or set per model. The setting becomes an explicit OMP `--thinking` argument; other agents do not receive this flag. The optional Tool compatibility preflight sends a fixed synthetic two-tool request to the ready local server before the Library's combined model/agent launch. It never runs commands, opens files or sends project content. OMP uses the Responses SSE probe, other agents use Chat Completions; the test checks the exact tool name and arguments, including completion and streamed argument consistency. A failure or rejected request requires explicit Enter to continue or Esc to cancel opening the agent. It is a diagnostic, not a guarantee or a sandbox, and uses a bounded deterministic synthetic request rather than the full coding-agent prompt. Results are scoped to that launch, not reused after model or backend changes. The separate advanced Server agent shortcut does not run this opt-in preflight.
+In Library's Launch model menu, OMP thinking can be inherited or set per model. The setting becomes an explicit OMP `--thinking` argument; other agents do not receive this flag. The optional Tool compatibility preflight sends a fixed synthetic two-tool request to the ready local server before the Library's combined model/agent launch. It never runs commands, opens files or sends project content. OMP uses the Responses SSE probe, other agents use Chat Completions; the test checks the exact tool name and arguments, including completion and streamed argument consistency. A failure or rejected request requires explicit Enter to continue or Esc to cancel opening the agent. It is a diagnostic, not a guarantee or a sandbox, and uses a bounded synthetic request using effective server sampling rather than the full coding-agent prompt. Results are scoped to that launch, not reused after model or backend changes. The separate advanced Server agent shortcut does not run this opt-in preflight.
 
-The reviewed preset is offered only for the managed DavidAU/Qwen3.8-Flash-Next-Turbo-Brilliance-50x-Reasoning-Instruct-GSQ-RCO-GGUF revision `096fef2f967efa50c25529adda0c59637e2b4477` directory layout. [Pinned model card](https://huggingface.co/DavidAU/Qwen3.8-Flash-Next-Turbo-Brilliance-50x-Reasoning-Instruct-GSQ-RCO-GGUF/blob/096fef2f967efa50c25529adda0c59637e2b4477/README.md): temperature 1.0, top-p 0.95, top-k 20, min-p 0, repeat penalty 1.0 in thinking mode. The card also recommends presence penalty 0, which is not explicitly set by this preset. These are server defaults, which a client may override. Medium is selected as an OMP starting point because the tested llama.cpp template advertises low/medium/xhigh, not high. This is not a claim that medium fixes tool generation. Changing engine or sampler preferences restarts a managed single model on confirmed relaunch; router changes require restart. No existing profiles are overwritten without an explicit Apply action.
+Reviewed model-card defaults are resolved per model and reasoning mode (see Model-aware inference defaults below). Explicit overrides are preserved. Changing engine or sampler preferences restarts a managed single model on confirmed relaunch; router changes require restart.
 
 
 ### Visual controls
@@ -226,4 +234,61 @@ The Library, Discover, Downloads and Server views expose clickable action bars; 
 
 ### Beta.4 interaction changes
 
-Use the visible action bars rather than memorizing shortcuts. Discover exposes a ranked sort picker and publisher, license and quantization presets (quantization is applied to the variants inside a repository; custom terms remain available in the query). The Launch panel keeps context controls in the main view; expand Advanced settings for reasoning, model-card sampling and optional tool-call checks. Select Presets to pick a token count, click the arrows to step through choices, or use Enter for a custom count. Requested context is not necessarily effective context: the backend may cap the per-slot context, including at the declared training context. Server reports the actual context when the backend supplies it. Settings categories lead to the relevant fields; enumerated values use a selection dialog. The Downloads list shows model names before aggregate progress and the selected job's measured speed and estimated remaining time. Memory displayed in Server is available system RAM and last-probe device capacity, not measured per-model VRAM.
+Use the visible action bars rather than memorizing shortcuts. Discover exposes a ranked sort picker and publisher, license and quantization presets (quantization is applied to the variants inside a repository; custom terms remain available in the query). The Launch panel keeps context controls in the main view; use Sampling defaults directly, and expand Advanced settings for reasoning and optional tool-call checks. Select Presets to pick a token count, click the arrows to step through choices, or use Enter for a custom count. Requested context is not necessarily effective context: the backend may cap the per-slot context, including at the declared training context. Server reports the actual context when the backend supplies it. Settings categories lead to the relevant fields; enumerated values use a selection dialog. The Downloads list shows model names before aggregate progress and the selected job's measured speed and estimated remaining time. Memory displayed in Server is available system RAM and last-probe device capacity, not measured per-model VRAM.
+
+
+### Model-aware inference defaults
+
+For managed Unsloth Qwen3.8 Flash Next and 27B repositories, the Launch panel
+resolves mode-specific defaults from the reviewed model-card guidance
+([Flash Next](https://huggingface.co/unsloth/Qwen3.8-Flash-Next-GGUF/blob/2c41bd2a0b3f51c503c11f1c7ed2e6bb34036beb/README.md),
+[27B](https://huggingface.co/unsloth/Qwen3.8-27B-GGUF/blob/408fcc1807ab264d8cd644a7c4c0f58fbd32eebc/README.md)).
+It matches the exact publisher/repository directory layout, including nested
+variant folders, rather than a model filename. This is reviewed repository
+guidance, not certification of all future weight revisions.
+
+Thinking defaults: temperature 1.0, top-p 0.95, top-k 20, min-p 0,
+presence penalty 0, repeat penalty 1.0. Instruct uses temperature 0.7,
+top-p 0.80 and presence penalty 1.5. The previously reviewed DavidAU revision
+has thinking-only recommendations. OMP reasoning choices for these models
+start with reviewed levels; the loaded template reports actual supported and rejected efforts, and Auto avoids forcing an unverified level. Explicit saved overrides win unless rejected by the backend.
+Other models inherit embedded GGUF sampler metadata where present, then backend defaults. Context preferences remain separate.
+
+Select Sampling defaults to switch between inherited model guidance and
+backend defaults, or explicitly reset custom sampling overrides. The preview
+shows effective server parameters, which an API client can still override.
+The optional synthetic tool probe inherits server sampling instead of forcing
+temperature zero, uses a bounded 2,048-token budget, and never runs a tool.
+A failed probe is diagnostic, not proof of corrupt generation.
+
+
+### Download recovery
+
+A resumed transfer must return an exact pinned range. An ignored range
+(HTTP 200) or rejected range (HTTP 416) does not erase the partial. Select
+**Retry fresh** for a failed model and confirm to preserve its failed
+parts as `.part.saved-<timestamp>` files before downloading again.
+Completed shards are not replaced. The transfer checks free space for
+the new copy and validates the pinned size and, when available, the full SHA-256 before publication.
+The Downloads dashboard uses aggregate model progress, actual rate history,
+and explicit verification/part status. Preserved files consume disk space
+and are never indexed as models.
+
+
+### Automatic context and workspace
+
+Auto context targets 131,072 tokens for supported conventional attention
+architectures. A conservative estimate reserves at least 20% and 4 GiB of
+available host memory (1 GiB for explicit full-device offload); it checks the
+model's declared limit, disk weights and estimated KV cache. Unknown hybrid
+architectures and insufficient or unavailable estimates defer to llama.cpp
+auto-fit. The automatic estimate is a target, not a fit guarantee. A saved
+global or per-model context wins; the resolved choice is frozen for the
+managed server start, not persisted as a manual override. The Server view
+reports the actual context and sampling values when the server exposes them.
+
+Launch includes a direct project selector. Set Workspace root in Settings
+(Workspace category), optionally with **Browse folder** using KDE's kdialog
+or Zenity. The terminal path editor remains available on headless machines.
+Open a selected project or its parent with the file manager via xdg-open,
+without changing the active project until explicitly selected.

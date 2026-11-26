@@ -40,6 +40,29 @@ impl Variant {
     pub fn complete(&self) -> bool {
         self.files.len() as u64 == self.expected
     }
+    pub fn draft(&self) -> bool {
+        crate::models::group::mtp_draft(std::path::Path::new(&self.name))
+    }
+    pub fn projector(&self) -> bool {
+        self.name
+            .rsplit('/')
+            .next()
+            .unwrap_or("")
+            .to_ascii_lowercase()
+            .starts_with("mmproj")
+    }
+    pub fn downloadable(&self) -> bool {
+        self.complete() && !self.draft()
+    }
+    fn role(&self) -> u8 {
+        if self.draft() {
+            2
+        } else if self.projector() {
+            1
+        } else {
+            0
+        }
+    }
     fn rank(&self) -> u8 {
         let n = self.name.to_ascii_lowercase();
         if n.rsplit('/').next().unwrap_or("").starts_with("mmproj") {
@@ -134,7 +157,10 @@ impl Discovery {
                 VariantSort::Largest => b.bytes().cmp(&a.bytes()),
                 VariantSort::Name => a.name.cmp(&b.name),
             };
-            ord.then_with(|| a.name.cmp(&b.name))
+            a.role()
+                .cmp(&b.role())
+                .then(ord)
+                .then_with(|| a.name.cmp(&b.name))
         });
         self.files = self.variants.iter().map(|v| v.files[0].clone()).collect();
         self.cursor = 0;
@@ -142,7 +168,7 @@ impl Discovery {
     pub fn selected_bundle(&self) -> Vec<File> {
         self.variants
             .get(self.cursor)
-            .filter(|v| v.complete())
+            .filter(|v| v.downloadable())
             .map(|v| v.files.clone())
             .unwrap_or_default()
     }
@@ -330,6 +356,32 @@ mod tests {
         d.rebuild_variants();
         assert_eq!(d.len(), 1);
         assert!(d.selected_bundle().is_empty());
+    }
+    #[test]
+    fn auxiliary_drafts_never_rank_or_download_as_standalone_models() {
+        let mut d = Discovery {
+            repo: Some("owner/repo".into()),
+            all_variants: group_variants(vec![
+                file("MTP/mtp-model-Q4_K_M.gguf", 2),
+                file("model-Q4_K_M.gguf", 100),
+                file("mmproj-F16.gguf", 1),
+            ]),
+            ..Default::default()
+        };
+        for sort in [
+            VariantSort::Balanced,
+            VariantSort::Smallest,
+            VariantSort::Largest,
+            VariantSort::Name,
+        ] {
+            d.variant_sort = sort;
+            d.rebuild_variants();
+            assert_eq!(d.variants[0].name, "model-Q4_K_M.gguf");
+            assert!(d.variants[1].projector());
+            assert!(d.variants[2].draft());
+            d.cursor = 2;
+            assert!(d.selected_bundle().is_empty());
+        }
     }
     #[test]
     fn ranks_use_real_hub_parameters() {

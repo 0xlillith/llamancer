@@ -57,7 +57,7 @@ pub fn prepare(
     let mut file = NamedTempFile::new()?;
     writeln!(file, "version = 1")?;
     let mut count = 0;
-    for group in groups.iter().filter(|g| g.complete && !g.projector) {
+    for group in groups.iter().filter(|g| g.runnable()) {
         let path = &group.files[0].path;
         let profile = config.effective_profile(group);
         let args = process::profile_args(&profile, help)?;

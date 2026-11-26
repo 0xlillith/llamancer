@@ -9,6 +9,8 @@ pub struct Profile {
     pub generation: Generation,
     pub agent_thinking: Option<Thinking>,
     pub tool_preflight: bool,
+    /// Disable model-card fallbacks without discarding explicit overrides.
+    pub backend_defaults: bool,
 }
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -31,6 +33,7 @@ pub struct Generation {
     pub top_k: Option<u32>,
     pub min_p: Option<f32>,
     pub repeat_penalty: Option<f32>,
+    pub presence_penalty: Option<f32>,
     pub seed: Option<u32>,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -72,28 +75,162 @@ impl Thinking {
 pub const RECOMMENDATION_REPO: &str =
     "Qwen3.8-Flash-Next-Turbo-Brilliance-50x-Reasoning-Instruct-GSQ-RCO-GGUF";
 pub const RECOMMENDATION_REV: &str = "096fef2f967efa50c25529adda0c59637e2b4477";
-pub fn recommended(group: &super::group::Group) -> bool {
-    group.complete
-        && !group.projector
-        && group.files.iter().all(|f| {
-            let Some(rev) = f.path.parent() else {
-                return false;
-            };
-            rev.file_name().is_some_and(|n| n == RECOMMENDATION_REV)
-                && rev.parent().is_some_and(|r| {
-                    r.file_name().is_some_and(|n| n == RECOMMENDATION_REPO)
-                        && r.parent()
-                            .is_some_and(|a| a.file_name().is_some_and(|n| n == "DavidAU"))
-                })
-        })
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Recommendation {
+    FlashNext,
+    Qwen27B,
+    DavidAu,
 }
-pub fn apply_recommended(p: &mut Profile) {
-    p.generation.temperature = Some(1.0);
-    p.generation.top_p = Some(0.95);
-    p.generation.top_k = Some(20);
-    p.generation.min_p = Some(0.0);
-    p.generation.repeat_penalty = Some(1.0);
-    p.agent_thinking = Some(Thinking::Medium);
+impl Recommendation {
+    /// Model-card provenance. Unsloth entries are reviewed repository-level
+    /// guidance, not a claim to have reviewed every future weight revision.
+    pub fn source(self) -> &'static str {
+        match self {
+            Self::FlashNext => "https://huggingface.co/unsloth/Qwen3.8-Flash-Next-GGUF/blob/2c41bd2a0b3f51c503c11f1c7ed2e6bb34036beb/README.md",
+            Self::Qwen27B => "https://huggingface.co/unsloth/Qwen3.8-27B-GGUF/blob/408fcc1807ab264d8cd644a7c4c0f58fbd32eebc/README.md",
+            Self::DavidAu => "https://huggingface.co/DavidAU/Qwen3.8-Flash-Next-Turbo-Brilliance-50x-Reasoning-Instruct-GSQ-RCO-GGUF/blob/096fef2f967efa50c25529adda0c59637e2b4477/README.md",
+        }
+    }
+    pub fn publisher(self) -> &'static str {
+        match self {
+            Self::FlashNext | Self::Qwen27B => "Unsloth / Qwen model card",
+            Self::DavidAu => "DavidAU pinned model card",
+        }
+    }
+    fn defaults(self, thinking: Option<Thinking>) -> Option<Generation> {
+        let instruct = thinking == Some(Thinking::Off);
+        if self == Self::DavidAu && instruct {
+            // The existing DavidAU review covered thinking mode only.
+            return None;
+        }
+        Some(Generation {
+            temperature: Some(if instruct { 0.7 } else { 1.0 }),
+            top_p: Some(if instruct { 0.80 } else { 0.95 }),
+            top_k: Some(20),
+            min_p: Some(0.0),
+            repeat_penalty: Some(1.0),
+            presence_penalty: if self == Self::DavidAu {
+                None
+            } else {
+                Some(if instruct { 1.5 } else { 0.0 })
+            },
+            seed: None,
+        })
+    }
+}
+fn path_recommendation(path: &std::path::Path) -> Option<(Recommendation, &std::path::Path)> {
+    // Managed layout: owner/repository/revision/[variant directories]/file.
+    // Match full owner and repository, not the filename or a fuzzy model name.
+    for rev in path.ancestors().skip(1) {
+        let Some(hash) = rev.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        if hash.len() != 40 || !hash.bytes().all(|b| b.is_ascii_hexdigit()) {
+            continue;
+        }
+        let Some(repo) = rev.parent() else { continue };
+        let name = repo.file_name().and_then(|n| n.to_str());
+        let owner = repo
+            .parent()
+            .and_then(|p| p.file_name())
+            .and_then(|n| n.to_str());
+        let preset = match (owner, name) {
+            (Some("unsloth"), Some("Qwen3.8-Flash-Next-GGUF")) => Recommendation::FlashNext,
+            (Some("unsloth"), Some("Qwen3.8-27B-GGUF")) => Recommendation::Qwen27B,
+            (Some("DavidAU"), Some(RECOMMENDATION_REPO)) if hash == RECOMMENDATION_REV => {
+                Recommendation::DavidAu
+            }
+            _ => continue,
+        };
+        return Some((preset, rev));
+    }
+    None
+}
+pub fn recommendation(group: &super::group::Group) -> Option<Recommendation> {
+    if !group.runnable() {
+        return None;
+    }
+    let first = path_recommendation(&group.files.first()?.path)?;
+    group
+        .files
+        .iter()
+        .all(|f| path_recommendation(&f.path) == Some(first))
+        .then_some(first.0)
+}
+pub fn thinking_options(group: &super::group::Group) -> &'static [Option<Thinking>] {
+    const QWEN: &[Option<Thinking>] = &[
+        None,
+        Some(Thinking::Off),
+        Some(Thinking::Low),
+        Some(Thinking::Medium),
+        Some(Thinking::Xhigh),
+        Some(Thinking::Auto),
+    ];
+    const GENERIC: &[Option<Thinking>] = &[
+        None,
+        Some(Thinking::Off),
+        Some(Thinking::Minimal),
+        Some(Thinking::Low),
+        Some(Thinking::Medium),
+        Some(Thinking::High),
+        Some(Thinking::Xhigh),
+        Some(Thinking::Max),
+        Some(Thinking::Auto),
+    ];
+    match recommendation(group) {
+        Some(_) => QWEN,
+        None => GENERIC,
+    }
+}
+pub fn thinking_label(value: Option<Thinking>) -> &'static str {
+    value
+        .map(Thinking::label)
+        .unwrap_or("Recommended / inherit")
+}
+impl Profile {
+    pub fn recommendation_source(
+        &self,
+        group: &super::group::Group,
+        omp: bool,
+    ) -> Option<Recommendation> {
+        if self.backend_defaults {
+            return None;
+        }
+        recommendation(group).filter(|preset| {
+            preset
+                .defaults(if omp { self.agent_thinking } else { None })
+                .is_some()
+        })
+    }
+    /// Effective configuration only. Never materialize recommendations into
+    /// the saved profile: mode changes should update inherited fields.
+    pub fn with_model_defaults(mut self, group: &super::group::Group, omp: bool) -> Self {
+        let Some(preset) = recommendation(group) else {
+            return self;
+        };
+        if self.backend_defaults {
+            return self;
+        }
+        if omp && self.agent_thinking.is_none() {
+            self.agent_thinking = Some(Thinking::Medium);
+        }
+        if let Some(defaults) = preset.defaults(if omp { self.agent_thinking } else { None }) {
+            let g = &mut self.generation;
+            g.temperature = g.temperature.or(defaults.temperature);
+            g.top_p = g.top_p.or(defaults.top_p);
+            g.top_k = g.top_k.or(defaults.top_k);
+            g.min_p = g.min_p.or(defaults.min_p);
+            g.repeat_penalty = g.repeat_penalty.or(defaults.repeat_penalty);
+            g.presence_penalty = g.presence_penalty.or(defaults.presence_penalty);
+        }
+        self
+    }
+    pub fn validate_thinking(&self, group: &super::group::Group) -> io::Result<()> {
+        if !thinking_options(group).contains(&self.agent_thinking) {
+            return Err(invalid("This model supports off, low, medium, xhigh or auto reasoning; choose a supported level in Launch"));
+        }
+        Ok(())
+    }
 }
 fn invalid(message: &'static str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidInput, message)
@@ -139,6 +276,7 @@ impl Profile {
             (g.top_p, 0.0, 1.0),
             (g.min_p, 0.0, 1.0),
             (g.repeat_penalty, f32::MIN_POSITIVE, f32::MAX),
+            (g.presence_penalty, -2.0, 2.0),
         ] {
             if value.is_some_and(|v| !v.is_finite() || v < min || v > max) {
                 return Err(invalid("Generation value outside allowed range"));
@@ -163,10 +301,11 @@ pub enum Field {
     TopK,
     MinP,
     RepeatPenalty,
+    PresencePenalty,
     Seed,
 }
 impl Field {
-    pub const ALL: [Self; 15] = [
+    pub const ALL: [Self; 16] = [
         Self::Context,
         Self::GpuLayers,
         Self::Threads,
@@ -181,6 +320,7 @@ impl Field {
         Self::TopK,
         Self::MinP,
         Self::RepeatPenalty,
+        Self::PresencePenalty,
         Self::Seed,
     ];
     pub const BASIC: [Self; 5] = [
@@ -206,6 +346,7 @@ impl Field {
             Self::TopK => "Generation / Top-k",
             Self::MinP => "Generation / Min-p",
             Self::RepeatPenalty => "Generation / Repeat penalty",
+            Self::PresencePenalty => "Generation / Presence penalty",
             Self::Seed => "Generation / Seed",
         }
     }
@@ -219,6 +360,7 @@ impl Field {
             Self::TopP | Self::MinP => "auto or a number from 0 to 1",
             Self::Temperature => "auto or a non-negative number",
             Self::RepeatPenalty => "auto or a positive number",
+            Self::PresencePenalty => "auto or a number from -2 to 2",
             Self::GpuLayers | Self::TopK | Self::Seed => "auto or a non-negative integer",
             _ => "auto or a positive integer",
         }
@@ -244,6 +386,7 @@ impl Field {
             Self::TopK => display(g.top_k),
             Self::MinP => display(g.min_p),
             Self::RepeatPenalty => display(g.repeat_penalty),
+            Self::PresencePenalty => display(g.presence_penalty),
             Self::Seed => display(g.seed),
         }
     }
@@ -276,6 +419,7 @@ impl Field {
             Self::TopK => g.top_k = parse(value)?,
             Self::MinP => g.min_p = parse(value)?,
             Self::RepeatPenalty => g.repeat_penalty = parse(value)?,
+            Self::PresencePenalty => g.presence_penalty = parse(value)?,
             Self::Seed => g.seed = parse(value)?,
         }
         draft.validate()?;
@@ -315,6 +459,48 @@ impl Editor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn sample(owner: &str, repo: &str, revision: &str) -> super::super::group::Group {
+        super::super::group::Group {
+            name: "fixture".into(),
+            files: vec![super::super::Candidate {
+                path: format!("/models/{owner}/{repo}/{revision}/UD-Q4_K_XL/model.gguf").into(),
+                bytes: 1,
+                version: 3,
+                metadata: Default::default(),
+            }],
+            expected: 1,
+            complete: true,
+            projector: false,
+        }
+    }
+    #[test]
+    fn reviewed_defaults_follow_mode_and_preserve_overrides() {
+        for repo in ["Qwen3.8-Flash-Next-GGUF", "Qwen3.8-27B-GGUF"] {
+            let group = sample("unsloth", repo, &"a".repeat(40));
+            let mut stored = Profile::default();
+            stored.engine.context_size = Some(131072);
+            stored.generation.temperature = Some(0.42);
+            let effective = stored.clone().with_model_defaults(&group, true);
+            assert_eq!(effective.engine.context_size, Some(131072));
+            assert_eq!(effective.agent_thinking, Some(Thinking::Medium));
+            assert_eq!(effective.generation.temperature, Some(0.42));
+            assert_eq!(effective.generation.top_p, Some(0.95));
+            assert_eq!(stored.generation.top_p, None);
+            stored.agent_thinking = Some(Thinking::Off);
+            let effective = stored.clone().with_model_defaults(&group, true);
+            assert_eq!(effective.generation.top_p, Some(0.80));
+            assert_eq!(effective.generation.presence_penalty, Some(1.5));
+            stored.backend_defaults = true;
+            assert_eq!(stored.clone().with_model_defaults(&group, true), stored);
+            stored.agent_thinking = Some(Thinking::High);
+            assert!(stored.validate_thinking(&group).is_err());
+        }
+        let unrelated = sample("someone-else", "Qwen3.8-Flash-Next-GGUF", &"a".repeat(40));
+        assert_eq!(
+            Profile::default().with_model_defaults(&unrelated, true),
+            Profile::default()
+        );
+    }
     #[test]
     fn valid_preferences_and_auto() {
         let mut p = Profile::default();

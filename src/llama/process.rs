@@ -222,6 +222,7 @@ pub fn profile_args(profile: &Profile, help: &str) -> io::Result<Vec<OsString>> 
     option!("--top-k", g.top_k);
     option!("--min-p", g.min_p);
     option!("--repeat-penalty", g.repeat_penalty);
+    option!("--presence-penalty", g.presence_penalty);
     option!("--seed", g.seed);
     if help.contains("--jinja") {
         a.push("--jinja".into());
@@ -396,6 +397,18 @@ mod tests {
         thread::sleep(Duration::from_millis(200));
         assert_eq!(std::fs::metadata(heartbeat).unwrap().len(), size);
         assert!(!owned.running().unwrap());
+    }
+    #[test]
+    fn sampling_profile_is_forwarded_to_backend() {
+        let mut profile = Profile::default();
+        profile.generation.temperature = Some(0.7);
+        profile.generation.presence_penalty = Some(1.5);
+        assert!(profile_args(&profile, "--temp").is_err());
+        let args = profile_args(&profile, "--temp --presence-penalty").unwrap();
+        assert_eq!(
+            args,
+            ["--temp", "0.7", "--presence-penalty", "1.5"].map(OsString::from)
+        );
     }
     #[test]
     fn rejects_remote_and_unsupported_flags() {

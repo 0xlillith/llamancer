@@ -16,7 +16,7 @@ use std::{
     time::{Duration, Instant},
 };
 enum Outcome {
-    Started(Owned, String),
+    Started(Owned, String, Option<u32>),
     Snapshot(Snapshot),
     Changed,
     Probed(String, String),
@@ -179,7 +179,7 @@ impl Controller {
         let router_contexts = if single.is_none() {
             groups
                 .iter()
-                .filter(|g| g.complete && !g.projector)
+                .filter(|g| g.runnable())
                 .map(|g| (router::id(g), config.effective_profile(g)))
                 .collect()
         } else {
@@ -187,6 +187,33 @@ impl Controller {
         };
         let launch_mode = single.clone();
         let active_profile = single.as_ref().map(|g| config.effective_profile(g));
+        let mut config = config;
+        let ram = crate::models::fit::available_ram();
+        for group in single
+            .as_ref()
+            .into_iter()
+            .chain(groups.iter())
+            .filter(|g| g.runnable())
+        {
+            let profile = config.effective_profile(group);
+            if profile.engine.context_size.is_none() {
+                let plan = crate::models::fit::context_plan(
+                    group,
+                    &profile,
+                    &config.device,
+                    &self.devices,
+                    ram,
+                );
+                if let Some(n) = plan.tokens {
+                    config
+                        .profiles
+                        .entry(identity(group))
+                        .or_default()
+                        .engine
+                        .context_size = Some(n);
+                }
+            }
+        }
         let requested_context = single
             .as_ref()
             .and_then(|g| config.effective_profile(g).engine.context_size);
@@ -197,11 +224,24 @@ impl Controller {
             let help = process::command_output(&config.server_binary, &["--help"])?;
             let version = process::command_output(&config.server_binary, &["--version"])
                 .unwrap_or_else(|_| "Version unavailable".into());
+            let mut context = requested_context;
             let (preset, mut args) = if let Some(group) = single {
-                if !group.complete || group.projector {
+                if !group.runnable() {
                     return Err(io::Error::other("Select a complete model group"));
                 }
-                let profile = config.effective_profile(&group);
+                let mut profile = config.effective_profile(&group);
+                if profile.engine.context_size.is_none() && config.device == "none"
+                    || profile.engine.context_size.is_none() && profile.engine.gpu_layers.is_none()
+                {
+                    profile.engine.context_size = crate::models::fit::native_context_plan(
+                        &group,
+                        &profile,
+                        &config.server_binary,
+                        &cancel,
+                        crate::models::fit::available_ram(),
+                    );
+                }
+                context = profile.engine.context_size;
                 (
                     None,
                     process::args(&group.files[0].path, &config.endpoint, &profile, &help)?,
@@ -249,7 +289,7 @@ impl Controller {
             if let Some(file) = preset {
                 server.keep_preset(file);
             }
-            Ok(Outcome::Started(server, version))
+            Ok(Outcome::Started(server, version, context))
         })?;
         self.startup_deadline = Some(Instant::now() + Duration::from_secs(90));
         self.active_context = requested_context;
@@ -272,7 +312,7 @@ impl Controller {
             return Err(io::Error::other("Restart requires an idle owned server"));
         }
         let single = self.single.clone();
-        if single.is_none() && !groups.iter().any(|g| g.complete && !g.projector) {
+        if single.is_none() && !groups.iter().any(|g| g.runnable()) {
             return Err(io::Error::other(
                 "Scan at least one complete model before restarting",
             ));
@@ -406,7 +446,8 @@ impl Controller {
                     return;
                 }
                 match outcome {
-                    Ok(Outcome::Started(server, version)) => {
+                    Ok(Outcome::Started(server, version, context)) => {
+                        self.active_context = context;
                         self.owned = Some(server);
                         self.version = version.lines().take(2).collect::<Vec<_>>().join(" ");
                         self.status = "Server starting".into();
@@ -536,6 +577,7 @@ mod tests {
             Ok(Outcome::Snapshot(Snapshot {
                 router: false,
                 models: vec![],
+                properties: Default::default(),
             }))
         })
         .unwrap();
@@ -573,6 +615,7 @@ mod tests {
                 Ok(Outcome::Snapshot(Snapshot {
                     router: true,
                     models: Vec::new(),
+                    properties: Default::default(),
                 }))
             })
             .unwrap();

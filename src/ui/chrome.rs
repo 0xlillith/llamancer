@@ -5,7 +5,7 @@ use ratatui::{
     layout::Rect,
     style::Modifier,
     text::{Line, Span},
-    widgets::{Paragraph, Wrap},
+    widgets::{Gauge, Paragraph, Sparkline, Wrap},
     Frame,
 };
 
@@ -165,6 +165,20 @@ pub fn row(line: &str, p: &Palette, logs: bool) -> Line<'static> {
     }
     Line::styled(line, style)
 }
+pub fn transfer_size(n: u64, total: u64) -> String {
+    let (unit, divisor) = if total >= 1024_u64.pow(3) {
+        ("GiB", 1024_f64.powi(3))
+    } else if total >= 1024_u64.pow(2) {
+        ("MiB", 1024_f64.powi(2))
+    } else {
+        ("KiB", 1024.)
+    };
+    format!(
+        "{:.1}/{:.1} {unit}",
+        n as f64 / divisor,
+        total as f64 / divisor
+    )
+}
 pub fn meter(value: u64, total: u64, width: usize) -> String {
     if total == 0 {
         return "─".repeat(width);
@@ -263,7 +277,145 @@ pub fn footer(frame: &mut Frame, area: Rect, hints: &str, app: &App, p: &Palette
     ));
     frame.render_widget(Paragraph::new(lines).style(p.base), area);
 }
+fn transfer_dashboard(frame: &mut Frame, area: Rect, app: &App, p: &Palette) {
+    frame.render_widget(p.panel(" Transfer dashboard ").style(p.base), area);
+    if area.width < 4 || area.height < 5 {
+        return;
+    }
+    let inner = Rect::new(area.x + 1, area.y + 1, area.width - 2, area.height - 2);
+    let Some(d) = &app.downloads else { return };
+    let groups = d.bundles();
+    let Some(g) = groups.get(d.bundle_cursor(&groups)) else {
+        frame.render_widget(
+            Paragraph::new("No downloads yet. Open Discover.")
+                .wrap(Wrap { trim: true })
+                .style(p.dim),
+            inner,
+        );
+        return;
+    };
+    let state_color = match g.state {
+        "Complete" => p.green,
+        "Failed" | "Integrity failed" => p.orange,
+        _ => p.heading.fg.unwrap_or(p.green),
+    };
+    let summary = vec![
+        Line::styled(super::clip(&g.name, usize::from(inner.width)), p.heading),
+        Line::from(vec![
+            Span::styled(
+                g.label(),
+                p.base.fg(state_color).add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(format!(" · {}", transfer_size(g.received, g.bytes))),
+        ]),
+    ];
+    frame.render_widget(
+        Paragraph::new(summary).style(p.base),
+        Rect::new(inner.x, inner.y, inner.width, 2),
+    );
+    let ratio = if g.bytes == 0 {
+        0.0
+    } else {
+        (g.received as f64 / g.bytes as f64).clamp(0.0, 1.0)
+    };
+    let label = if g.state == "Verifying" {
+        if g.active
+            .is_some_and(|i| d.queue.items[i].file.sha256.is_some())
+        {
+            "Verifying SHA-256".into()
+        } else {
+            "Checking file size".into()
+        }
+    } else if g.state == "Failed" && ratio >= 1.0 {
+        "Transfer failed · inspect parts".into()
+    } else {
+        format!("{:.1}% transferred", ratio * 100.0)
+    };
+    frame.render_widget(
+        Gauge::default()
+            .ratio(ratio)
+            .label(label)
+            .gauge_style(p.base.fg(state_color).add_modifier(Modifier::BOLD)),
+        Rect::new(inner.x, inner.y + 2, inner.width, 1),
+    );
+    let mut y = inner.y + 4;
+    if let Some(i) = g.active {
+        let samples = d.speed_samples(i);
+        if y + 5 < inner.bottom() {
+            let text = if let Some((speed, _)) = d.speed_eta(i) {
+                let secs = (g.bytes.saturating_sub(g.received) as f64 / speed).ceil() as u64;
+                format!(
+                    "{:.1} MiB/s  •  ETA {}m {}s",
+                    speed / 1048576.0,
+                    secs / 60,
+                    secs % 60
+                )
+            } else if g.state == "Verifying" {
+                "Checking downloaded bytes…".into()
+            } else {
+                "Measuring transfer speed…".into()
+            };
+            frame.render_widget(
+                Paragraph::new(text).style(p.heading),
+                Rect::new(inner.x, y, inner.width, 1),
+            );
+            y += 1;
+            if !samples.is_empty() {
+                frame.render_widget(
+                    Sparkline::default()
+                        .data(&samples)
+                        .style(p.base.fg(state_color)),
+                    Rect::new(inner.x, y, inner.width, 3),
+                );
+                y += 4;
+            }
+        }
+    }
+    if y >= inner.bottom() {
+        return;
+    }
+    let mut detail = vec![Line::styled("PARTS", p.muted)];
+    for &i in &g.indices {
+        let item = &d.queue.items[i];
+        let part = crate::models::group::shard(std::path::Path::new(&item.file.name))
+            .map(|(_, n, t)| format!("{n}/{t}"))
+            .unwrap_or_else(|| "1/1".into());
+        let (symbol, style) = match item.state {
+            crate::downloads::State::Complete => ("✓", p.base.fg(p.green)),
+            crate::downloads::State::Failed => ("!", p.base.fg(p.orange)),
+            _ => ("·", p.base),
+        };
+        detail.push(Line::styled(
+            format!("{symbol} Part {part} · {:?}", item.state),
+            style,
+        ));
+        if let Some(e) = item.integrity_error.as_ref().or(item.error.as_ref()) {
+            detail.push(Line::styled(safe(e), p.base.fg(p.orange)));
+        }
+    }
+    detail.push(Line::raw(""));
+    detail.push(Line::styled("DESTINATION", p.muted));
+    if let Some(&i) = g.indices.first() {
+        detail.push(Line::raw(safe(&d.queue.items[i].root.to_string_lossy())));
+    }
+    frame.render_widget(
+        Paragraph::new(detail)
+            .style(p.base)
+            .wrap(Wrap { trim: false }),
+        Rect::new(inner.x, y, inner.width, inner.bottom() - y),
+    );
+}
 pub fn aside(frame: &mut Frame, area: Rect, app: &App, p: &Palette) {
+    if app.tab == 2
+        && !app.setup_open
+        && !app.backend_open
+        && app.download_destination.is_none()
+        && app.projects.is_none()
+        && !app.benchmark_open
+    {
+        transfer_dashboard(frame, area, app, p);
+        return;
+    }
     let mut lines = Vec::new();
     let title;
     if app.setup_open {
@@ -385,6 +537,11 @@ pub fn aside(frame: &mut Frame, area: Rect, app: &App, p: &Palette) {
                             v.files.len(),
                             v.expected
                         )));
+                        if v.draft() {
+                            lines.push(Line::raw("MTP draft: attachment not supported"));
+                        } else if v.projector() {
+                            lines.push(Line::raw("Optional vision projector"));
+                        }
                         lines.push(Line::raw("Per-variant popularity unavailable"));
                         lines.push(Line::raw(if f.sha256.is_some() {
                             "SHA-256 available"
@@ -421,67 +578,7 @@ pub fn aside(frame: &mut Frame, area: Rect, app: &App, p: &Palette) {
                 }
             }
             2 => {
-                title = "Transfer";
-                if let Some(d) = &app.downloads {
-                    let groups = d.bundles();
-                    lines.push(Line::styled(
-                        format!("{} model downloads", groups.len()),
-                        p.heading,
-                    ));
-                    if let Some(g) = groups.get(d.bundle_cursor(&groups)) {
-                        lines.push(Line::raw(""));
-                        lines.push(Line::styled(safe(&g.name), p.heading));
-                        lines.push(Line::raw(format!(
-                            "{} · {:.2} GiB",
-                            g.label(),
-                            g.bytes as f64 / 1073741824.0
-                        )));
-                        lines.push(Line::styled(meter(g.received, g.bytes, 28), p.heading));
-                        lines.push(Line::raw(format!(
-                            "{:.2}/{:.2} GiB",
-                            g.received as f64 / 1073741824.0,
-                            g.bytes as f64 / 1073741824.0
-                        )));
-                        if let Some(i) = g.active {
-                            if let Some((graph, peak)) = d.speed_history(i) {
-                                lines.push(Line::raw("Recent transfer rate"));
-                                lines.push(Line::styled(graph, p.heading));
-                                lines
-                                    .push(Line::raw(format!("Peak {:.1} MiB/s", peak / 1048576.0)));
-                            }
-                            if let Some((speed, _)) = d.speed_eta(i) {
-                                lines.push(Line::raw(format!(
-                                    "{:.1} MiB/s · ETA {}m {}s",
-                                    speed / 1048576.0,
-                                    ((g.bytes.saturating_sub(g.received) as f64 / speed).ceil()
-                                        as u64)
-                                        / 60,
-                                    ((g.bytes.saturating_sub(g.received) as f64 / speed).ceil()
-                                        as u64)
-                                        % 60
-                                )));
-                            }
-                        }
-                        lines.push(Line::raw(""));
-                        lines.push(Line::styled("Parts", p.muted));
-                        for &i in &g.indices {
-                            let item = &d.queue.items[i];
-                            let part =
-                                crate::models::group::shard(std::path::Path::new(&item.file.name))
-                                    .map(|(_, n, t)| format!("{n}/{t}"))
-                                    .unwrap_or_else(|| "1/1".into());
-                            lines.push(Line::raw(format!("{part} · {:?}", item.state)));
-                            if let Some(err) = &item.error {
-                                lines.push(Line::styled(safe(err), p.base.fg(p.orange)));
-                            }
-                        }
-                        lines.push(Line::raw(""));
-                        lines.push(Line::styled("Destination", p.muted));
-                        lines.push(Line::raw(safe(
-                            &d.queue.items[g.indices[0]].root.to_string_lossy(),
-                        )));
-                    }
-                }
+                title = "Transfers";
             }
             3 => {
                 title = "Inference";
@@ -520,6 +617,55 @@ pub fn aside(frame: &mut Frame, area: Rect, app: &App, p: &Palette) {
                 }
                 if let Some(n) = s.active_context {
                     lines.push(Line::raw(format!("Requested context: {n}")));
+                }
+                if let Some(props) = s
+                    .selected()
+                    .and_then(|model| s.snapshot.as_ref()?.properties.get(&model.id))
+                {
+                    if let Some(n) = props.context {
+                        lines.push(Line::styled(
+                            format!("Actual context: {n} tokens"),
+                            p.heading,
+                        ));
+                    }
+                    lines.push(Line::raw(match props.tools {
+                        Some(true) => "Tools: supported",
+                        Some(false) => "Tools: not supported",
+                        None => "Tools: unknown",
+                    }));
+                    if !props.levels.is_empty() {
+                        lines.push(Line::raw(format!(
+                            "Reasoning: {}",
+                            props
+                                .levels
+                                .iter()
+                                .map(|t| t.label())
+                                .collect::<Vec<_>>()
+                                .join(" / ")
+                        )));
+                    }
+                    use crate::models::profile::{Field, Profile};
+                    let profile = Profile {
+                        generation: props.generation.clone(),
+                        ..Default::default()
+                    };
+                    lines.push(Line::styled("Actual server sampling", p.heading));
+                    for field in [
+                        Field::Temperature,
+                        Field::TopP,
+                        Field::TopK,
+                        Field::MinP,
+                        Field::RepeatPenalty,
+                        Field::PresencePenalty,
+                    ] {
+                        let value = field.value(&profile);
+                        if value != "auto" {
+                            lines.push(Line::raw(format!(
+                                "{}: {value}",
+                                field.label().trim_start_matches("Generation / ")
+                            )));
+                        }
+                    }
                 }
                 for device in crate::models::fit::parse_devices(&s.devices) {
                     lines.push(Line::raw(format!(
