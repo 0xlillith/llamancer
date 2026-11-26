@@ -28,6 +28,8 @@ pub enum Effect {
     None,
     Launch(LaunchPlan, crate::agents::TerminalMode),
     Open(String),
+    OpenDirectory(PathBuf),
+    BrowseDirectory(Field, PathBuf),
     Monitor,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -270,16 +272,13 @@ impl Runtime {
                 let client = crate::llama::client::Client::from_config(&self.app.config)?;
                 let id = model.id.clone();
                 let responses = self.app.config.default_agent == "omp";
+                let thinking = if responses {
+                    self.agent_thinking(&id).ok().flatten()
+                } else {
+                    None
+                };
                 self.probe = Some(Job::start(move |_| {
-                    client.tool_preflight(
-                        &id,
-                        if responses {
-                            profile.agent_thinking
-                        } else {
-                            None
-                        },
-                        responses,
-                    )
+                    client.tool_preflight(&id, thinking, responses)
                 })?);
                 if let Some((_, deadline, _)) = self.pending_agent.as_mut() {
                     *deadline = std::time::Instant::now() + std::time::Duration::from_secs(190);
@@ -509,6 +508,36 @@ impl Runtime {
             .find(|g| self.app.server.is_single_model(g) || crate::llama::router::id(g) == id)
             .map(|g| self.app.config.effective_profile(g))
             .unwrap_or_default()
+    }
+    fn agent_thinking(&self, id: &str) -> io::Result<Option<models::profile::Thinking>> {
+        let Some(group) = self
+            .app
+            .candidates
+            .iter()
+            .find(|g| self.app.server.is_single_model(g) || crate::llama::router::id(g) == id)
+        else {
+            return Ok(None);
+        };
+        if !self.app.server.owns_server() {
+            return Ok(None);
+        }
+        let explicit = self
+            .app
+            .config
+            .profiles
+            .get(&models::library::identity(group))
+            .and_then(|p| p.agent_thinking);
+        let suggested = self.app.config.effective_profile(group).agent_thinking;
+        match self
+            .app
+            .server
+            .snapshot
+            .as_ref()
+            .and_then(|snap| snap.properties.get(id))
+        {
+            Some(props) => props.choose_thinking(explicit, suggested),
+            None => Ok(explicit.filter(|v| *v != models::profile::Thinking::Auto)),
+        }
     }
     fn change_launch_preference(&mut self, index: usize, back: bool) -> io::Result<()> {
         use models::profile::thinking_options;
@@ -760,6 +789,59 @@ impl Runtime {
             _ => {}
         }
     }
+    pub fn open_projects(&mut self) -> io::Result<()> {
+        let root =
+            self.app.config.workspace_root.as_ref().ok_or_else(|| {
+                io::Error::other("Set workspace root in Settings → Workspace first")
+            })?;
+        let projects = crate::workspace::projects(root)?;
+        self.app.project_cursor = projects
+            .iter()
+            .position(|p| Some(p) == self.app.config.project_dir.as_ref())
+            .unwrap_or(0);
+        self.app.project_return = self.app.launch_menu.take();
+        self.app.projects = Some(projects);
+        self.blur_search();
+        self.app.notice.clear();
+        Ok(())
+    }
+    fn close_projects(&mut self) {
+        self.app.projects = None;
+        if let Some(group) = self.app.project_return.take() {
+            self.app.launch_menu = Some(group);
+        }
+    }
+    pub fn choose_workspace_directory(
+        &mut self,
+        field: Field,
+        selected: PathBuf,
+    ) -> io::Result<()> {
+        if !matches!(field, Field::WorkspaceRoot | Field::ProjectDir) {
+            return Err(io::Error::other("Not a workspace setting"));
+        }
+        let path = selected
+            .to_str()
+            .ok_or_else(|| io::Error::other("Folder path must be UTF-8"))?;
+        let (mut next, theme) = settings::apply(&self.app.config, field, path, &self.root)?;
+        if field == Field::WorkspaceRoot
+            && next
+                .project_dir
+                .as_ref()
+                .is_some_and(|p| p.parent() != next.workspace_root.as_deref())
+        {
+            next.project_dir = None;
+        }
+        self.persist(next)?;
+        self.theme = theme;
+        self.app.edit = None;
+        self.app.notice = "Workspace saved".into();
+        if self.app.project_return.is_some() && field == Field::WorkspaceRoot {
+            self.app.launch_menu = self.app.project_return.take();
+            self.app.tab = 0;
+            self.open_projects()?;
+        }
+        Ok(())
+    }
     pub fn open_picker(&mut self, kind: crate::ui::choices::Kind) {
         self.blur_search();
         self.app.picker = Some(crate::ui::choices::Picker::new(kind, &self.app));
@@ -990,6 +1072,23 @@ impl Runtime {
                         (i + 1).min(order.len() - 1)
                     }];
                 }
+                KeyCode::Enter if self.app.launch_cursor == 9 => {
+                    if self.app.config.workspace_root.is_some() {
+                        self.open_projects()?;
+                    } else {
+                        self.app.project_return = self.app.launch_menu.take();
+                        self.app.tab = 4;
+                        self.app.setting = Field::ALL
+                            .iter()
+                            .position(|f| *f == Field::WorkspaceRoot)
+                            .unwrap_or(0);
+                        self.app.edit = Some((
+                            Field::WorkspaceRoot,
+                            Field::WorkspaceRoot.initial(&self.app.config),
+                        ));
+                        self.app.notice = "Choose a parent folder; then select a project".into();
+                    }
+                }
                 KeyCode::Enter if self.app.launch_cursor == 8 => {
                     self.app.launch_advanced = !self.app.launch_advanced
                 }
@@ -1137,7 +1236,30 @@ impl Runtime {
         }
         if let Some(projects) = &self.app.projects {
             match key.code {
-                KeyCode::Esc => self.app.projects = None,
+                KeyCode::Esc => self.close_projects(),
+                KeyCode::Char('o') => {
+                    let root = self
+                        .app
+                        .config
+                        .workspace_root
+                        .as_ref()
+                        .ok_or_else(|| io::Error::other("Set workspace root"))?;
+                    let path = projects
+                        .get(self.app.project_cursor)
+                        .map(|candidate| crate::workspace::select(root, candidate))
+                        .transpose()?
+                        .unwrap_or(root.canonicalize()?);
+                    return Ok(Effect::OpenDirectory(path));
+                }
+                KeyCode::Char('O') => {
+                    let root = self
+                        .app
+                        .config
+                        .workspace_root
+                        .as_ref()
+                        .ok_or_else(|| io::Error::other("Set workspace root"))?;
+                    return Ok(Effect::OpenDirectory(root.canonicalize()?));
+                }
                 KeyCode::Up => self.app.project_cursor = self.app.project_cursor.saturating_sub(1),
                 KeyCode::Down => {
                     self.app.project_cursor =
@@ -1156,7 +1278,7 @@ impl Runtime {
                     let mut next = self.app.config.clone();
                     next.project_dir = Some(crate::workspace::select(root, candidate)?);
                     self.persist(next)?;
-                    self.app.projects = None;
+                    self.close_projects();
                     self.app.notice = "Active project selected".into();
                 }
                 _ => {}
@@ -1187,18 +1309,27 @@ impl Runtime {
             self.app.notice = format!("Theme: {}", self.app.config.theme);
             return Ok(Effect::None);
         }
-        if key.code == KeyCode::Char('P') && matches!(self.app.tab, 3 | 4) && !self.modal() {
-            let root = self.app.config.workspace_root.as_ref().ok_or_else(|| {
-                io::Error::other("Set workspace parent directory in Settings first")
-            })?;
-            let projects = crate::workspace::projects(root)?;
-            self.app.project_cursor = projects
-                .iter()
-                .position(|p| Some(p) == self.app.config.project_dir.as_ref())
-                .unwrap_or(0);
-            self.app.projects = Some(projects);
-            self.app.notice.clear();
+        if key.code == KeyCode::Char('P') && !self.modal() {
+            self.open_projects()?;
             return Ok(Effect::None);
+        }
+        if key.code == KeyCode::Char('O') && self.app.tab == 4 && !self.modal() {
+            let field = Field::ALL[self.app.setting];
+            if matches!(field, Field::WorkspaceRoot | Field::ProjectDir) {
+                let initial = if field == Field::WorkspaceRoot {
+                    self.app.config.workspace_root.clone()
+                } else {
+                    self.app
+                        .config
+                        .project_dir
+                        .clone()
+                        .or_else(|| self.app.config.workspace_root.clone())
+                };
+                let initial = initial
+                    .or_else(|| std::env::var_os("HOME").map(PathBuf::from))
+                    .unwrap_or_else(|| PathBuf::from("/"));
+                return Ok(Effect::BrowseDirectory(field, initial));
+            }
         }
         if self.app.backend_open {
             self.backend_key(key.code)?;
@@ -1322,6 +1453,20 @@ impl Runtime {
             return Ok(Effect::None);
         }
         if self.app.edit.is_some() {
+            if key.code == KeyCode::F(4) {
+                let (field, input) = self.app.edit.as_ref().unwrap();
+                if matches!(field, Field::WorkspaceRoot | Field::ProjectDir) {
+                    let initial = PathBuf::from(input);
+                    let initial = if initial.is_dir() {
+                        initial
+                    } else {
+                        std::env::var_os("HOME")
+                            .map(PathBuf::from)
+                            .unwrap_or_else(|| PathBuf::from("/"))
+                    };
+                    return Ok(Effect::BrowseDirectory(*field, initial));
+                }
+            }
             self.settings_edit(key)?;
             return Ok(Effect::None);
         }
@@ -1599,6 +1744,10 @@ impl Runtime {
             KeyCode::Esc => {
                 self.app.edit = None;
                 self.app.notice = "Edit cancelled".into();
+                if self.app.project_return.is_some() {
+                    self.close_projects();
+                    self.app.tab = 0;
+                }
             }
             KeyCode::Enter => {
                 let (next, theme) = settings::apply(&self.app.config, *field, input, &self.root)?;
@@ -1635,6 +1784,13 @@ impl Runtime {
                     self.app.server.status = "Endpoint changed; refresh server".into();
                 }
                 self.app.edit = None;
+                if self.app.project_return.is_some() {
+                    self.app.launch_menu = self.app.project_return.take();
+                    self.app.tab = 0;
+                    if self.app.config.workspace_root.is_some() {
+                        self.open_projects()?;
+                    }
+                }
                 self.app.notice = if credential_cleared {
                     "Endpoint changed; previous API key cleared. Set a new key if needed."
                 } else {
@@ -2057,7 +2213,16 @@ impl Runtime {
             _ => return Err(io::Error::other("Unknown agent")),
         };
         if c.default_agent == "omp" {
-            if let Some(t) = self.active_profile(&model.id).agent_thinking {
+            let profile = self.active_profile(&model.id);
+            if let Some(g) = self
+                .app
+                .candidates
+                .iter()
+                .find(|g| s.is_single_model(g) || crate::llama::router::id(g) == model.id)
+            {
+                profile.validate_thinking(g)?;
+            }
+            if let Some(t) = self.agent_thinking(&model.id)? {
                 plan.args.extend(["--thinking".into(), t.label().into()]);
             }
         }

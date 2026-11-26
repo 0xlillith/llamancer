@@ -15,6 +15,7 @@ pub enum Field {
     ApiKeyFile,
     ServerBinary,
     Device,
+    DefaultContext,
     ProjectDir,
     WorkspaceRoot,
     CustomAgent,
@@ -26,7 +27,7 @@ pub enum Field {
     RemoveImport,
 }
 impl Field {
-    pub const ALL: [Self; 17] = [
+    pub const ALL: [Self; 18] = [
         Self::AddRoot,
         Self::DownloadRoot,
         Self::ImportModel,
@@ -35,6 +36,7 @@ impl Field {
         Self::RestoreModel,
         Self::ServerBinary,
         Self::Device,
+        Self::DefaultContext,
         Self::Endpoint,
         Self::ApiKeyFile,
         Self::Agent,
@@ -70,6 +72,14 @@ impl Field {
             Self::Agent => &["omp", "pi", "pi-native", "custom"],
             Self::AgentTerminal => &["new-window", "current", "kitty-tab", "kitty-window"],
             Self::Device => &["auto", "none", "Custom value…"],
+            Self::DefaultContext => &[
+                "auto",
+                "32768",
+                "65536",
+                "131072",
+                "262144",
+                "Custom value…",
+            ],
             _ => &[],
         }
     }
@@ -83,6 +93,7 @@ impl Field {
             Self::ApiKeyFile => "API key file",
             Self::ServerBinary => "llama-server executable",
             Self::Device => "GPU device",
+            Self::DefaultContext => "Default context",
             Self::ProjectDir => "Active project",
             Self::WorkspaceRoot => "Workspace root",
             Self::CustomAgent => "Custom agent executable",
@@ -110,8 +121,9 @@ impl Field {
             Self::ApiKeyFile=>"Optional. none is normal for local managed sessions. Use a private key file for external servers.",
             Self::ServerBinary=>"Normally select an installed llama.cpp backend with B rather than typing a path.",
             Self::Device=>"auto lets the backend choose. none forces CPU. B selects a tested GPU.",
-            Self::ProjectDir=>"Active project: the exact folder in which the coding agent works. Press P to switch.",
-            Self::WorkspaceRoot=>"Optional parent of your projects, e.g. /home/user/src. P selects an individual project.",
+            Self::DefaultContext=>"Auto targets 128K tokens within the model and memory budget. A fixed value overrides auto; individual model settings take precedence.",
+            Self::ProjectDir=>"Active project: the exact folder in which the coding agent works. Use Projects or Browse folder.",
+            Self::WorkspaceRoot=>"Optional parent of your projects, e.g. /home/user/src. Browse folder to choose it; Projects selects a child.",
             Self::CustomAgent=>"Only required when Default agent is custom.",
         }
     }
@@ -150,6 +162,10 @@ impl Field {
                 .unwrap_or_else(|| "none".into()),
             Self::ServerBinary => config.server_binary.clone(),
             Self::Device => config.device.clone(),
+            Self::DefaultContext => config
+                .default_context
+                .map(|n| n.to_string())
+                .unwrap_or_else(|| "auto".into()),
             Self::DownloadRoot => config
                 .download_root
                 .as_ref()
@@ -237,6 +253,11 @@ pub fn apply(
             }
             draft.device = value.into();
         }
+        Field::DefaultContext => {
+            let mut profile = crate::models::profile::Profile::default();
+            crate::models::profile::Field::Context.set(&mut profile, value)?;
+            draft.default_context = profile.engine.context_size;
+        }
         Field::CustomAgent => draft.custom_agent = value.into(),
         Field::ProjectDir | Field::WorkspaceRoot => {
             let selected = if value == "none" {
@@ -250,6 +271,14 @@ pub fn apply(
             };
             if field == Field::WorkspaceRoot {
                 draft.workspace_root = selected;
+                if draft.workspace_root.is_some()
+                    && draft
+                        .project_dir
+                        .as_ref()
+                        .is_some_and(|p| p.parent() != draft.workspace_root.as_deref())
+                {
+                    draft.project_dir = None;
+                }
             } else {
                 draft.project_dir = selected;
             }

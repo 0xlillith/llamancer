@@ -110,6 +110,68 @@ fn apply_effect(
                 Err(e) => e.to_string(),
             };
         }
+        Ok(Effect::OpenDirectory(path)) => {
+            runtime.app.notice = match Command::new("xdg-open")
+                .arg(&path)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+            {
+                Ok(mut child) => {
+                    std::thread::spawn(move || {
+                        let _ = child.wait();
+                    });
+                    "Opening folder".into()
+                }
+                Err(e) => format!("File manager unavailable: {e}"),
+            };
+        }
+        Ok(Effect::BrowseDirectory(field, initial)) => {
+            // The dialog is an explicit user action. Keep the terminal responsive
+            // to signals through its normal OS handling; cancel leaves settings intact.
+            let result =
+                if llamancer::doctor::executable("kdialog", std::env::var_os("PATH").as_deref()) {
+                    Command::new("kdialog")
+                        .arg("--getexistingdirectory")
+                        .arg(&initial)
+                        .stdin(Stdio::null())
+                        .stderr(Stdio::null())
+                        .output()
+                } else if llamancer::doctor::executable(
+                    "zenity",
+                    std::env::var_os("PATH").as_deref(),
+                ) {
+                    let mut start = initial.as_os_str().to_os_string();
+                    start.push("/");
+                    let mut arg = std::ffi::OsString::from("--filename=");
+                    arg.push(start);
+                    Command::new("zenity")
+                        .args(["--file-selection", "--directory"])
+                        .arg(arg)
+                        .stdin(Stdio::null())
+                        .stderr(Stdio::null())
+                        .output()
+                } else {
+                    Err(io::Error::other(
+                        "No graphical folder picker; use the path editor",
+                    ))
+                };
+            match result {
+                Ok(output) if output.status.success() && output.stdout.len() <= 4096 => {
+                    match std::str::from_utf8(&output.stdout)
+                        .map(|s| s.trim_end_matches(['\r', '\n']))
+                        .map_err(io::Error::other)
+                        .and_then(|s| runtime.choose_workspace_directory(field, s.into()))
+                    {
+                        Ok(()) => {}
+                        Err(e) => runtime.app.notice = e.to_string(),
+                    }
+                }
+                Ok(_) => runtime.app.notice = "Folder selection cancelled".into(),
+                Err(e) => runtime.app.notice = e.to_string(),
+            }
+        }
         Ok(Effect::Open(url)) => {
             let result = Command::new("xdg-open")
                 .arg(url)
@@ -384,7 +446,7 @@ fn main() -> io::Result<()> {
                                 last_click = None;
                             } else if let Some(command) =
                                 ui::controls::hit(area, &runtime.app, mouse.column, mouse.row)
-                                    .filter(|_| !runtime.modal())
+                                    .filter(|_| !runtime.modal() || runtime.app.projects.is_some())
                             {
                                 runtime.blur_search();
                                 let effect = match command {
@@ -426,10 +488,11 @@ fn main() -> io::Result<()> {
                                 runtime.blur_search();
                                 let tab = runtime.app.tab;
                                 let menu = runtime.app.launch_menu.is_some();
-                                let eligible = !runtime.modal()
-                                    && (tab == 0
-                                        || tab == 4
-                                        || (tab == 1 && !runtime.app.discovery.busy()));
+                                let eligible = runtime.app.projects.is_some()
+                                    || (!runtime.modal()
+                                        && (tab == 0
+                                            || tab == 4
+                                            || (tab == 1 && !runtime.app.discovery.busy())));
                                 let now = Instant::now();
                                 let double = eligible
                                     && last_click.is_some_and(|(t, i, x, y, when)| {

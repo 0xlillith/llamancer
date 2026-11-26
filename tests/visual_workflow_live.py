@@ -52,7 +52,7 @@ def main():
             click("Advanced settings");click("Run model only");check_context(4096)
             wait("Connected");wait("Stop server")
             # Click Library tab, reopen same model and change context without stopping manually.
-            send(b"1");click("Run model");click("Presets");click("8192");wait("Context for this model: 8192")
+            send(b"1");click("Run model");click("Presets");click("8192",last=True);wait("Context for this model: 8192")
             click("Run model only");check_context(8192)
             wait("Connected");wait("Stop server");click("Stop server")
             wait("Managed server stopped")

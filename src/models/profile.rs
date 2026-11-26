@@ -212,11 +212,7 @@ impl Profile {
             return self;
         }
         if omp && self.agent_thinking.is_none() {
-            self.agent_thinking = Some(if preset == Recommendation::DavidAu {
-                Thinking::Medium
-            } else {
-                Thinking::Xhigh
-            });
+            self.agent_thinking = Some(Thinking::Medium);
         }
         if let Some(defaults) = preset.defaults(if omp { self.agent_thinking } else { None }) {
             let g = &mut self.generation;
@@ -486,7 +482,7 @@ mod tests {
             stored.generation.temperature = Some(0.42);
             let effective = stored.clone().with_model_defaults(&group, true);
             assert_eq!(effective.engine.context_size, Some(131072));
-            assert_eq!(effective.agent_thinking, Some(Thinking::Xhigh));
+            assert_eq!(effective.agent_thinking, Some(Thinking::Medium));
             assert_eq!(effective.generation.temperature, Some(0.42));
             assert_eq!(effective.generation.top_p, Some(0.95));
             assert_eq!(stored.generation.top_p, None);

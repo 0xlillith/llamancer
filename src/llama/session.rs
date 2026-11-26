@@ -187,6 +187,33 @@ impl Controller {
         };
         let launch_mode = single.clone();
         let active_profile = single.as_ref().map(|g| config.effective_profile(g));
+        let mut config = config;
+        let ram = crate::models::fit::available_ram();
+        for group in single
+            .as_ref()
+            .into_iter()
+            .chain(groups.iter())
+            .filter(|g| g.complete && !g.projector)
+        {
+            let profile = config.effective_profile(group);
+            if profile.engine.context_size.is_none() {
+                let plan = crate::models::fit::context_plan(
+                    group,
+                    &profile,
+                    &config.device,
+                    &self.devices,
+                    ram,
+                );
+                if let Some(n) = plan.tokens {
+                    config
+                        .profiles
+                        .entry(identity(group))
+                        .or_default()
+                        .engine
+                        .context_size = Some(n);
+                }
+            }
+        }
         let requested_context = single
             .as_ref()
             .and_then(|g| config.effective_profile(g).engine.context_size);
@@ -536,6 +563,7 @@ mod tests {
             Ok(Outcome::Snapshot(Snapshot {
                 router: false,
                 models: vec![],
+                properties: Default::default(),
             }))
         })
         .unwrap();
@@ -573,6 +601,7 @@ mod tests {
                 Ok(Outcome::Snapshot(Snapshot {
                     router: true,
                     models: Vec::new(),
+                    properties: Default::default(),
                 }))
             })
             .unwrap();

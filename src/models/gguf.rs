@@ -27,6 +27,37 @@ pub struct Metadata {
     pub vocabulary: Option<u64>,
     pub split_no: Option<u64>,
     pub split_count: Option<u64>,
+    /// Display-only embedded sampling guidance. The pinned llama.cpp backend
+    /// consumes these fields itself; do not override it with duplicated flags.
+    pub sampling: EmbeddedSampling,
+}
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct EmbeddedSampling {
+    pub temperature: Option<String>,
+    pub top_p: Option<String>,
+    pub top_k: Option<String>,
+    pub min_p: Option<String>,
+    pub repeat_penalty: Option<String>,
+}
+impl EmbeddedSampling {
+    pub fn value(&self, field: super::profile::Field) -> Option<&str> {
+        use super::profile::Field;
+        match field {
+            Field::Temperature => self.temperature.as_deref(),
+            Field::TopP => self.top_p.as_deref(),
+            Field::TopK => self.top_k.as_deref(),
+            Field::MinP => self.min_p.as_deref(),
+            Field::RepeatPenalty => self.repeat_penalty.as_deref(),
+            _ => None,
+        }
+    }
+    pub fn present(&self) -> bool {
+        self.temperature.is_some()
+            || self.top_p.is_some()
+            || self.top_k.is_some()
+            || self.min_p.is_some()
+            || self.repeat_penalty.is_some()
+    }
 }
 fn invalid(message: &'static str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, message)
@@ -199,6 +230,40 @@ pub fn read(path: &Path, cancel: &AtomicBool) -> io::Result<Metadata> {
         }
         let t = r.u32()?;
         match t {
+            6 | 12
+                if matches!(
+                    key.as_str(),
+                    "general.sampling.temp"
+                        | "general.sampling.top_p"
+                        | "general.sampling.min_p"
+                        | "general.sampling.penalty_repeat"
+                ) =>
+            {
+                let value = if t == 6 {
+                    f32::from_le_bytes(r.read()?) as f64
+                } else {
+                    f64::from_le_bytes(r.read()?)
+                };
+                if value.is_finite() {
+                    let valid = match key.as_str() {
+                        "general.sampling.temp" => value >= 0.0 && value <= f32::MAX as f64,
+                        "general.sampling.penalty_repeat" => {
+                            value > 0.0 && value <= f32::MAX as f64
+                        }
+                        _ => (0.0..=1.0).contains(&value),
+                    };
+                    if valid {
+                        let value = Some((value as f32).to_string());
+                        match key.as_str() {
+                            "general.sampling.temp" => m.sampling.temperature = value,
+                            "general.sampling.top_p" => m.sampling.top_p = value,
+                            "general.sampling.min_p" => m.sampling.min_p = value,
+                            "general.sampling.penalty_repeat" => m.sampling.repeat_penalty = value,
+                            _ => {}
+                        }
+                    }
+                }
+            }
             8 => {
                 let keep = matches!(
                     key.as_str(),
@@ -247,6 +312,9 @@ pub fn read(path: &Path, cancel: &AtomicBool) -> io::Result<Metadata> {
                         "general.alignment" => alignment = n,
                         "split.no" => m.split_no = Some(n),
                         "split.count" => m.split_count = Some(n),
+                        "general.sampling.top_k" if n <= i32::MAX as u64 => {
+                            m.sampling.top_k = Some(n.to_string())
+                        }
                         _ => {}
                     }
                     if key.len() <= 256
@@ -365,6 +433,32 @@ mod tests {
     fn string(b: &mut Vec<u8>, s: &str) {
         b.extend((s.len() as u64).to_le_bytes());
         b.extend(s.as_bytes());
+    }
+    #[test]
+    fn reads_bounded_embedded_sampling_without_guessing_missing_fields() {
+        let mut b = b"GGUF".to_vec();
+        b.extend(3u32.to_le_bytes());
+        b.extend(0u64.to_le_bytes());
+        b.extend(4u64.to_le_bytes());
+        string(&mut b, "general.sampling.temp");
+        b.extend(6u32.to_le_bytes());
+        b.extend(0.7f32.to_le_bytes());
+        string(&mut b, "general.sampling.top_k");
+        b.extend(4u32.to_le_bytes());
+        b.extend(20u32.to_le_bytes());
+        string(&mut b, "general.sampling.top_p");
+        b.extend(6u32.to_le_bytes());
+        b.extend(f32::NAN.to_le_bytes());
+        string(&mut b, "general.sampling.min_p");
+        b.extend(12u32.to_le_bytes());
+        b.extend(2.0f64.to_le_bytes());
+        let mut f = tempfile::NamedTempFile::new().unwrap();
+        f.write_all(&b).unwrap();
+        let m = read(f.path(), &AtomicBool::new(false)).unwrap();
+        assert_eq!(m.sampling.temperature.as_deref(), Some("0.7"));
+        assert_eq!(m.sampling.top_k.as_deref(), Some("20"));
+        assert_eq!(m.sampling.top_p, None);
+        assert_eq!(m.sampling.min_p, None);
     }
     #[test]
     fn rejects_fifo_without_waiting_for_a_writer() {

@@ -1,3 +1,4 @@
+mod catalog;
 pub mod choices;
 mod chrome;
 pub mod controls;
@@ -172,6 +173,9 @@ fn content_regions(body: Rect, app: &App) -> (Rect, Option<Rect>) {
         && app.fit_report.is_none()
         && app.quarantine_confirmation.is_none()
         && !app.server.show_logs;
+    if app.launch_menu.is_some() {
+        return (body, None);
+    }
     if body.width >= 120
         && body.height >= 15
         && app.backend_confirmation.is_none()
@@ -325,15 +329,21 @@ pub fn row_at(area: Rect, app: &App, column: u16, row: u16) -> Option<usize> {
         }
         1 => (
             body,
-            if app.discovery.repo.is_some() { 5 } else { 4 },
-            6,
+            catalog::DISCOVER_HEADER,
+            catalog::DISCOVER_RESERVED,
             app.discovery.cursor,
             app.discovery.len(),
         ),
         2 => {
             let d = app.downloads.as_ref()?;
             let groups = d.bundles();
-            (body, 3, 5, d.bundle_cursor(&groups), groups.len())
+            (
+                body,
+                catalog::DOWNLOAD_HEADER,
+                catalog::DOWNLOAD_RESERVED,
+                d.bundle_cursor(&groups),
+                groups.len(),
+            )
         }
         3 => {
             if app.server.show_logs {
@@ -434,6 +444,10 @@ pub fn draw_themed(frame: &mut Frame, app: &App, theme: &Theme) {
         && app.profile_editor.is_none()
     {
         library::draw(frame, body, app, &palette);
+    } else if app.tab == 1 && catalog::ordinary(app) {
+        catalog::discover(frame, body, app, &palette);
+    } else if app.tab == 2 && catalog::ordinary(app) {
+        catalog::downloads(frame, body, app, &palette);
     } else {
         let (title, content) = views::content(app, body);
         let lines: Vec<Line> = content
@@ -510,11 +524,11 @@ pub fn draw_themed(frame: &mut Frame, app: &App, theme: &Theme) {
     } else if app.download_destination.is_some() {
         "↑↓ choose storage  Enter confirm & download  Esc cancel"
     } else if app.projects.is_some() {
-        "↑↓ choose project  Enter select  Esc cancel"
+        "Enter select  o open folder  O open root  Esc back"
     } else if app.backend_open && app.backend_confirmation.is_some() {
         "y confirm  n cancel  Esc back"
     } else if app.edit.is_some() {
-        "Enter save  Esc cancel  Ctrl+U clear"
+        "Enter save  F4 browse workspace folder  Esc cancel"
     } else if app.profile_editor.is_some() {
         "↑↓ select  Enter edit  a mode  s save  Esc back"
     } else if app.help {
@@ -624,7 +638,7 @@ mod tests {
             ..Default::default()
         };
         for (w, h) in [(1, 1), (20, 5), (50, 14), (80, 24), (140, 36)] {
-            for index in 0..9 {
+            for index in 0..10 {
                 app.launch_cursor = index;
                 let mut terminal = Terminal::new(TestBackend::new(w, h)).unwrap();
                 terminal.draw(|f| draw(f, &app)).unwrap();

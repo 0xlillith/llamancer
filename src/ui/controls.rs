@@ -37,11 +37,20 @@ fn visible(app: &App) -> bool {
 fn buttons(area: Rect, app: &App) -> Vec<Button> {
     use Command::{Key, Pick, SubmitSearch};
     use KeyCode::{Backspace, Char, Enter};
-    if !visible(app) {
+    if !visible(app) && !(app.projects.is_some() && app.picker.is_none()) {
         return vec![];
     }
     let (body, _) = content_regions(regions(area)[2], app);
     let (dy, items): (u16, Vec<(String, Command)>) = match app.tab {
+        _ if app.projects.is_some() => (
+            1,
+            vec![
+                ("Select project".into(), Key(Enter)),
+                ("Open folder".into(), Key(Char('o'))),
+                ("Open root".into(), Key(Char('O'))),
+                ("Back".into(), Key(KeyCode::Esc)),
+            ],
+        ),
         0 if app.selected().is_some() => (
             1,
             vec![
@@ -212,6 +221,17 @@ fn buttons(area: Rect, app: &App) -> Vec<Button> {
         ),
         _ => return vec![],
     };
+    let mut items = items;
+    if app.tab == 4
+        && app.projects.is_none()
+        && matches!(
+            crate::settings::Field::ALL[app.setting],
+            crate::settings::Field::WorkspaceRoot | crate::settings::Field::ProjectDir
+        )
+    {
+        items.insert(0, ("Browse folder".into(), Key(Char('O'))));
+        items.insert(1, ("Projects".into(), Key(Char('P'))));
+    }
     let y = body.y.saturating_add(dy);
     if body.width < 3 || y >= body.bottom().saturating_sub(1) {
         return vec![];

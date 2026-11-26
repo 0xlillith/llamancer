@@ -63,6 +63,16 @@ pub fn content(app: &App, body: Rect) -> (&'static str, String) {
                     "Backend (no reviewed model card)"
                 }
             ),
+            "Advanced settings",
+            &format!(
+                "Project: {}",
+                app.config
+                    .project_dir
+                    .as_ref()
+                    .and_then(|p| p.file_name())
+                    .map(|p| super::safe(&p.to_string_lossy()))
+                    .unwrap_or_else(|| "Choose project".into())
+            ),
         ]
         .iter()
         .enumerate()
@@ -79,10 +89,7 @@ pub fn content(app: &App, body: Rect) -> (&'static str, String) {
                 super::safe(input)
             ));
         }
-        lines.push(
-            "Saved immediately. Higher context increases KV memory; auto inherits model/default."
-                .into(),
-        );
+        lines.push("Saved immediately. Auto targets 128K where memory and model permit.".into());
         if let Some(e) = crate::models::estimate::estimate(g, &app.config.effective_profile(g)) {
             lines.push(format!("Advisory: {:.2} GiB weights + {:.2} GiB KV at {} tokens (excludes runtime overhead)",e.weights as f64/1073741824.0,e.kv as f64/1073741824.0,e.context));
         } else {
@@ -180,7 +187,7 @@ pub fn content(app: &App, body: Rect) -> (&'static str, String) {
         ("Download destination", lines.join("\n"))
     } else if let Some(projects) = &app.projects {
         let (offset, capacity) = super::viewport(app.project_cursor, body.height, 4);
-        let mut lines = vec!["Choose a direct project folder (up to 512).".into()];
+        let mut lines = vec!["Select a folder or open it in your file manager.".into()];
         if projects.is_empty() {
             lines.push("No visible project folders found.".into());
         }

@@ -243,8 +243,8 @@ Thinking defaults: temperature 1.0, top-p 0.95, top-k 20, min-p 0,
 presence penalty 0, repeat penalty 1.0. Instruct uses temperature 0.7,
 top-p 0.80 and presence penalty 1.5. The previously reviewed DavidAU revision
 has thinking-only recommendations. OMP reasoning choices for these models
-are limited to the reviewed levels; explicit saved overrides win.
-Other models keep the backend defaults. Context preferences remain separate.
+start with reviewed levels; the loaded template reports actual supported and rejected efforts, and Auto avoids forcing an unverified level. Explicit saved overrides win unless rejected by the backend.
+Other models inherit embedded GGUF sampler metadata where present, then backend defaults. Context preferences remain separate.
 
 Select Sampling defaults to switch between inherited model guidance and
 backend defaults, or explicitly reset custom sampling overrides. The preview
@@ -265,3 +265,22 @@ the new copy and validates the pinned size and, when available, the full SHA-256
 The Downloads dashboard uses aggregate model progress, actual rate history,
 and explicit verification/part status. Preserved files consume disk space
 and are never indexed as models.
+
+
+### Automatic context and workspace
+
+Auto context targets 131,072 tokens for supported conventional attention
+architectures. A conservative estimate reserves at least 20% and 4 GiB of
+available host memory (1 GiB for explicit full-device offload); it checks the
+model's declared limit, disk weights and estimated KV cache. Unknown hybrid
+architectures and insufficient or unavailable estimates defer to llama.cpp
+auto-fit. The automatic estimate is a target, not a fit guarantee. A saved
+global or per-model context wins; the resolved choice is frozen for the
+managed server start, not persisted as a manual override. The Server view
+reports the actual context and sampling values when the server exposes them.
+
+Launch includes a direct project selector. Set Workspace root in Settings
+(Workspace category), optionally with **Browse folder** using KDE's kdialog
+or Zenity. The terminal path editor remains available on headless machines.
+Open a selected project or its parent with the file manager via xdg-open,
+without changing the active project until explicitly selected.

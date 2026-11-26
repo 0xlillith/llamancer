@@ -41,6 +41,7 @@ pub struct App {
     pub projects: Option<Vec<std::path::PathBuf>>,
     pub download_destination: Option<crate::downloads::DestinationChoice>,
     pub project_cursor: usize,
+    pub project_return: Option<Group>,
     pub edit: Option<(Field, String)>,
     pub notice: String,
     pub scanning: bool,
@@ -73,9 +74,9 @@ pub struct App {
 impl App {
     pub fn launch_order(&self) -> &'static [usize] {
         if self.launch_advanced {
-            &[0, 1, 2, 3, 4, 7, 8, 5, 6]
+            &[0, 1, 2, 3, 4, 7, 9, 8, 5, 6]
         } else {
-            &[0, 1, 2, 3, 4, 7, 8]
+            &[0, 1, 2, 3, 4, 7, 9, 8, 5]
         }
     }
 

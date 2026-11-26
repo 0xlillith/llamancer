@@ -603,6 +603,55 @@ pub fn aside(frame: &mut Frame, area: Rect, app: &App, p: &Palette) {
                 if let Some(n) = s.active_context {
                     lines.push(Line::raw(format!("Requested context: {n}")));
                 }
+                if let Some(props) = s
+                    .selected()
+                    .and_then(|model| s.snapshot.as_ref()?.properties.get(&model.id))
+                {
+                    if let Some(n) = props.context {
+                        lines.push(Line::styled(
+                            format!("Actual context: {n} tokens"),
+                            p.heading,
+                        ));
+                    }
+                    lines.push(Line::raw(match props.tools {
+                        Some(true) => "Tools: supported",
+                        Some(false) => "Tools: not supported",
+                        None => "Tools: unknown",
+                    }));
+                    if !props.levels.is_empty() {
+                        lines.push(Line::raw(format!(
+                            "Reasoning: {}",
+                            props
+                                .levels
+                                .iter()
+                                .map(|t| t.label())
+                                .collect::<Vec<_>>()
+                                .join(" / ")
+                        )));
+                    }
+                    use crate::models::profile::{Field, Profile};
+                    let profile = Profile {
+                        generation: props.generation.clone(),
+                        ..Default::default()
+                    };
+                    lines.push(Line::styled("Actual server sampling", p.heading));
+                    for field in [
+                        Field::Temperature,
+                        Field::TopP,
+                        Field::TopK,
+                        Field::MinP,
+                        Field::RepeatPenalty,
+                        Field::PresencePenalty,
+                    ] {
+                        let value = field.value(&profile);
+                        if value != "auto" {
+                            lines.push(Line::raw(format!(
+                                "{}: {value}",
+                                field.label().trim_start_matches("Generation / ")
+                            )));
+                        }
+                    }
+                }
                 for device in crate::models::fit::parse_devices(&s.devices) {
                     lines.push(Line::raw(format!(
                         "{}: {:.1}/{:.1} GiB free (last probe)",
