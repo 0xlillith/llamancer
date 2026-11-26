@@ -1,7 +1,10 @@
 # Changelog
 
-## Unreleased
+## 0.1.0-beta.5 — 2026-11-26
 
+- Strict dual-read SHA-256 audits with exact managed-bundle selection via CLI.
+- Resume verified Hub cache prefixes without switching transport; retain invalid full-size partials.
+- Live acceptance tests for interrupted Hub HTTP transfers, multipart transport parity, and actual reviewed/overridden/reset server sampling parameters.
 - Distinguish exact reviewed model-card revisions from repository guidance, support standard Hub snapshots, and add the reviewed Qwen3.5-0.8B default text profile without guessing vision or thinking settings.
 
 - Responsive asynchronous KDE/Zenity workspace picker, cancellation and compact workspace actions, plus populated responsive-layout and PTY regression checks.

@@ -1,6 +1,6 @@
 # Maintainer: Llamancer contributors
 pkgname=llamancer-git
-pkgver=0.1.0beta.4.r0
+pkgver=0.1.0beta.5.r0
 pkgrel=1
 pkgdesc='Terminal-native local llama.cpp inference and coding agent control center'
 arch=('x86_64' 'aarch64')

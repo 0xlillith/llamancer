@@ -1,7 +1,6 @@
 # Llamancer user guide
 
-This guide describes the development branch following beta.4. Build the current
-source to use these features; released beta.4 does not contain all of them.
+This guide describes Llamancer v0.1.0-beta.5.
 Llamancer runs on Linux and manages local GGUF inference through llama.cpp.
 It is not a model trainer or a GPU driver installer.
 
@@ -60,7 +59,7 @@ model against its pinned digests. Failed audits persist and prevent managed
 launch until revalidation succeeds. Independent direct-read checks are
 attempted on mismatch when the filesystem supports them; a matching direct
 read alone does not override a failed buffered hash. Missing checksums
-cannot establish cryptographic integrity. The audit dashboard shows the part and byte progress of each read pass. Cancel with x. From a terminal, after closing the TUI or headless supervisor, run `llamancer verify` to check all completed managed parts with pinned hashes.
+cannot establish cryptographic integrity. The audit dashboard shows the part and byte progress of each read pass. Cancel with x. From a terminal, after closing the TUI or headless supervisor, run `llamancer verify` to check all completed managed parts with pinned hashes. Add `--strict` to require both buffered and independent direct reads, or `--model /absolute/path/to/managed-shard.gguf` to limit the audit to the complete associated bundle.
 
 ## 4. Configure and launch inference
 
@@ -77,7 +76,7 @@ context is not a guarantee of fit or useful context quality.
 Reviewed mode-specific recommendations are applied only for known model
 families/repositories. Explicit custom sampling settings take precedence;
 unknown models inherit GGUF/backend defaults. The preview distinguishes
-recommended settings from explicit overrides. Advanced settings expose
+recommended settings from explicit overrides, including the reviewed card revision. Advanced settings expose
 thinking effort and other optional parameters. Select the thinking mode
 appropriate to the model and task; a successful synthetic tool-call probe
 does not establish reliable tool use for every prompt.

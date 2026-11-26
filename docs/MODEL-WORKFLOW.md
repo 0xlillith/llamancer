@@ -30,7 +30,7 @@ is executed. A known repository card is not proof that every future revision
 supports the same tool protocol. At runtime, consult `/props` for actual context,
 sampler and capabilities. A successful synthetic tool probe is not a guarantee. The reviewed catalog recognizes managed and standard Hub snapshot layouts, shows exact-revision versus repository-level guidance, and refuses mixed-root shards. The reviewed Qwen3.5-0.8B snapshot uses only the documented default non-thinking text settings; task-dependent vision and explicit thinking settings are not guessed.
 
-## Implemented in the development workflow
+## Implemented in beta.5
 
 - Conventional attention estimation, plus bounded native `llama-fit-params`
   probing for supported hybrid models: the 128K coding-context target is
@@ -38,7 +38,7 @@ sampler and capabilities. A successful synthetic tool probe is not a guarantee. 
   131072 tokens passed with CPU, Vulkan and ROCm.
 - Optional official `hf` download transport, preserving the native default;
   verified local reuse and independent destination hashing. Hugging Face
-  Hub 2.x shared-cache blobs and legacy layouts are supported.
+  Hub 2.x shared-cache blobs and legacy layouts are supported. Interrupted HTTP Hub cache retention and verified destination-prefix resume have dedicated live tests; full-size invalid partials are retained.
 - Explicit complete-model integrity audits and launch blocking on failures.
 - Known MTP draft weights are auxiliary, not standalone launch candidates.
 - Real terminal capture gallery and illustrated [user guide](USAGE.md).
@@ -50,5 +50,5 @@ sampler and capabilities. A successful synthetic tool probe is not a guarantee. 
 - Extend measured memory validation to larger hybrid and MoE models, additional backends and explicit offload settings.
 - Compare identical revisions, quantizations, templates, request fields and
   effective parameters with Unsloth before attributing tool-call corruption.
-- Expand transport acceptance to interrupted large multipart Hub transfers and model-card-based variant recommendations; add speculative draft attachment only after compatibility checks.
+- Expand acceptance to very large interrupted multipart/Xet transfers and model-card-based variant recommendations; add speculative draft attachment only after compatibility checks.
 - Continue UI visual acceptance with real terminal captures at multiple sizes.
