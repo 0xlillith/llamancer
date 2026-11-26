@@ -710,9 +710,24 @@ fn hub_stage(item: &Item, cancel: &AtomicBool, progress: &AtomicU64) -> io::Resu
         ));
     }
     let destination = Destination::open(item)?;
-    if destination.path().exists() || destination.partial().exists() {
+    if fs::symlink_metadata(destination.path()).is_ok() {
         return Ok(());
     }
+    let offset = match fs::symlink_metadata(destination.partial()) {
+        Ok(meta) if meta.is_file() && meta.nlink() == 1 && meta.len() <= item.file.size => {
+            meta.len()
+        }
+        Ok(_) => return Err(io::Error::other("Unsafe partial; retained")),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => 0,
+        Err(e) => return Err(e),
+    };
+    // A complete partial can be verified and published offline by the
+    // normal path, even if the Hub cache was cleared.
+    if offset == item.file.size {
+        return Ok(());
+    }
+    let remaining = item.file.size - offset;
+    progress.store(u64::MAX, Ordering::Relaxed);
     let cache = std::env::var_os("HF_HUB_CACHE")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HF_HOME").map(|p| PathBuf::from(p).join("hub")))
@@ -735,14 +750,14 @@ fn hub_stage(item: &Item, cancel: &AtomicBool, progress: &AtomicU64) -> io::Resu
     if !snapshot.is_file() && fs2::available_space(&cache)? < item.file.size {
         return Err(io::Error::other("Insufficient space in the Hub cache"));
     }
-    if fs2::available_space(Destination::fd_path(&destination.parent))? < item.file.size {
+    if fs2::available_space(Destination::fd_path(&destination.parent))? < remaining {
         return Err(io::Error::other(
             "Insufficient space for the verified model copy",
         ));
     }
     if !snapshot.is_file()
         && fs::metadata(&cache)?.dev() == destination.parent.metadata()?.dev()
-        && fs2::available_space(&cache)? < item.file.size.saturating_mul(2)
+        && fs2::available_space(&cache)? < item.file.size.saturating_add(remaining)
     {
         return Err(io::Error::other(
             "Hub cache and destination share a disk; allow space for both copies",
@@ -750,49 +765,51 @@ fn hub_stage(item: &Item, cancel: &AtomicBool, progress: &AtomicU64) -> io::Resu
     }
     // An explicit pinned repo/file, not arbitrary command text. Do not pass
     // tokens on the command line or retain output that could contain them.
-    let mut child = Command::new("hf")
-        .args(["download", "--revision", &item.file.revision, "--cache-dir"])
-        .arg(&cache)
-        .arg("--quiet")
-        .arg("--")
-        .arg(&item.file.repo)
-        .arg(&item.file.name)
-        .env("HF_ENDPOINT", "https://huggingface.co")
-        .env("HF_HUB_DISABLE_TELEMETRY", "1")
-        .process_group(0)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|_| {
-            io::Error::other(
-                "Optional hf CLI unavailable; install huggingface_hub or select Native",
-            )
-        })?;
-    loop {
-        if cancel.load(Ordering::Acquire) {
-            // SAFETY: terminate only this explicitly spawned process group.
-            unsafe {
-                libc::kill(-(child.id() as i32), libc::SIGKILL);
-            }
-            let _ = child.wait();
-            return Err(io::Error::new(
-                io::ErrorKind::Interrupted,
-                "Hub transfer paused; cache retained",
-            ));
-        }
-        match child.try_wait() {
-            Ok(Some(status)) if status.success() => break,
-            Ok(Some(_)) => {
-                return Err(io::Error::other(
-                    "Hub download failed; cache retained. Check hf CLI or switch to Native.",
-                ))
-            }
-            Ok(None) => std::thread::sleep(Duration::from_millis(100)),
-            Err(e) => {
-                let _ = child.kill();
+    if !snapshot.is_file() {
+        let mut child = Command::new("hf")
+            .args(["download", "--revision", &item.file.revision, "--cache-dir"])
+            .arg(&cache)
+            .arg("--quiet")
+            .arg("--")
+            .arg(&item.file.repo)
+            .arg(&item.file.name)
+            .env("HF_ENDPOINT", "https://huggingface.co")
+            .env("HF_HUB_DISABLE_TELEMETRY", "1")
+            .process_group(0)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|_| {
+                io::Error::other(
+                    "Optional hf CLI unavailable; install huggingface_hub or select Native",
+                )
+            })?;
+        loop {
+            if cancel.load(Ordering::Acquire) {
+                // SAFETY: terminate only this explicitly spawned process group.
+                unsafe {
+                    libc::kill(-(child.id() as i32), libc::SIGKILL);
+                }
                 let _ = child.wait();
-                return Err(e);
+                return Err(io::Error::new(
+                    io::ErrorKind::Interrupted,
+                    "Hub transfer paused; cache retained",
+                ));
+            }
+            match child.try_wait() {
+                Ok(Some(status)) if status.success() => break,
+                Ok(Some(_)) => {
+                    return Err(io::Error::other(
+                        "Hub download failed; cache retained. Check hf CLI or switch to Native.",
+                    ))
+                }
+                Ok(None) => std::thread::sleep(Duration::from_millis(100)),
+                Err(e) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(e);
+                }
             }
         }
     }
@@ -806,7 +823,7 @@ fn hub_stage(item: &Item, cancel: &AtomicBool, progress: &AtomicU64) -> io::Resu
     {
         return Err(io::Error::other("Unexpected Hub cache path"));
     }
-    if !reuse_local(item, &source, cancel, progress)? {
+    if !stage_verified_local(item, &source, cancel, progress, true)? {
         return Err(io::Error::other(
             "Hub copy destination changed; existing bytes retained",
         ));
@@ -822,13 +839,25 @@ fn reuse_local(
     cancel: &AtomicBool,
     progress: &AtomicU64,
 ) -> io::Result<bool> {
+    stage_verified_local(item, source, cancel, progress, false)
+}
+/// Hub resume validates the existing prefix against an independently hashed
+/// cache blob. It never truncates or falls back to native HTTP unexpectedly.
+fn stage_verified_local(
+    item: &Item,
+    source: &Path,
+    cancel: &AtomicBool,
+    progress: &AtomicU64,
+    resume: bool,
+) -> io::Result<bool> {
     if item.file.sha256.is_none() {
         return Ok(false);
     }
     let destination = Destination::open(item)?;
-    if fs::symlink_metadata(destination.path()).is_ok()
-        || fs::symlink_metadata(destination.partial()).is_ok()
-    {
+    if fs::symlink_metadata(destination.path()).is_ok() {
+        return Ok(false);
+    }
+    if !resume && fs::symlink_metadata(destination.partial()).is_ok() {
         return Ok(false);
     }
     let mut input = fs::OpenOptions::new()
@@ -837,25 +866,66 @@ fn reuse_local(
         .open(source)?;
     verify_file(&mut input, item, cancel)?;
     input.seek(SeekFrom::Start(0))?;
-    if fs2::available_space(Destination::fd_path(&destination.parent))? < item.file.size {
+    let output = match fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(destination.partial())
+    {
+        Ok(f) => f,
+        Err(e) if resume && e.kind() == io::ErrorKind::AlreadyExists => fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+            .open(destination.partial())?,
+        Err(e) => return Err(e),
+    };
+    let mut output = LockedPartial::new(output)?;
+    let meta = output.metadata()?;
+    if !meta.is_file()
+        || meta.nlink() != 1
+        || meta.len() > item.file.size
+        || same_inode(&meta, &input.metadata()?)
+        || !same_inode(&meta, &fs::symlink_metadata(destination.partial())?)
+    {
+        return Err(io::Error::other("Unsafe partial; retained"));
+    }
+    let offset = meta.len();
+    if fs2::available_space(Destination::fd_path(&destination.parent))? < item.file.size - offset {
         return Err(io::Error::other(
             "Insufficient space for verified local copy",
         ));
     }
-    let mut output = LockedPartial::new(
-        fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .custom_flags(libc::O_NOFOLLOW)
-            .open(destination.partial())?,
-    )?;
-    let mut remaining = item.file.size;
     let mut buf = vec![0u8; 1024 * 1024];
+    let mut existing = vec![0u8; 1024 * 1024];
+    let mut checked = 0;
+    while checked < offset {
+        cancelled(cancel)?;
+        let count = (offset - checked).min(buf.len() as u64) as usize;
+        input.read_exact(&mut buf[..count])?;
+        output.read_exact(&mut existing[..count])?;
+        if buf[..count] != existing[..count] {
+            return Err(io::Error::other(
+                "Existing partial differs from verified Hub cache; retained. Choose Retry fresh.",
+            ));
+        }
+        checked += count as u64;
+    }
+    if !same_version(&meta, &output.metadata()?)
+        || !same_inode(&meta, &fs::symlink_metadata(destination.partial())?)
+    {
+        return Err(io::Error::other(
+            "Partial changed during prefix verification",
+        ));
+    }
+    destination.check_visible()?;
+    let mut remaining = item.file.size - offset;
+    progress.store(offset, Ordering::Relaxed);
     while remaining > 0 {
         cancelled(cancel)?;
-        let count = (remaining.min(buf.len() as u64)) as usize;
+        let count = remaining.min(buf.len() as u64) as usize;
         input.read_exact(&mut buf[..count])?;
         output.write_all(&buf[..count])?;
         remaining -= count as u64;
@@ -863,8 +933,10 @@ fn reuse_local(
     }
     output.sync_all()?;
     verify_file(&mut output, item, cancel)?;
-    // The normal transfer path will verify again and publish atomically.
-    // Keep the staged file on interruption or error.
+    destination.check_visible()?;
+    if !same_inode(&meta, &fs::symlink_metadata(destination.partial())?) {
+        return Err(io::Error::other("Staged path changed; retained"));
+    }
     Ok(true)
 }
 /// Linux independent direct-read verification. Unsupported alignment or
@@ -1148,6 +1220,7 @@ pub struct Controller {
     audit_progress: Arc<std::sync::Mutex<AuditProgress>>,
     pub last_audit: Option<AuditSummary>,
     pub transport: Transport,
+    active_transport: Transport,
     run_queue: bool,
     resume_parts: std::collections::VecDeque<(usize, bool)>,
     rate: Rate,
@@ -1165,6 +1238,7 @@ impl Controller {
             audit_progress: Default::default(),
             last_audit: None,
             transport: Transport::default(),
+            active_transport: Transport::default(),
             run_queue: false,
             resume_parts: Default::default(),
             rate: Rate::default(),
@@ -1229,6 +1303,8 @@ impl Controller {
             g.state = if let Some(i) = g.active {
                 if self.is_verifying(i) {
                     "Verifying"
+                } else if self.hub_preparing(i) {
+                    "Hub cache"
                 } else {
                     "Downloading"
                 }
@@ -1596,6 +1672,11 @@ impl Controller {
             .collect();
         Some((graph, peak))
     }
+    pub fn hub_preparing(&self, index: usize) -> bool {
+        self.active_transport == Transport::Hub
+            && self.active.as_ref().is_some_and(|(i, _, _)| *i == index)
+            && self.progress(index).is_none()
+    }
     pub fn is_verifying(&self, index: usize) -> bool {
         self.progress(index)
             .zip(self.queue.items.get(index))
@@ -1727,6 +1808,7 @@ impl Controller {
         })?;
         self.queue.items[index].error = None;
         self.rate = Rate::default();
+        self.active_transport = transport;
         self.active = Some((index, job, progress));
         self.status = if fresh {
             "Preserving failed partial, then retrying…"
@@ -1763,7 +1845,9 @@ impl Controller {
         if self.cursor >= self.queue.items.len() {
             return Err(io::Error::other("Select a queue entry"));
         }
-        if self.queue.items[self.cursor].receipt.is_some() {
+        if self.queue.items[self.cursor].receipt.is_some()
+            || self.queue.items[self.cursor].integrity_error.is_some()
+        {
             return Err(io::Error::other(
                 "Keep ownership receipts for recoverable model removal",
             ));
@@ -2117,6 +2201,29 @@ mod tests {
             "{}",
             controller.status
         );
+    }
+    #[test]
+    fn hub_staging_resumes_only_a_matching_prefix() {
+        let root = tempfile::tempdir().unwrap();
+        let item = fixture(root.path());
+        let source = root.path().join("source.bin");
+        fs::write(&source, b"abcdef").unwrap();
+        let dest = destination(&item).unwrap();
+        let partial = dest.with_file_name("model.gguf.part");
+        fs::write(&partial, b"abc").unwrap();
+        let progress = AtomicU64::new(u64::MAX);
+        assert!(
+            stage_verified_local(&item, &source, &AtomicBool::new(false), &progress, true).unwrap()
+        );
+        assert_eq!(progress.load(Ordering::Relaxed), 6);
+        assert_eq!(fs::read(&partial).unwrap(), b"abcdef");
+        assert!(!dest.exists());
+        fs::write(&partial, b"xxx").unwrap();
+        assert!(
+            stage_verified_local(&item, &source, &AtomicBool::new(false), &progress, true).is_err()
+        );
+        assert_eq!(fs::read(&partial).unwrap(), b"xxx");
+        assert_eq!(fs::read(&source).unwrap(), b"abcdef");
     }
     #[test]
     fn same_digest_copy_is_independent_and_audit_detects_changed_bytes() {

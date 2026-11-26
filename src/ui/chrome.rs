@@ -344,7 +344,9 @@ fn transfer_dashboard(frame: &mut Frame, area: Rect, app: &App, p: &Palette) {
     } else {
         (g.received as f64 / g.bytes as f64).clamp(0.0, 1.0)
     };
-    let label = if g.state == "Verifying" {
+    let label = if g.state == "Hub cache" {
+        "Hub cache · transfer size unknown".into()
+    } else if g.state == "Verifying" {
         if g.active
             .is_some_and(|i| d.queue.items[i].file.sha256.is_some())
         {
@@ -376,6 +378,8 @@ fn transfer_dashboard(frame: &mut Frame, area: Rect, app: &App, p: &Palette) {
                     secs / 60,
                     secs % 60
                 )
+            } else if g.state == "Hub cache" {
+                "Fetching / validating Hub cache…".into()
             } else if g.state == "Verifying" {
                 "Checking downloaded bytes…".into()
             } else {
