@@ -37,7 +37,7 @@ fn visible(app: &App) -> bool {
 fn buttons(area: Rect, app: &App) -> Vec<Button> {
     use Command::{Key, Pick, SubmitSearch};
     use KeyCode::{Backspace, Char, Enter};
-    if !visible(app) && !(app.projects.is_some() && app.picker.is_none()) {
+    if app.folder_browsing || (!visible(app) && !(app.projects.is_some() && app.picker.is_none())) {
         return vec![];
     }
     let (body, _) = content_regions(regions(area)[2], app);
@@ -267,8 +267,15 @@ fn buttons(area: Rect, app: &App) -> Vec<Button> {
             crate::settings::Field::WorkspaceRoot | crate::settings::Field::ProjectDir
         )
     {
-        items.insert(0, ("Browse folder".into(), Key(Char('O'))));
-        items.insert(1, ("Projects".into(), Key(Char('P'))));
+        items = vec![
+            ("Browse folder".into(), Key(Char('O'))),
+            ("Projects".into(), Key(Char('P'))),
+            (
+                "Category: Workspace".into(),
+                Pick(super::choices::Kind::Category),
+            ),
+            ("Edit path".into(), Key(Enter)),
+        ];
     }
     let y = body.y.saturating_add(dy);
     if body.width < 3 || y >= body.bottom().saturating_sub(1) {
@@ -290,6 +297,11 @@ fn buttons(area: Rect, app: &App) -> Vec<Button> {
                 "Load model" => "Load".into(),
                 "Back to models" => "Back".into(),
                 "Next page" => "Next".into(),
+                "Verify SHA-256" => "Verify".into(),
+                "Browse folder" => "Browse".into(),
+                "Category: Workspace" => "Category".into(),
+                "Select project" => "Select".into(),
+                "Open folder" => "Open".into(),
                 _ if label.starts_with("Sort:") => "Sort".into(),
                 _ => label,
             };

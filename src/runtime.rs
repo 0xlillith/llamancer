@@ -43,6 +43,7 @@ pub struct Runtime {
     root: PathBuf,
     path: PathBuf,
     scan: Option<Job<Scan>>,
+    folder_picker: Option<(Field, Job<Option<PathBuf>>)>,
     rescan_pending: bool,
     pending_agent: Option<(Option<String>, std::time::Instant, bool)>,
     probe: Option<Job<()>>,
@@ -78,6 +79,7 @@ impl Runtime {
             root,
             path,
             scan: None,
+            folder_picker: None,
             rescan_pending: false,
             pending_agent: None,
             probe: None,
@@ -91,6 +93,7 @@ impl Runtime {
     }
     pub fn active(&self) -> bool {
         self.probe.is_some()
+            || self.folder_picker.is_some()
             || self.scan.is_some()
             || self.backend.is_some()
             || self.app.server.polling()
@@ -99,6 +102,25 @@ impl Runtime {
     }
     pub fn tick(&mut self) {
         self.app.activity_frame = self.app.activity_frame.wrapping_add(1);
+        if let Some((_, job)) = self.folder_picker.as_mut() {
+            if let Some(result) = job.poll() {
+                if let Some((field, job)) = self.folder_picker.take() {
+                    let cancelled = job.is_cancelled();
+                    job.finish();
+                    self.app.folder_browsing = false;
+                    self.app.notice = match result {
+                        Ok(Some(path)) if !cancelled => {
+                            match self.choose_workspace_directory(field, path) {
+                                Ok(()) => "Workspace saved".into(),
+                                Err(e) => e.to_string(),
+                            }
+                        }
+                        Ok(_) => "Folder selection cancelled".into(),
+                        Err(e) => e.to_string(),
+                    };
+                }
+            }
+        }
         if let Some((job, progress, size)) = self.backend.as_mut() {
             self.app.backend_progress =
                 (*size > 0).then(|| (progress.load(Ordering::Acquire), *size));
@@ -675,6 +697,10 @@ impl Runtime {
             .record(crate::diagnostics::Event::InputFailed, None);
     }
     pub fn shutdown(&mut self) -> io::Result<()> {
+        if let Some((_, job)) = self.folder_picker.take() {
+            job.cancel();
+            job.finish();
+        }
         if let Some((job, _, _)) = self.backend.take() {
             job.cancel();
             job.finish();
@@ -694,7 +720,8 @@ impl Runtime {
     }
     /// Text focus is not a modal dialog: mouse tabs and result rows remain usable.
     pub fn modal(&self) -> bool {
-        self.app.picker.is_some()
+        self.app.folder_browsing
+            || self.app.picker.is_some()
             || self.app.launch_menu.is_some()
             || self.app.launching_agent
             || self.app.backend_open
@@ -823,6 +850,21 @@ impl Runtime {
         if let Some(group) = self.app.project_return.take() {
             self.app.launch_menu = Some(group);
         }
+    }
+    pub fn browse_directory(&mut self, field: Field, initial: PathBuf) -> io::Result<()> {
+        if self.folder_picker.is_some() {
+            return Err(io::Error::other("Folder picker already open"));
+        }
+        if !matches!(field, Field::WorkspaceRoot | Field::ProjectDir) {
+            return Err(io::Error::other("Not a workspace setting"));
+        }
+        self.folder_picker = Some((
+            field,
+            Job::start(move |cancel| crate::workspace::browse(&initial, &cancel))?,
+        ));
+        self.app.folder_browsing = true;
+        self.app.notice = "Choose a folder in the desktop dialog · Esc cancels".into();
+        Ok(())
     }
     pub fn choose_workspace_directory(
         &mut self,
@@ -1015,6 +1057,15 @@ impl Runtime {
     pub fn handle_key(&mut self, key: KeyEvent) -> io::Result<Effect> {
         if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
             self.app.dispatch(Action::Quit);
+            return Ok(Effect::None);
+        }
+        if self.app.folder_browsing {
+            if key.code == KeyCode::Esc {
+                if let Some((_, job)) = &self.folder_picker {
+                    job.cancel();
+                }
+                self.app.notice = "Cancelling folder picker…".into();
+            }
             return Ok(Effect::None);
         }
         if let Some(p) = self.app.picker.as_mut() {

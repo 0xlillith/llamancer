@@ -39,6 +39,7 @@ pub struct App {
     pub setting: usize,
     pub picker: Option<crate::ui::choices::Picker>,
     pub projects: Option<Vec<std::path::PathBuf>>,
+    pub folder_browsing: bool,
     pub download_destination: Option<crate::downloads::DestinationChoice>,
     pub project_cursor: usize,
     pub project_return: Option<Group>,

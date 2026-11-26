@@ -11,6 +11,7 @@ use ratatui::{
 
 pub fn busy(app: &App) -> bool {
     app.scanning
+        || app.folder_browsing
         || app.backend_busy
         || app.discovery.busy()
         || app.server.busy()

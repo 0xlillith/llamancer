@@ -153,6 +153,7 @@ pub fn scan(roots: Vec<PathBuf>, cancel: &AtomicBool) -> io::Result<Scan> {
         }
     }
     result.candidates.sort_by(|a, b| a.path.cmp(&b.path));
+    result.invalid.sort_by(|a, b| a.0.cmp(&b.0));
     Ok(result)
 }
 #[cfg(test)]
@@ -172,6 +173,20 @@ mod tests {
         assert_eq!(result.candidates.len(), 1);
         assert_eq!(result.skipped, 1);
         assert_eq!(result.invalid.len(), 1);
+    }
+    #[test]
+    fn invalid_paths_have_stable_display_order() {
+        let dir = tempfile::tempdir().unwrap();
+        for name in ["z.gguf", "a.gguf", "m.gguf"] {
+            fs::write(dir.path().join(name), b"broken").unwrap();
+        }
+        let scan = scan(vec![dir.path().into()], &AtomicBool::new(false)).unwrap();
+        let names: Vec<_> = scan
+            .invalid
+            .iter()
+            .map(|(p, _)| p.file_name().unwrap().to_str().unwrap())
+            .collect();
+        assert_eq!(names, ["a.gguf", "m.gguf", "z.gguf"]);
     }
     #[test]
     fn explicit_shard_import_does_not_scan_unrelated_files() {

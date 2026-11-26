@@ -128,48 +128,8 @@ fn apply_effect(
             };
         }
         Ok(Effect::BrowseDirectory(field, initial)) => {
-            // The dialog is an explicit user action. Keep the terminal responsive
-            // to signals through its normal OS handling; cancel leaves settings intact.
-            let result =
-                if llamancer::doctor::executable("kdialog", std::env::var_os("PATH").as_deref()) {
-                    Command::new("kdialog")
-                        .arg("--getexistingdirectory")
-                        .arg(&initial)
-                        .stdin(Stdio::null())
-                        .stderr(Stdio::null())
-                        .output()
-                } else if llamancer::doctor::executable(
-                    "zenity",
-                    std::env::var_os("PATH").as_deref(),
-                ) {
-                    let mut start = initial.as_os_str().to_os_string();
-                    start.push("/");
-                    let mut arg = std::ffi::OsString::from("--filename=");
-                    arg.push(start);
-                    Command::new("zenity")
-                        .args(["--file-selection", "--directory"])
-                        .arg(arg)
-                        .stdin(Stdio::null())
-                        .stderr(Stdio::null())
-                        .output()
-                } else {
-                    Err(io::Error::other(
-                        "No graphical folder picker; use the path editor",
-                    ))
-                };
-            match result {
-                Ok(output) if output.status.success() && output.stdout.len() <= 4096 => {
-                    match std::str::from_utf8(&output.stdout)
-                        .map(|s| s.trim_end_matches(['\r', '\n']))
-                        .map_err(io::Error::other)
-                        .and_then(|s| runtime.choose_workspace_directory(field, s.into()))
-                    {
-                        Ok(()) => {}
-                        Err(e) => runtime.app.notice = e.to_string(),
-                    }
-                }
-                Ok(_) => runtime.app.notice = "Folder selection cancelled".into(),
-                Err(e) => runtime.app.notice = e.to_string(),
+            if let Err(e) = runtime.browse_directory(field, initial) {
+                runtime.app.notice = e.to_string();
             }
         }
         Ok(Effect::Open(url)) => {
@@ -445,14 +405,15 @@ fn main() -> io::Result<()> {
                     );
                 }
                 Event::Mouse(mouse)
-                    if !runtime.modal()
-                        || runtime.app.backend_open
-                        || runtime.app.show_invalid
-                        || runtime.app.projects.is_some()
-                        || runtime.app.download_destination.is_some()
-                        || runtime.app.setup_open
-                        || runtime.app.launch_menu.is_some()
-                        || runtime.app.picker.is_some() =>
+                    if !runtime.app.folder_browsing
+                        && (!runtime.modal()
+                            || runtime.app.backend_open
+                            || runtime.app.show_invalid
+                            || runtime.app.projects.is_some()
+                            || runtime.app.download_destination.is_some()
+                            || runtime.app.setup_open
+                            || runtime.app.launch_menu.is_some()
+                            || runtime.app.picker.is_some()) =>
                 {
                     let size = terminal.size()?;
                     let area = ratatui::layout::Rect::new(0, 0, size.width, size.height);
