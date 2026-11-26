@@ -46,9 +46,12 @@ Settings → Storage → Download transport selects Native (the built-in
 downloader, default) or Hub (the official `hf` CLI, installed separately
 with its optional Xet support). Hub downloads into its cache and Llamancer
 independently verifies a staged local copy. Allow enough space for the cache
-and model destination. It is not an automatic fallback that discards native
-partials. Same-hash local fragments can be reused without trusting unverified
-bytes.
+and model destination. When resuming, the existing staged prefix must match
+the verified cache blob; a mismatch is retained for inspection. Hub resume
+never silently switches to the native HTTP downloader. Network-cache progress
+is indeterminate; byte counts and rates describe the local staging copy, not
+Hub network throughput. Same-hash local fragments can be reused without
+trusting unverified bytes.
 
 On checksum failure, do not bypass verification. Inspect the expected and
 actual digest, then use Retry fresh (F) if you want a fresh transfer while
