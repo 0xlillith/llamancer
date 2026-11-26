@@ -165,6 +165,20 @@ pub fn row(line: &str, p: &Palette, logs: bool) -> Line<'static> {
     }
     Line::styled(line, style)
 }
+pub fn transfer_size(n: u64, total: u64) -> String {
+    let (unit, divisor) = if total >= 1024_u64.pow(3) {
+        ("GiB", 1024_f64.powi(3))
+    } else if total >= 1024_u64.pow(2) {
+        ("MiB", 1024_f64.powi(2))
+    } else {
+        ("KiB", 1024.)
+    };
+    format!(
+        "{:.1}/{:.1} {unit}",
+        n as f64 / divisor,
+        total as f64 / divisor
+    )
+}
 pub fn meter(value: u64, total: u64, width: usize) -> String {
     if total == 0 {
         return "─".repeat(width);
@@ -282,7 +296,7 @@ fn transfer_dashboard(frame: &mut Frame, area: Rect, app: &App, p: &Palette) {
     };
     let state_color = match g.state {
         "Complete" => p.green,
-        "Failed" => p.orange,
+        "Failed" | "Integrity failed" => p.orange,
         _ => p.heading.fg.unwrap_or(p.green),
     };
     let summary = vec![
@@ -292,11 +306,7 @@ fn transfer_dashboard(frame: &mut Frame, area: Rect, app: &App, p: &Palette) {
                 g.label(),
                 p.base.fg(state_color).add_modifier(Modifier::BOLD),
             ),
-            Span::raw(format!(
-                " · {:.1}/{:.1} GiB",
-                g.received as f64 / 1073741824.0,
-                g.bytes as f64 / 1073741824.0
-            )),
+            Span::raw(format!(" · {}", transfer_size(g.received, g.bytes))),
         ]),
     ];
     frame.render_widget(
@@ -379,7 +389,7 @@ fn transfer_dashboard(frame: &mut Frame, area: Rect, app: &App, p: &Palette) {
             format!("{symbol} Part {part} · {:?}", item.state),
             style,
         ));
-        if let Some(e) = &item.error {
+        if let Some(e) = item.integrity_error.as_ref().or(item.error.as_ref()) {
             detail.push(Line::styled(safe(e), p.base.fg(p.orange)));
         }
     }
@@ -527,6 +537,11 @@ pub fn aside(frame: &mut Frame, area: Rect, app: &App, p: &Palette) {
                             v.files.len(),
                             v.expected
                         )));
+                        if v.draft() {
+                            lines.push(Line::raw("MTP draft: attachment not supported"));
+                        } else if v.projector() {
+                            lines.push(Line::raw("Optional vision projector"));
+                        }
                         lines.push(Line::raw("Per-variant popularity unavailable"));
                         lines.push(Line::raw(if f.sha256.is_some() {
                             "SHA-256 available"

@@ -125,10 +125,10 @@ pub fn content(app: &App, body: Rect) -> (&'static str, String) {
         if app.config.api_key_file.is_some() {
             lines.push("Authenticated agents: Run model only, then explicit A in Server.".into());
         }
-        lines.push(if g.complete && !g.projector {
+        lines.push(if g.runnable() {
             "Enter or click an action. Esc goes back.".into()
         } else {
-            "Incomplete model or projector: inspection only.".into()
+            "Incomplete model or auxiliary weights: inspection only.".into()
         });
         ("Launch model", lines.join("\n"))
     } else if app.setup_open {

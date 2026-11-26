@@ -25,9 +25,7 @@ fn bytes_for(elements: u64, kind: Option<&str>) -> Option<u64> {
 pub fn estimate(group: &Group, profile: &Profile) -> Option<Estimate> {
     let m = &group.files.first()?.metadata;
     // Exclude hybrid/recurrent, MLA and unfamiliar architectures rather than guessing.
-    if !group.complete
-        || group.projector
-        || !matches!(m.architecture.as_deref(), Some("llama" | "qwen2" | "qwen3"))
+    if !group.runnable() || !matches!(m.architecture.as_deref(), Some("llama" | "qwen2" | "qwen3"))
     {
         return None;
     }

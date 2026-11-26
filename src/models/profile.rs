@@ -147,7 +147,7 @@ fn path_recommendation(path: &std::path::Path) -> Option<(Recommendation, &std::
     None
 }
 pub fn recommendation(group: &super::group::Group) -> Option<Recommendation> {
-    if !group.complete || group.projector {
+    if !group.runnable() {
         return None;
     }
     let first = path_recommendation(&group.files.first()?.path)?;

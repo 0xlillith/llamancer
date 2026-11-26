@@ -1,3 +1,35 @@
+# Screenshot gallery — model-first workflow
+
+These seven images are rasterized from real Kitty terminal cell captures of the
+development build following beta.4. The Andromeda theme and optional Nerd Font
+icons are enabled. Public GGUF fixtures, a public Hugging Face repository,
+temporary project folders and an isolated loopback inference session were used.
+No personal configuration, private project contents, or credentials are included.
+The version in the header is the development package version, not a new release.
+
+| Screen | Capture |
+| --- | --- |
+| Library | ![Library](../assets/screenshots/workflow-library.png) |
+| Launch | ![Launch and profile preview](../assets/screenshots/workflow-launch.png) |
+| Discover | ![Variant catalog](../assets/screenshots/workflow-discover.png) |
+| Downloads | ![Transfer dashboard](../assets/screenshots/workflow-downloads.png) |
+| Workspace | ![Project picker](../assets/screenshots/workflow-projects.png) |
+| Server | ![Actual inference session](../assets/screenshots/workflow-server.png) |
+| Settings | ![Settings](../assets/screenshots/workflow-settings.png) |
+
+Read the [user guide](USAGE.md).
+
+To reproduce, build the binary and run
+`python3 tests/capture_workflow.py target/release/llamancer /absolute/path/llama-server /path/to/public-gguf-fixtures /path/to/output`
+from a graphical Kitty session with Pillow, Fontconfig and a compatible Nerd Font.
+Set optional `LLAMANCER_CAPTURE_HYBRID` to a verified local Qwen3.5-0.8B GGUF
+to capture the hybrid auto-context session. The script uses temporary XDG
+directories, real Hub search/download, and cleans up the managed server.
+
+---
+
+## Previous captures
+
 # Screenshots and terminal captures
 
 ## Beta.4 development interface

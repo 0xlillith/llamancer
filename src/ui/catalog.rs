@@ -117,8 +117,20 @@ pub fn discover(f: &mut Frame, area: Rect, app: &App, p: &Palette) {
                     cells.extend([
                         Cell::from(format!("{:.2}", v.bytes() as f64 / 1073741824.)),
                         Cell::from(format!("{}/{}", v.files.len(), v.expected)),
-                        Cell::from(if v.complete() { "Ready" } else { "Incomplete" })
-                            .style(p.base.fg(if v.complete() { p.green } else { p.orange })),
+                        Cell::from(if v.draft() {
+                            "MTP draft"
+                        } else if !v.complete() {
+                            "Incomplete"
+                        } else if v.projector() {
+                            "Projector"
+                        } else {
+                            "Ready"
+                        })
+                        .style(p.base.fg(if v.downloadable() {
+                            p.green
+                        } else {
+                            p.orange
+                        })),
                     ]);
                 } else {
                     cells.push(Cell::from(format!(
@@ -219,7 +231,13 @@ pub fn downloads(f: &mut Frame, area: Rect, app: &App, p: &Palette) {
     let groups = d.bundles();
     let cursor = d.bundle_cursor(&groups);
     f.render_widget(
-        Paragraph::new(format!("{} models  •  {}", groups.len(), safe(&d.status))).style(p.heading),
+        Paragraph::new(format!(
+            "{} models  •  {}  •  {}",
+            groups.len(),
+            d.transport.label(),
+            safe(&d.status)
+        ))
+        .style(p.heading),
         interior(area, 1, 1),
     );
     if area.height < 8 || area.width < 12 {
@@ -236,7 +254,7 @@ pub fn downloads(f: &mut Frame, area: Rect, app: &App, p: &Palette) {
         .map(|(i, g)| {
             let color = match g.state {
                 "Complete" => p.green,
-                "Failed" => p.orange,
+                "Failed" | "Integrity failed" => p.orange,
                 _ => p.heading.fg.unwrap_or(p.green),
             };
             let pct = (g.received as f64 / g.bytes.max(1) as f64 * 100.).clamp(0., 100.);
@@ -253,11 +271,7 @@ pub fn downloads(f: &mut Frame, area: Rect, app: &App, p: &Palette) {
                     Span::styled(chrome::meter(g.received, g.bytes, 10), p.base.fg(color)),
                     Span::raw(format!(" {pct:>5.1}%")),
                 ])));
-                cells.push(Cell::from(format!(
-                    "{:.1}/{:.1}",
-                    g.received as f64 / 1073741824.,
-                    g.bytes as f64 / 1073741824.
-                )));
+                cells.push(Cell::from(chrome::transfer_size(g.received, g.bytes)));
             } else {
                 cells.push(Cell::from(format!("{pct:.0}%")));
             }
@@ -267,11 +281,11 @@ pub fn downloads(f: &mut Frame, area: Rect, app: &App, p: &Palette) {
         (
             vec![
                 Constraint::Min(12),
-                Constraint::Length(12),
+                Constraint::Length(17),
                 Constraint::Length(18),
-                Constraint::Length(15),
+                Constraint::Length(20),
             ],
-            vec!["Model", "Status", "Progress", "GiB transferred"],
+            vec!["Model", "Status", "Progress", "Transferred"],
         )
     } else {
         (
@@ -299,7 +313,12 @@ pub fn downloads(f: &mut Frame, area: Rect, app: &App, p: &Palette) {
         let sub = g
             .indices
             .iter()
-            .find_map(|&i| d.queue.items[i].error.as_deref())
+            .find_map(|&i| {
+                d.queue.items[i]
+                    .integrity_error
+                    .as_deref()
+                    .or(d.queue.items[i].error.as_deref())
+            })
             .map(safe)
             .or_else(|| {
                 g.active

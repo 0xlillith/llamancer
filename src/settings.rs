@@ -21,15 +21,17 @@ pub enum Field {
     CustomAgent,
     AddRoot,
     DownloadRoot,
+    DownloadTransport,
     RemoveRoot,
     ImportModel,
     RestoreModel,
     RemoveImport,
 }
 impl Field {
-    pub const ALL: [Self; 18] = [
+    pub const ALL: [Self; 19] = [
         Self::AddRoot,
         Self::DownloadRoot,
+        Self::DownloadTransport,
         Self::ImportModel,
         Self::RemoveRoot,
         Self::RemoveImport,
@@ -72,6 +74,7 @@ impl Field {
             Self::Agent => &["omp", "pi", "pi-native", "custom"],
             Self::AgentTerminal => &["new-window", "current", "kitty-tab", "kitty-window"],
             Self::Device => &["auto", "none", "Custom value…"],
+            Self::DownloadTransport => &["native", "hub"],
             Self::DefaultContext => &[
                 "auto",
                 "32768",
@@ -99,6 +102,7 @@ impl Field {
             Self::CustomAgent => "Custom agent executable",
             Self::AddRoot => "Add model root",
             Self::DownloadRoot => "Default download root",
+            Self::DownloadTransport => "Download transport",
             Self::RemoveRoot => "Remove model root",
             Self::ImportModel => "Import GGUF reference",
             Self::RestoreModel => "Restore hidden model",
@@ -108,6 +112,7 @@ impl Field {
     pub fn hint(self) -> &'static str {
         match self {
             Self::AddRoot=>"Required for downloading. Enter default to create the suggested private model folder, or choose an existing absolute folder.",
+            Self::DownloadTransport=>"Native is built in. Hub uses the optional official hf CLI and its resumable Xet-capable cache; allow space for a verified local copy.",
             Self::DownloadRoot=>"Optional. none asks which configured folder to use when there are several.",
             Self::RemoveRoot=>"Removes a library reference, not the files.",
             Self::ImportModel=>"Optional. Index one existing GGUF without copying it.",
@@ -132,6 +137,7 @@ impl Field {
             Self::Theme | Self::Icons => "Appearance",
             Self::AddRoot
             | Self::RemoveRoot
+            | Self::DownloadTransport
             | Self::DownloadRoot
             | Self::ImportModel
             | Self::RemoveImport
@@ -166,6 +172,7 @@ impl Field {
                 .default_context
                 .map(|n| n.to_string())
                 .unwrap_or_else(|| "auto".into()),
+            Self::DownloadTransport => config.download_transport.label().into(),
             Self::DownloadRoot => config
                 .download_root
                 .as_ref()
@@ -282,6 +289,13 @@ pub fn apply(
             } else {
                 draft.project_dir = selected;
             }
+        }
+        Field::DownloadTransport => {
+            draft.download_transport = match value {
+                "native" => crate::downloads::Transport::Native,
+                "hub" => crate::downloads::Transport::Hub,
+                _ => return Err(invalid("Choose native or hub")),
+            };
         }
         Field::DownloadRoot => {
             draft.download_root = if value == "none" {

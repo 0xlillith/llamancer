@@ -167,7 +167,7 @@ pub fn draw(f: &mut Frame, area: Rect, app: &App, p: &Palette) {
             super::safe(&g.name),
             super::safe(&app.config.default_agent),
             (g.bytes() as f64 / 1073741824.0 * 10.).round() / 10.,
-            if g.complete && !g.projector {
+            if g.runnable() {
                 if app.config.effective_profile(g).backend_defaults {
                     "Backend defaults"
                 } else if crate::models::profile::recommendation(g).is_some() {
@@ -318,7 +318,7 @@ pub fn draw(f: &mut Frame, area: Rect, app: &App, p: &Palette) {
         let budget = if let (Some(n), Some(t)) = (context, max) {
             format!("{n}/{t} tokens · {}", plan.source)
         } else {
-            format!("{} · target 128K", plan.source)
+            "Auto · 128K target (backend fit at launch)".into()
         };
         f.render_widget(p.panel(" Configuration preview ").style(p.base), side);
         let inner = Rect::new(
@@ -365,7 +365,7 @@ pub fn draw(f: &mut Frame, area: Rect, app: &App, p: &Palette) {
                     "Preflight: {}",
                     if profile.tool_preflight { "ON" } else { "OFF" }
                 ),
-                details.clone(),
+                "Changes apply on next launch.".into(),
             ];
             let mut preview = profile.clone();
             preview.engine.context_size = plan.tokens;

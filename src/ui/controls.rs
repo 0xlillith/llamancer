@@ -57,6 +57,12 @@ fn buttons(area: Rect, app: &App) -> Vec<Button> {
                 (
                     if app.details {
                         "Back to models".into()
+                    } else if app.selected().is_some_and(|g| {
+                        app.downloads
+                            .as_ref()
+                            .is_some_and(|d| d.integrity_problem(g))
+                    }) {
+                        "Inspect integrity".into()
                     } else {
                         "Run model".into()
                     },
@@ -123,7 +129,8 @@ fn buttons(area: Rect, app: &App) -> Vec<Button> {
                 actions.push(("Retry fresh".into(), Key(Char('F'))));
             } else if selected.is_some_and(|g| matches!(g.state, "Queued" | "Paused")) {
                 actions.push(("Resume model".into(), Key(Enter)));
-            } else if selected.is_some_and(|g| g.state == "Complete") {
+            } else if selected.is_some_and(|g| matches!(g.state, "Complete" | "Integrity failed")) {
+                actions.push(("Verify SHA-256".into(), Key(Char('V'))));
                 actions.push(("Open Library".into(), Key(Char('1'))));
             } else if selected.is_some_and(|g| g.state == "Quarantined") {
                 actions.push(("Restore model".into(), Key(Char('T'))));

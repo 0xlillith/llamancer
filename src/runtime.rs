@@ -64,7 +64,8 @@ impl Runtime {
         if !path.exists() {
             config.save(&path)?;
         }
-        let downloads = crate::downloads::Controller::new(root.join("downloads.toml"))?;
+        let mut downloads = crate::downloads::Controller::new(root.join("downloads.toml"))?;
+        downloads.transport = config.download_transport;
         let _ = diagnostics.record(crate::diagnostics::Event::Startup, None);
         Ok(Self {
             app: App {
@@ -320,7 +321,7 @@ impl Runtime {
             .selected()
             .cloned()
             .ok_or_else(|| io::Error::other("Select a model first"))?;
-        self.app.launch_cursor = if group.complete && !group.projector {
+        self.app.launch_cursor = if group.runnable() {
             if self.app.config.api_key_file.is_some()
                 || !crate::doctor::executable("kitty", std::env::var_os("PATH").as_deref())
             {
@@ -362,8 +363,20 @@ impl Runtime {
             }
             return Ok(Effect::None);
         }
-        if !group.complete || group.projector {
-            return Err(io::Error::other("Select a complete model, not a projector"));
+        if !group.runnable() {
+            return Err(io::Error::other(
+                "Select a complete standalone model, not auxiliary weights",
+            ));
+        }
+        if self
+            .app
+            .downloads
+            .as_ref()
+            .is_some_and(|d| d.integrity_problem(&group))
+        {
+            return Err(io::Error::other(
+                "Model failed integrity audit; verify its parts in Downloads",
+            ));
         }
         if self.mutation_active() {
             return Err(io::Error::other("Wait for model quarantine"));
@@ -1087,6 +1100,17 @@ impl Runtime {
                             Field::WorkspaceRoot.initial(&self.app.config),
                         ));
                         self.app.notice = "Choose a parent folder; then select a project".into();
+                        if crate::doctor::executable("kdialog", std::env::var_os("PATH").as_deref())
+                            || crate::doctor::executable(
+                                "zenity",
+                                std::env::var_os("PATH").as_deref(),
+                            )
+                        {
+                            let initial = std::env::var_os("HOME")
+                                .map(PathBuf::from)
+                                .unwrap_or_else(|| PathBuf::from("/"));
+                            return Ok(Effect::BrowseDirectory(Field::WorkspaceRoot, initial));
+                        }
                     }
                 }
                 KeyCode::Enter if self.app.launch_cursor == 8 => {
@@ -1196,7 +1220,11 @@ impl Runtime {
             }
             return Ok(Effect::None);
         }
-        if key.code == KeyCode::Char('G') && !self.modal() {
+        if key.code == KeyCode::Char('G')
+            && !self.modal()
+            && !self.app.discovery.editing
+            && !self.app.searching
+        {
             self.app.setup_open = true;
             self.app.notice.clear();
             return Ok(Effect::None);
@@ -1228,7 +1256,7 @@ impl Runtime {
                         .enqueue_and_start(choice.files.clone(), root)?;
                     self.app.download_destination = None;
                     self.app.notice = "Download added to queue; starts automatically".into();
-                    self.app.tab = 2;
+                    self.app.dispatch(Action::Select(2));
                 }
                 _ => {}
             }
@@ -1285,7 +1313,12 @@ impl Runtime {
             }
             return Ok(Effect::None);
         }
-        if key.code == KeyCode::Char('I') && self.app.tab == 4 && !self.modal() {
+        if key.code == KeyCode::Char('I')
+            && self.app.tab == 4
+            && !self.modal()
+            && !self.app.discovery.editing
+            && !self.app.searching
+        {
             let mut next = self.app.config.clone();
             next.icon_mode = next.icon_mode.next();
             self.persist(next)?;
@@ -1300,7 +1333,12 @@ impl Runtime {
             );
             return Ok(Effect::None);
         }
-        if key.code == KeyCode::Char('T') && self.app.tab == 4 && !self.modal() {
+        if key.code == KeyCode::Char('T')
+            && self.app.tab == 4
+            && !self.modal()
+            && !self.app.discovery.editing
+            && !self.app.searching
+        {
             let mut next = self.app.config.clone();
             next.theme = Theme::next_builtin(&next.theme).into();
             let theme = Theme::load(&self.root, &next.theme)?;
@@ -1309,11 +1347,20 @@ impl Runtime {
             self.app.notice = format!("Theme: {}", self.app.config.theme);
             return Ok(Effect::None);
         }
-        if key.code == KeyCode::Char('P') && !self.modal() {
+        if key.code == KeyCode::Char('P')
+            && !self.modal()
+            && !self.app.discovery.editing
+            && !self.app.searching
+        {
             self.open_projects()?;
             return Ok(Effect::None);
         }
-        if key.code == KeyCode::Char('O') && self.app.tab == 4 && !self.modal() {
+        if key.code == KeyCode::Char('O')
+            && self.app.tab == 4
+            && !self.modal()
+            && !self.app.discovery.editing
+            && !self.app.searching
+        {
             let field = Field::ALL[self.app.setting];
             if matches!(field, Field::WorkspaceRoot | Field::ProjectDir) {
                 let initial = if field == Field::WorkspaceRoot {
@@ -1343,7 +1390,12 @@ impl Runtime {
             }
             return Ok(Effect::None);
         }
-        if key.code == KeyCode::Char('B') && matches!(self.app.tab, 3 | 4) && !self.modal() {
+        if key.code == KeyCode::Char('B')
+            && matches!(self.app.tab, 3 | 4)
+            && !self.modal()
+            && !self.app.discovery.editing
+            && !self.app.searching
+        {
             self.app.notice.clear();
             self.app.backend_open = true;
             let root = backends::root()?;
@@ -1605,7 +1657,7 @@ impl Runtime {
             let group = self
                 .app
                 .selected()
-                .filter(|g| g.complete && !g.projector && g.files.len() == 1)
+                .filter(|g| g.runnable() && g.files.len() == 1)
                 .ok_or_else(|| {
                     io::Error::other("Select a small complete single-file model in Library first")
                 })?;
@@ -1664,6 +1716,9 @@ impl Runtime {
         next.save(&self.path)?;
         if next.server_binary != self.app.config.server_binary {
             self.app.server.devices.clear();
+        }
+        if let Some(d) = self.app.downloads.as_mut() {
+            d.transport = next.download_transport;
         }
         self.app.config = next;
         let _ = self
@@ -1953,10 +2008,8 @@ impl Runtime {
             }
             KeyCode::Char('p') => {
                 if let Some(g) = self.app.selected() {
-                    if g.projector || !g.complete {
-                        return Err(io::Error::other(
-                            "Select a complete model group, not a projector",
-                        ));
+                    if !g.runnable() {
+                        return Err(io::Error::other("Select a complete standalone model group"));
                     }
                     let id = models::library::identity(g);
                     let draft = self
@@ -1974,8 +2027,20 @@ impl Runtime {
                     return Err(io::Error::other("Wait for model quarantine to finish"));
                 }
                 if let Some(group) = self.app.selected().cloned() {
-                    if !group.complete || group.projector {
-                        return Err(io::Error::other("Select a complete model, not a projector"));
+                    if !group.runnable() {
+                        return Err(io::Error::other(
+                            "Select a complete standalone model, not auxiliary weights",
+                        ));
+                    }
+                    if self
+                        .app
+                        .downloads
+                        .as_ref()
+                        .is_some_and(|d| d.integrity_problem(&group))
+                    {
+                        return Err(io::Error::other(
+                            "Model failed integrity audit; verify in Downloads",
+                        ));
                     }
                     if !self.app.server.owns_server()
                         && !crate::doctor::executable(
@@ -2040,6 +2105,15 @@ impl Runtime {
                 }
             }
             KeyCode::Char('d' | 'D') | KeyCode::Enter if !self.app.discovery.busy() => {
+                if self
+                    .app
+                    .discovery
+                    .variants
+                    .get(self.app.discovery.cursor)
+                    .is_some_and(|v| v.draft())
+                {
+                    return Err(io::Error::other("Separate MTP draft weights are not standalone models; speculative draft attachment is not supported yet"));
+                }
                 let files = self.app.discovery.selected_bundle();
                 if files.is_empty() {
                     return Err(io::Error::other("Select a file or complete shard bundle"));
@@ -2084,6 +2158,13 @@ impl Runtime {
         Ok(())
     }
     fn download_key(&mut self, key: KeyCode) -> io::Result<()> {
+        if key == KeyCode::Char('V')
+            && (self.app.server.active() || self.app.server.snapshot.is_some())
+        {
+            return Err(io::Error::other(
+                "Stop managed inference before auditing models",
+            ));
+        }
         if key == KeyCode::Char('F') {
             if self.app.downloads.as_ref().is_some_and(|d| !d.busy()) {
                 self.open_picker(crate::ui::choices::Kind::RetryFresh);
@@ -2105,6 +2186,7 @@ impl Runtime {
             return Ok(());
         };
         match key {
+            KeyCode::Char('V') => d.verify_bundle()?,
             KeyCode::Up => d.move_bundle(false),
             KeyCode::Down => d.move_bundle(true),
             KeyCode::Char('r') | KeyCode::Enter => d.resume_bundle()?,
@@ -2129,6 +2211,19 @@ impl Runtime {
             }
         }
         let c = &self.app.config;
+        let safe_groups: Vec<_> = self
+            .app
+            .candidates
+            .iter()
+            .filter(|g| {
+                !self
+                    .app
+                    .downloads
+                    .as_ref()
+                    .is_some_and(|d| d.integrity_problem(g))
+            })
+            .cloned()
+            .collect();
         let s = &mut self.app.server;
         match key {
             KeyCode::Up => s.move_cursor(false),
@@ -2136,8 +2231,8 @@ impl Runtime {
             KeyCode::Char('r') => s.refresh(c)?,
             KeyCode::Char('D') => s.disconnect()?,
             KeyCode::Char('i') => s.probe(c)?,
-            KeyCode::Char('s') => s.start(c, self.app.candidates.clone(), None)?,
-            KeyCode::Char('R') => s.restart(c, self.app.candidates.clone())?,
+            KeyCode::Char('s') => s.start(c, safe_groups, None)?,
+            KeyCode::Char('R') => s.restart(c, safe_groups)?,
             KeyCode::Char('x') => s.stop()?,
             KeyCode::Char('l' | 'u') => s.set_loaded(c, key == KeyCode::Char('l'))?,
             KeyCode::Char('g') => s.show_logs = !s.show_logs,
