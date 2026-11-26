@@ -1,6 +1,6 @@
 # Development status
 
-This is the first Linux beta, not a production-ready claim.
+The current Linux beta is v0.1.0-beta.5, not a production-ready claim.
 
 | Area | Implemented and validated | Outstanding release evidence |
 | --- | --- | --- |
@@ -10,6 +10,10 @@ This is the first Linux beta, not a production-ready claim.
 | Hub | Public and authorized gated checksum/index verification, real multi-root pause/resume, pinned directory identity, scoped credential discovery, quarantine and restore | Broader private-repository configurations |
 | Agents | Real OMP/Pi read-tool execution, graphical normal exit, configured-default precedence, scoped authenticated OMP profile/daemon, custom Kitty launch | Broader versions, arbitrary project extensions and model-specific fidelity |
 | Release | Native x86_64/aarch64, Rust 1.88, Arch packaging, checksum archives and current RustSec audit | Broader hardware and distribution compatibility; registry publication |
+
+## Beta.5 scope
+
+Model-first workflow PRs #110–#115 cover reviewed sampling provenance, optional official Hub transport, pinned multipart downloads, fail-closed integrity audits and native workspace dialogs. The new model-workflow acceptance suite checks real small-model server parameters and interrupted Hub transfers on independent hosted runners. Flash Next large-model inference and host data-integrity investigation remain separate issues (#80 and #100); NVIDIA #66 remains experimental.
 
 ## Evidence
 

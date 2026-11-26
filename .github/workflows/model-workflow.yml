@@ -1,0 +1,62 @@
+name: Model workflow acceptance
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/model-workflow.yml
+      - tests/hub_interrupt_live.rs
+      - tests/profile_live.rs
+      - tests/hub_transport_live.rs
+      - src/downloads.rs
+      - src/models/profile.rs
+permissions:
+  contents: read
+jobs:
+  acceptance:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+          - runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    env:
+      HF_HUB_DISABLE_IMPLICIT_TOKEN: "1"
+      HF_HUB_DISABLE_TELEMETRY: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Prepare isolated tools
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/hf-venv"
+          "$RUNNER_TEMP/hf-venv/bin/pip" install 'huggingface_hub==2.4.0' hf_xet
+          echo "$RUNNER_TEMP/hf-venv/bin" >> "$GITHUB_PATH"
+          export XDG_DATA_HOME="$RUNNER_TEMP/managed-data"
+          cargo build --locked --release
+          server="$(target/release/llamancer backend install cpu b12726)"
+          test -x "$server"
+          echo "LLAMANCER_TEST_SERVER=$server" >> "$GITHUB_ENV"
+      - name: Interrupted HTTP Hub and full-size checksum rejection
+        env:
+          HF_HUB_DISABLE_XET: "1"
+        run: |
+          export HF_HOME="$RUNNER_TEMP/hf-interrupt"
+          export HF_HUB_CACHE="$HF_HOME/hub"
+          cargo test --locked --test hub_interrupt_live -- --ignored --nocapture
+          model="$RUNNER_TEMP/models/unsloth/Qwen3.5-0.8B-GGUF/6ab461498e2023f6e3c1baea90a8f0fe38ab64d0/Qwen3.5-0.8B-Q4_K_M.gguf"
+          mkdir -p "$(dirname "$model")"
+          blob="$(find "$HF_HUB_CACHE" -type f -name bd258782e35f7f458f8aced1adc053e6e92e89bc735ba3be89d38a06121dc517 -print -quit)"
+          test -n "$blob"
+          cp "$blob" "$model"
+          printf '%s  %s\n' bd258782e35f7f458f8aced1adc053e6e92e89bc735ba3be89d38a06121dc517 "$model" | sha256sum -c -
+          echo "LLAMANCER_TEST_HYBRID=$model" >> "$GITHUB_ENV"
+      - name: Actual reviewed model parameters and override/reset
+        run: cargo test --locked --test profile_live -- --ignored --nocapture
+      - name: Multipart native, Hub and cached prefix
+        run: |
+          export HF_HOME="$RUNNER_TEMP/hf-multipart"
+          export HF_HUB_CACHE="$HF_HOME/hub"
+          export HF_XET_CACHE="$HF_HOME/xet"
+          cargo test --locked --test hub_transport_live -- --ignored --nocapture
