@@ -1004,7 +1004,7 @@ fn direct_digest(
 }
 #[cfg(test)]
 fn audit_item(item: &Item, cancel: &AtomicBool) -> io::Result<()> {
-    audit_item_progress(item, cancel, &|_, _| {})
+    audit_item_progress(item, cancel, false, &|_, _| {})
 }
 /// Distinguish an inconsistent read from a repeatable mismatch. A cancelled
 /// second pass must never discard a failure already observed on the first.
@@ -1013,6 +1013,7 @@ fn reconcile_audit(
     direct: io::Result<String>,
     expected: &str,
     prior_inconsistent: bool,
+    strict: bool,
     retry: impl FnOnce() -> io::Result<()>,
 ) -> io::Result<()> {
     match direct {
@@ -1026,6 +1027,7 @@ fn reconcile_audit(
             }
             if e.kind()==io::ErrorKind::Interrupted { return Err(e); }
             if prior_inconsistent { return Err(io::Error::other(format!("{prefix}direct revalidation unavailable: {e}"))); }
+            if strict { return Err(io::Error::other(format!("Strict independent verification unavailable: {e}"))); }
             retry()
         }
     }
@@ -1041,6 +1043,7 @@ fn same_version(a: &fs::Metadata, b: &fs::Metadata) -> bool {
 fn audit_item_progress(
     item: &Item,
     cancel: &AtomicBool,
+    strict: bool,
     progress: &dyn Fn(&'static str, u64),
 ) -> io::Result<()> {
     let expected = item
@@ -1073,7 +1076,7 @@ fn audit_item_progress(
     if !same_version(&before, &fs::symlink_metadata(&path)?) {
         return Err(io::Error::other("Model path changed during verification"));
     }
-    if buffered.is_err() || item.integrity_error.is_some() {
+    if strict || buffered.is_err() || item.integrity_error.is_some() {
         progress("Independent direct SHA-256", 0);
         let direct = direct_digest(&path, item, cancel, &|n| {
             progress("Independent direct SHA-256", n)
@@ -1085,6 +1088,7 @@ fn audit_item_progress(
             item.integrity_error
                 .as_deref()
                 .is_some_and(|e| e.contains("Inconsistent reads")),
+            strict,
             || {
                 progress("Repeat buffered SHA-256", 0);
                 let mut second = fs::OpenOptions::new()
@@ -1473,10 +1477,57 @@ impl Controller {
         let group = groups
             .get(self.bundle_cursor(&groups))
             .ok_or_else(|| io::Error::other("Select a model"))?;
-        self.begin_audit(group.indices.clone())
+        self.begin_audit(group.indices.clone(), false)
     }
     pub fn verify_all(&mut self) -> io::Result<()> {
-        self.begin_audit((0..self.queue.items.len()).collect())
+        self.verify_all_with_policy(false)
+    }
+    pub fn verify_all_with_policy(&mut self, strict: bool) -> io::Result<()> {
+        self.begin_audit((0..self.queue.items.len()).collect(), strict)
+    }
+    /// Select an exact managed shard path, never a fuzzy filename match.
+    /// Audit the entire bundle only if every shard is complete and pinned.
+    pub fn verify_target(&mut self, path: &Path, strict: bool) -> io::Result<Vec<usize>> {
+        if !path.is_absolute() {
+            return Err(io::Error::other("Use an absolute managed GGUF path"));
+        }
+        let matches: Vec<_> = self
+            .queue
+            .items
+            .iter()
+            .enumerate()
+            .filter(|(_, item)| quarantine::expected(item).ok().as_deref() == Some(path))
+            .map(|(i, _)| i)
+            .collect();
+        if matches.len() != 1 {
+            return Err(io::Error::other(
+                "Path must identify exactly one managed download",
+            ));
+        }
+        let g = self
+            .bundles()
+            .into_iter()
+            .find(|g| g.indices.contains(&matches[0]))
+            .ok_or_else(|| io::Error::other("Managed bundle not found"))?;
+        let names: std::collections::HashSet<_> = g
+            .indices
+            .iter()
+            .map(|&i| &self.queue.items[i].file.name)
+            .collect();
+        if g.indices.len() as u64 != g.expected
+            || names.len() != g.indices.len()
+            || !g.indices.iter().all(|&i| {
+                let item = &self.queue.items[i];
+                item.state == State::Complete && item.file.sha256.is_some()
+            })
+        {
+            return Err(io::Error::other(
+                "Every bundle shard must be complete, unique and SHA-256 pinned",
+            ));
+        }
+        self.begin_audit(g.indices.clone(), strict)?;
+        self.cursor = matches[0];
+        Ok(g.indices)
     }
     /// Read-only auditing does not require an ownership receipt (unlike
     /// quarantine). Match every indexed file to its pinned queue entry.
@@ -1505,7 +1556,7 @@ impl Controller {
             }
             indices.push(matches[0]);
         }
-        self.begin_audit(indices.clone())?;
+        self.begin_audit(indices.clone(), false)?;
         self.cursor = indices[0];
         Ok(())
     }
@@ -1525,7 +1576,7 @@ impl Controller {
                     == 1
             })
     }
-    fn begin_audit(&mut self, indices: Vec<usize>) -> io::Result<()> {
+    fn begin_audit(&mut self, indices: Vec<usize>, strict: bool) -> io::Result<()> {
         if self.busy() {
             return Err(io::Error::other("Wait for active transfer"));
         }
@@ -1566,7 +1617,7 @@ impl Controller {
                         stage: "Buffered SHA-256",
                     };
                 }
-                let error = match audit_item_progress(&item, &cancel, &|stage, bytes| {
+                let error = match audit_item_progress(&item, &cancel, strict, &|stage, bytes| {
                     if let Ok(mut p) = progress.lock() {
                         p.stage = stage;
                         p.bytes = bytes;
@@ -1584,7 +1635,12 @@ impl Controller {
                 cancelled: cancel.load(Ordering::Acquire),
             })
         })?);
-        self.status = "Auditing completed parts against pinned SHA-256…".into();
+        self.status = if strict {
+            "Strict audit: buffered and independent direct SHA-256…"
+        } else {
+            "Auditing completed parts against pinned SHA-256…"
+        }
+        .into();
         Ok(())
     }
     fn finish_audit(&mut self, results: AuditResults) -> io::Result<()> {
@@ -2122,19 +2178,19 @@ mod tests {
         let bad = || Err(io::Error::other("Buffered mismatch"));
         let interrupted = || Err(io::Error::new(io::ErrorKind::Interrupted, "Cancelled"));
         assert!(
-            reconcile_audit(bad(), Ok("good".into()), "good", false, || Ok(()))
+            reconcile_audit(bad(), Ok("good".into()), "good", false, false, || Ok(()))
                 .unwrap_err()
                 .to_string()
                 .contains("Inconsistent reads")
         );
         assert!(
-            reconcile_audit(Ok(()), Ok("bad".into()), "good", false, || Ok(()))
+            reconcile_audit(Ok(()), Ok("bad".into()), "good", false, false, || Ok(()))
                 .unwrap_err()
                 .to_string()
                 .contains("Inconsistent reads")
         );
         assert_ne!(
-            reconcile_audit(bad(), interrupted(), "good", false, || Ok(()))
+            reconcile_audit(bad(), interrupted(), "good", false, false, || Ok(()))
                 .unwrap_err()
                 .kind(),
             io::ErrorKind::Interrupted
@@ -2144,11 +2200,29 @@ mod tests {
             Err(io::Error::other("Unsupported")),
             "good",
             true,
+            false,
             || Ok(())
         )
         .is_err());
         assert!(
-            reconcile_audit(Ok(()), Ok("good".into()), "good", true, || panic!(
+            reconcile_audit(Ok(()), Ok("good".into()), "good", true, false, || panic!(
+                "unnecessary retry"
+            ))
+            .is_ok()
+        );
+        assert!(reconcile_audit(
+            Ok(()),
+            Err(io::Error::other("Unsupported")),
+            "good",
+            false,
+            true,
+            || panic!("strict mode cannot fall back")
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("Strict independent verification unavailable"));
+        assert!(
+            reconcile_audit(Ok(()), Ok("good".into()), "good", false, true, || panic!(
                 "unnecessary retry"
             ))
             .is_ok()

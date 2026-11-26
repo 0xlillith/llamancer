@@ -241,7 +241,27 @@ fn backend_cli(mut args: impl Iterator<Item = std::ffi::OsString>) -> io::Result
     }
     Ok(())
 }
-fn verify_cli() -> io::Result<()> {
+fn verify_cli(mut args: impl Iterator<Item = std::ffi::OsString>) -> io::Result<()> {
+    let mut strict = false;
+    let mut target = None;
+    while let Some(arg) = args.next() {
+        if arg == "--strict" && !strict {
+            strict = true;
+        } else if arg == "--model" && target.is_none() {
+            let path = args
+                .next()
+                .ok_or_else(|| io::Error::other("--model requires an absolute GGUF path"))?;
+            let path = std::path::PathBuf::from(path);
+            if !path.is_absolute() {
+                return Err(io::Error::other("--model requires an absolute GGUF path"));
+            }
+            target = Some(path);
+        } else {
+            return Err(io::Error::other(
+                "Usage: llamancer verify [--strict] [--model ABSOLUTE_GGUF_PATH]",
+            ));
+        }
+    }
     let root = llamancer::config::config_dir()?;
     let _lock = llamancer::diagnostics::SessionLock::acquire(&root)?;
     let mut d = llamancer::downloads::Controller::new(root.join("downloads.toml"))?;
@@ -249,7 +269,12 @@ fn verify_cli() -> io::Result<()> {
     for signal in [libc::SIGINT, libc::SIGTERM, libc::SIGHUP] {
         signal_hook::flag::register(signal, Arc::clone(&cancel))?;
     }
-    d.verify_all()?;
+    let selected = if let Some(path) = target {
+        d.verify_target(&path, strict)?
+    } else {
+        d.verify_all_with_policy(strict)?;
+        (0..d.queue.items.len()).collect()
+    };
     let mut last = Instant::now() - Duration::from_secs(2);
     while d.busy() {
         if cancel.load(Ordering::Acquire) {
@@ -268,7 +293,8 @@ fn verify_cli() -> io::Result<()> {
         std::thread::sleep(Duration::from_millis(50));
     }
     println!("{}", d.status);
-    for i in &d.queue.items {
+    for index in selected {
+        let i = &d.queue.items[index];
         if let Some(e) = &i.integrity_error {
             eprintln!(
                 "Integrity failure: {} — {}",
@@ -292,6 +318,9 @@ fn main() -> io::Result<()> {
         if arg == "backend" {
             return backend_cli(args);
         }
+        if arg == "verify" {
+            return verify_cli(args);
+        }
         if args.next().is_some() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -301,13 +330,12 @@ fn main() -> io::Result<()> {
         match arg.to_str() {
             Some("serve") => return llamancer::service::from_config(),
             Some("doctor") => return llamancer::doctor::run(),
-            Some("verify") => return verify_cli(),
             Some("--version" | "-V") => {
                 println!("llamancer {}", env!("CARGO_PKG_VERSION"));
                 return Ok(());
             }
             Some("--help" | "-h") => {
-                println!("Llamancer — Summon your models.\n\nUsage: llamancer [serve|backend|doctor|verify|--help|--version]\n  serve   Supervise a local router without a TUI\n  doctor  Check local setup offline without exposing paths or tokens\n  verify  Audit all completed managed model parts with pinned SHA-256\n  backend list | check | install KIND [VERSION] | probe KIND [VERSION]");
+                println!("Llamancer — Summon your models.\n\nUsage: llamancer [serve|backend|doctor|verify|--help|--version]\n  serve   Supervise a local router without a TUI\n  doctor  Check local setup offline without exposing paths or tokens\n  verify [--strict] [--model ABSOLUTE_GGUF_PATH]\n          Audit completed managed parts; strict requires independent direct reads\n  backend list | check | install KIND [VERSION] | probe KIND [VERSION]");
                 return Ok(());
             }
             _ => {

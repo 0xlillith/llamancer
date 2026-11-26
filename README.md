@@ -308,3 +308,5 @@ files. Imported or size-only files without pinned hashes cannot be certified.
 Stop the TUI or headless Llamancer supervisor using the same configuration
 before running this command. The supervisor and TUI both exclude known suspect
 models from managed inference and share the configuration session lock.
+
+For host-integrity investigations, use `llamancer verify --strict` to require both buffered and independent direct SHA-256 reads, even if the first matches. Use `--model /absolute/path/to/a-managed-shard.gguf` to audit just that complete pinned bundle. Strict mode records an inconclusive direct-read failure rather than certifying a file it could not independently read. A filesystem without direct-I/O support may fail strict verification; ordinary verification remains available, but prior inconsistent reads still require successful independent revalidation. Verification never repairs or replaces model bytes.
