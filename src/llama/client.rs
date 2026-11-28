@@ -349,6 +349,9 @@ fn validate_responses_probe(bytes: &[u8]) -> io::Result<()> {
     let mut completed = None;
     let mut streamed = String::new();
     let mut done = None;
+    let mut item_done: Option<(u64, serde_json::Value)> = None;
+    let mut item_id: Option<String> = None;
+    let mut output_index: Option<u64> = None;
     for line in text.lines() {
         let Some(data) = line.strip_prefix("data:") else {
             continue;
@@ -358,18 +361,64 @@ fn validate_responses_probe(bytes: &[u8]) -> io::Result<()> {
             continue;
         }
         let v: serde_json::Value = serde_json::from_str(data).map_err(|_| invalid())?;
-        match v["type"].as_str() {
+        let kind = v["type"].as_str();
+        if matches!(
+            kind,
+            Some(
+                "response.function_call_arguments.delta" | "response.function_call_arguments.done"
+            )
+        ) {
+            if done.is_some() || item_done.is_some() || completed.is_some() {
+                return Err(invalid());
+            }
+            if let Some(id) = v.get("item_id") {
+                let id = id.as_str().filter(|s| !s.is_empty()).ok_or_else(invalid)?;
+                if item_id.as_deref().is_some_and(|old| old != id) {
+                    return Err(invalid());
+                }
+                item_id = Some(id.to_owned());
+            }
+            if let Some(index) = v.get("output_index") {
+                let index = index.as_u64().ok_or_else(invalid)?;
+                if output_index.is_some_and(|old| old != index) {
+                    return Err(invalid());
+                }
+                output_index = Some(index);
+            }
+        }
+        match kind {
             Some("response.function_call_arguments.delta") => {
                 streamed.push_str(v["delta"].as_str().ok_or_else(invalid)?)
             }
             Some("response.function_call_arguments.done") => {
-                if done.is_some() {
-                    return Err(invalid());
-                }
                 done = Some(v["arguments"].as_str().ok_or_else(invalid)?.to_owned());
             }
+            // llama.cpp b12726 emits output_item.done for a function call
+            // instead of function_call_arguments.done. Accept it only when
+            // its identity, index, name and arguments corroborate the final
+            // completed output AND the streamed argument bytes.
+            Some("response.output_item.done") if v["item"]["type"] == "function_call" => {
+                if item_done.is_some() || completed.is_some() {
+                    return Err(invalid());
+                }
+                let index = v["output_index"].as_u64().ok_or_else(invalid)?;
+                let item = &v["item"];
+                for key in ["id", "call_id", "name", "arguments"] {
+                    if !item[key].as_str().is_some_and(|s| !s.is_empty()) {
+                        return Err(invalid());
+                    }
+                }
+                if item_id
+                    .as_deref()
+                    .is_some_and(|id| item["id"].as_str() != Some(id))
+                    || output_index.is_some_and(|i| i != index)
+                {
+                    return Err(invalid());
+                }
+                item_done = Some((index, item.clone()));
+            }
             Some("response.completed") => {
-                if completed.is_some() {
+                if completed.is_some() || (done.is_none() && item_done.is_none()) {
                     return Err(invalid());
                 }
                 completed = Some(v["response"].clone());
@@ -386,14 +435,33 @@ fn validate_responses_probe(bytes: &[u8]) -> io::Result<()> {
         .as_array()
         .ok_or_else(invalid)?
         .iter()
-        .filter(|o| o["type"] == "function_call")
+        .enumerate()
+        .filter(|(_, o)| o["type"] == "function_call")
         .collect();
     if calls.len() != 1 {
         return Err(invalid());
     }
-    let f = calls[0];
+    let (index, f) = calls[0];
+    if output_index.is_some_and(|i| i != index as u64)
+        || item_id
+            .as_deref()
+            .is_some_and(|id| f["id"].as_str() != Some(id))
+    {
+        return Err(invalid());
+    }
     let args = f["arguments"].as_str().ok_or_else(invalid)?;
-    if done.as_deref() != Some(args) || streamed != args {
+    if streamed != args || done.as_deref().is_some_and(|d| d != args) {
+        return Err(invalid());
+    }
+    if let Some((i, item)) = item_done {
+        if i != index as u64
+            || ["id", "call_id", "name", "arguments"]
+                .iter()
+                .any(|key| item[*key] != f[*key])
+        {
+            return Err(invalid());
+        }
+    } else if done.as_deref() != Some(args) {
         return Err(invalid());
     }
     validate_tool_probe(
@@ -419,12 +487,19 @@ fn validate_tool_probe(response: &serde_json::Value) -> io::Result<()> {
         .filter(|a| a.len() == 1)
         .ok_or_else(invalid)?;
     let f = &calls[0]["function"];
-    let arguments: serde_json::Value =
-        serde_json::from_str(f["arguments"].as_str().ok_or_else(invalid)?)
-            .map_err(|_| invalid())?;
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Arguments {
+        command: String,
+        cwd: String,
+    }
+    // Deserialize a typed object so duplicate keys cannot silently overwrite
+    // earlier (possibly corrupted) arguments during validation.
+    let arguments: Arguments = serde_json::from_str(f["arguments"].as_str().ok_or_else(invalid)?)
+        .map_err(|_| invalid())?;
     if f["name"] != "shell"
-        || arguments
-            != serde_json::json!({"command":"git log --oneline -8","cwd":"/tmp/llamancer-fixture"})
+        || arguments.command != "git log --oneline -8"
+        || arguments.cwd != "/tmp/llamancer-fixture"
     {
         return Err(invalid());
     }
@@ -455,6 +530,78 @@ mod tests {
         assert!(
             super::validate_responses_probe(s.replace("fixture", "garbage").as_bytes()).is_err()
         );
+    }
+    #[test]
+    fn responses_probe_accepts_corroborated_item_done_but_not_missing_or_mixed_completion() {
+        let args = r#"{"command":"git log --oneline -8","cwd":"/tmp/llamancer-fixture"}"#;
+        let item = serde_json::json!({"type":"function_call","id":"fc_1","call_id":"call_1","name":"shell","arguments":args});
+        let delta = serde_json::json!({"type":"response.function_call_arguments.delta","delta":args,"item_id":"fc_1","output_index":1});
+        let item_done =
+            serde_json::json!({"type":"response.output_item.done","output_index":1,"item":item});
+        let completed = serde_json::json!({"type":"response.completed","response":{"status":"completed","output":[{"type":"reasoning"},item]}});
+        let check = |events: &[serde_json::Value]| {
+            let wire = events
+                .iter()
+                .map(|e| format!("data: {e}\n\n"))
+                .collect::<String>();
+            validate_responses_probe(wire.as_bytes())
+        };
+        assert!(check(&[delta.clone(), item_done.clone(), completed.clone()]).is_ok());
+        assert!(check(&[delta.clone(), completed.clone()]).is_err());
+        for (key, value) in [
+            ("id", "fc_2"),
+            ("call_id", "call_2"),
+            ("name", "read_file"),
+            ("arguments", "{}"),
+        ] {
+            let mut wrong = item_done.clone();
+            wrong["item"][key] = value.into();
+            assert!(check(&[delta.clone(), wrong, completed.clone()]).is_err());
+        }
+        let mut wrong = item_done.clone();
+        wrong["output_index"] = 0.into();
+        assert!(check(&[delta.clone(), wrong, completed.clone()]).is_err());
+        assert!(check(&[
+            delta.clone(),
+            item_done.clone(),
+            item_done.clone(),
+            completed.clone()
+        ])
+        .is_err());
+        assert!(check(&[item_done.clone(), delta.clone(), completed.clone()]).is_err());
+        let wrong_done =
+            serde_json::json!({"type":"response.function_call_arguments.done","arguments":"{}"});
+        assert!(check(&[delta, wrong_done, item_done, completed]).is_err());
+    }
+    #[test]
+    fn probe_rejects_duplicate_arguments_and_mixed_stream_identity() {
+        let args = r#"{"command":"git log --oneline -8","cwd":"/tmp/llamancer-fixture"}"#;
+        let duplicate = r#"{"command":"wrong","command":"git log --oneline -8","cwd":"/tmp/llamancer-fixture"}"#;
+        let chat = |args: &str| serde_json::json!({"choices":[{"finish_reason":"tool_calls","message":{"tool_calls":[{"function":{"name":"shell","arguments":args}}]}}]});
+        assert!(validate_tool_probe(&chat(args)).is_ok());
+        assert!(validate_tool_probe(&chat(duplicate)).is_err());
+        let delta = serde_json::json!({"type":"response.function_call_arguments.delta","delta":args,"item_id":"call1","output_index":1});
+        let done = serde_json::json!({"type":"response.function_call_arguments.done","arguments":args,"item_id":"call1","output_index":1});
+        let completed = serde_json::json!({"type":"response.completed","response":{"status":"completed","output":[{"type":"reasoning"},{"type":"function_call","id":"call1","name":"shell","arguments":args}]}});
+        let check = |events: &[serde_json::Value]| {
+            let wire = events
+                .iter()
+                .map(|e| format!("data: {e}\n\n"))
+                .collect::<String>();
+            validate_responses_probe(wire.as_bytes())
+        };
+        assert!(check(&[delta.clone(), done.clone(), completed.clone()]).is_ok());
+        let mut wrong = done.clone();
+        wrong["item_id"] = "call2".into();
+        assert!(check(&[delta.clone(), wrong, completed.clone()]).is_err());
+        let mut wrong = done.clone();
+        wrong["output_index"] = 0.into();
+        assert!(check(&[delta.clone(), wrong, completed.clone()]).is_err());
+        assert!(check(&[done.clone(), delta.clone(), completed.clone()]).is_err());
+        assert!(check(&[delta.clone(), completed.clone(), done.clone()]).is_err());
+        let mut wrong = completed;
+        wrong["response"]["output"][1]["id"] = "call2".into();
+        assert!(check(&[delta, done, wrong]).is_err());
     }
     #[test]
     fn probe_rejects_corruption_and_truncation() {

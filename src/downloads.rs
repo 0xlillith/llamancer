@@ -1487,7 +1487,7 @@ impl Controller {
     }
     /// Select an exact managed shard path, never a fuzzy filename match.
     /// Audit the entire bundle only if every shard is complete and pinned.
-    pub fn verify_target(&mut self, path: &Path, strict: bool) -> io::Result<Vec<usize>> {
+    fn exact_bundle(&self, path: &Path) -> io::Result<Vec<usize>> {
         if !path.is_absolute() {
             return Err(io::Error::other("Use an absolute managed GGUF path"));
         }
@@ -1516,18 +1516,180 @@ impl Controller {
             .collect();
         if g.indices.len() as u64 != g.expected
             || names.len() != g.indices.len()
-            || !g.indices.iter().all(|&i| {
-                let item = &self.queue.items[i];
-                item.state == State::Complete && item.file.sha256.is_some()
-            })
+            || !g
+                .indices
+                .iter()
+                .all(|&i| self.queue.items[i].file.sha256.is_some())
         {
             return Err(io::Error::other(
-                "Every bundle shard must be complete, unique and SHA-256 pinned",
+                "Every bundle shard must be present, unique and SHA-256 pinned",
             ));
         }
-        self.begin_audit(g.indices.clone(), strict)?;
-        self.cursor = matches[0];
         Ok(g.indices)
+    }
+    pub fn verify_target(&mut self, path: &Path, strict: bool) -> io::Result<Vec<usize>> {
+        let indices = self.exact_bundle(path)?;
+        if !indices
+            .iter()
+            .all(|&i| self.queue.items[i].state == State::Complete)
+        {
+            return Err(io::Error::other("Every bundle shard must be complete"));
+        }
+        self.begin_audit(indices.clone(), strict)?;
+        self.cursor = indices[0];
+        Ok(indices)
+    }
+    /// Explicit offline recovery of complete staging files. Validate every
+    /// shard with independent reads before publishing any staged shard.
+    /// Hold the staging descriptors and locks throughout; never fetch data,
+    /// overwrite a final file or delete a failed partial.
+    pub fn recover_staged(
+        &mut self,
+        path: &Path,
+        rebind_device: bool,
+        cancel: &AtomicBool,
+        progress: &dyn Fn(&str, &str, u64, u64),
+    ) -> io::Result<usize> {
+        if self.busy() {
+            return Err(io::Error::other("Pause active transfer first"));
+        }
+        let indices = self.exact_bundle(path)?;
+        let mut prepared = Vec::new();
+        for &i in &indices {
+            let mut candidate = self.queue.items[i].clone();
+            let item = &mut candidate;
+            if item.state == State::Complete {
+                if let Err(e) = audit_item_progress(item, cancel, true, &|stage, n| {
+                    progress(&item.file.name, stage, n, item.file.size)
+                }) {
+                    if e.kind() != io::ErrorKind::Interrupted {
+                        self.queue.items[i].integrity_error = Some(e.to_string());
+                        self.queue.save(&self.path)?;
+                    }
+                    return Err(e);
+                }
+                continue;
+            }
+            if item.state == State::Quarantined || item.receipt.is_some() {
+                return Err(io::Error::other(
+                    "Restore quarantined or previously published files first",
+                ));
+            }
+            // Linux device numbers can be reassigned on reboot. A deliberate
+            // recovery may rebind only a pinned same-inode root, and only
+            // after strict validation of every staged part. Never rebind
+            // ownership receipts or a differently numbered inode.
+            if rebind_device {
+                let current =
+                    RootIdentity::from_metadata(&open_root(&item.root, None)?.metadata()?);
+                if item
+                    .root_identity
+                    .as_ref()
+                    .is_none_or(|old| old.inode != current.inode)
+                {
+                    return Err(io::Error::other(
+                        "Root inode changed; explicit device rebind refused",
+                    ));
+                }
+                item.root_identity = Some(current);
+            }
+            let dest = Destination::open(item)?;
+            match fs::symlink_metadata(dest.path()) {
+                Err(e) if e.kind() == io::ErrorKind::NotFound => (),
+                Ok(_) => {
+                    return Err(io::Error::other(
+                        "Final file exists; recovery never overwrites it",
+                    ))
+                }
+                Err(e) => return Err(e),
+            }
+            let partial = dest.partial();
+            let mut file = LockedPartial::new(
+                fs::OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+                    .open(&partial)?,
+            )?;
+            let before = file.metadata()?;
+            if !before.is_file() || before.nlink() != 1 || before.len() != item.file.size {
+                return Err(io::Error::other(
+                    "Recovery requires a complete, single-link staged file",
+                ));
+            }
+            file.sync_all()?;
+            let checked = (|| {
+                verify_file_progress(&mut file, item, cancel, &|n| {
+                    progress(&item.file.name, "Buffered SHA-256", n, item.file.size)
+                })?;
+                let digest = direct_digest(&partial, item, cancel, &|n| {
+                    progress(
+                        &item.file.name,
+                        "Independent direct SHA-256",
+                        n,
+                        item.file.size,
+                    )
+                })?;
+                if !item
+                    .file
+                    .sha256
+                    .as_ref()
+                    .is_some_and(|s| s.eq_ignore_ascii_case(&digest))
+                {
+                    return Err(io::Error::other(
+                        "Independent direct SHA-256 mismatch; staged file retained",
+                    ));
+                }
+                if !same_version(&before, &file.metadata()?)
+                    || !same_version(&before, &fs::symlink_metadata(&partial)?)
+                {
+                    return Err(io::Error::other("Staged file changed during verification"));
+                }
+                dest.check_visible()
+            })();
+            if let Err(e) = checked {
+                if e.kind() != io::ErrorKind::Interrupted {
+                    self.queue.items[i].integrity_error = Some(e.to_string());
+                    self.queue.items[i].error = Some(e.to_string());
+                    self.queue.items[i].state = State::Failed;
+                    self.queue.save(&self.path)?;
+                }
+                return Err(e);
+            }
+            prepared.push((i, dest, file, before, candidate.root_identity));
+        }
+        cancelled(cancel)?;
+        // Recheck all identities before any publication.
+        for (_, dest, file, before, _) in &prepared {
+            dest.check_visible()?;
+            if !same_version(before, &file.metadata()?)
+                || !same_version(before, &fs::symlink_metadata(dest.partial())?)
+            {
+                return Err(io::Error::other("Staged file changed before publication"));
+            }
+        }
+        let count = prepared.len();
+        for (i, dest, file, before, identity) in prepared {
+            if !same_version(&before, &file.metadata()?)
+                || !same_version(&before, &fs::symlink_metadata(dest.partial())?)
+            {
+                return Err(io::Error::other("Staged file changed before publication"));
+            }
+            dest.publish(&file)?;
+            let item = &mut self.queue.items[i];
+            item.root_identity = identity;
+            item.receipt = Some(Receipt::from_metadata(&file.metadata()?));
+            item.state = State::Complete;
+            item.error = None;
+            item.integrity_error = None;
+            item.last_bytes = Some(item.file.size);
+            self.queue.save(&self.path)?;
+        }
+        for i in indices {
+            self.queue.items[i].integrity_error = None;
+        }
+        self.queue.save(&self.path)?;
+        Ok(count)
     }
     /// Read-only auditing does not require an ownership receipt (unlike
     /// quarantine). Match every indexed file to its pinned queue entry.

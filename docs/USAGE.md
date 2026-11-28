@@ -1,6 +1,6 @@
 # Llamancer user guide
 
-This guide describes Llamancer v0.1.0-beta.5.
+This guide describes Llamancer v0.1.0-beta.6.
 Llamancer runs on Linux and manages local GGUF inference through llama.cpp.
 It is not a model trainer or a GPU driver installer.
 
@@ -61,6 +61,8 @@ attempted on mismatch when the filesystem supports them; a matching direct
 read alone does not override a failed buffered hash. Missing checksums
 cannot establish cryptographic integrity. The audit dashboard shows the part and byte progress of each read pass. Cancel with x. From a terminal, after closing the TUI or headless supervisor, run `llamancer verify` to check all completed managed parts with pinned hashes. Add `--strict` to require both buffered and independent direct reads, or `--model /absolute/path/to/managed-shard.gguf` to limit the audit to the complete associated bundle.
 
+For a complete set of pinned staging files, use `llamancer recover --model /absolute/path/to/managed-shard.gguf` to verify both read methods and publish without network traffic. Only use `--rebind-device` after independently confirming the same filesystem and root directory following device enumeration changes. Recovery does not overwrite any final model or discard a failed partial.
+
 ## 4. Configure and launch inference
 
 ![Launch](../assets/screenshots/workflow-launch.png)
@@ -79,7 +81,7 @@ unknown models inherit GGUF/backend defaults. The preview distinguishes
 recommended settings from explicit overrides, including the reviewed card revision. Advanced settings expose
 thinking effort and other optional parameters. Select the thinking mode
 appropriate to the model and task; a successful synthetic tool-call probe
-does not establish reliable tool use for every prompt.
+does not establish reliable tool use for every prompt. The Responses probe also recognizes corroborated function output-item completion from llama.cpp; missing or inconsistent confirmation, duplicate argument keys and mixed calls fail the probe.
 
 Choose **Run model + open coding agent** (or Enter on that action) to start
 inference and wait for readiness before opening a separate Kitty window.
