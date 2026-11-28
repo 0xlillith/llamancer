@@ -35,7 +35,7 @@ jobs:
           # Use the exact checked-out revision rather than cloning a different main.
           git clone --no-hardlinks "$GITHUB_WORKSPACE" /home/builder/source
           git -C /home/builder/source checkout --detach "$(git rev-parse HEAD)"
-          sed -i 's|llamancer::git+https://github.com/0xlillith/llamancer.git|llamancer::git+file:///home/builder/source#commit='"$(git rev-parse HEAD)"'|' /home/builder/pkg/PKGBUILD
+          sed -i 's|llamancer::git+https://github.com/selun3/llamancer.git|llamancer::git+file:///home/builder/source#commit='"$(git rev-parse HEAD)"'|' /home/builder/pkg/PKGBUILD
           chown -R builder:builder /home/builder
           runuser -u builder -- bash -c 'cd /home/builder/pkg && makepkg --noconfirm --syncdeps'
           # Minimal Arch container images may suppress documentation extraction.

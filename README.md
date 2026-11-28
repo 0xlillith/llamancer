@@ -6,9 +6,9 @@
 
 *Summon your models.*
 
-[![CI](https://github.com/0xlillith/llamancer/actions/workflows/ci.yml/badge.svg)](https://github.com/0xlillith/llamancer/actions/workflows/ci.yml)
+[![CI](https://github.com/selun3/llamancer/actions/workflows/ci.yml/badge.svg)](https://github.com/selun3/llamancer/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-bd93f9.svg)](LICENSE)
-[![Beta: 0.1.0-beta.5](https://img.shields.io/badge/beta-0.1.0--beta.5-bd93f9)](https://github.com/0xlillith/llamancer/releases/tag/v0.1.0-beta.5)
+[![Beta: 0.1.0-beta.5](https://img.shields.io/badge/beta-0.1.0--beta.5-bd93f9)](https://github.com/selun3/llamancer/releases/tag/v0.1.0-beta.5)
 
 **A lightweight Rust TUI for llama.cpp model and inference management.**
 **OMP-first. Not OMP-only.**
@@ -48,7 +48,7 @@ Real terminal captures of the model-first interface introduced in beta.5 (captur
 Requirements: Linux, a terminal, Rust 1.88 or newer to build from source, and a compatible llama-server for inference (installed through Backend Manager or separately). OMP or Pi is optional. Install external software from its official source; Llamancer does not install or upgrade it.
 
 ```sh
-git clone https://github.com/0xlillith/llamancer.git
+git clone https://github.com/selun3/llamancer.git
 cd llamancer
 cargo run --locked --release
 ```
@@ -63,7 +63,7 @@ Keyless OMP launches use the documented LLAMA_CPP_BASE_URL runtime override; che
 
 ## Installation packages
 
-Beta packages are available for Linux x86_64 and aarch64 on the [GitHub release page](https://github.com/0xlillith/llamancer/releases/tag/v0.1.0-beta.5). Download the matching archive and its SHA-256 file, then run:
+Beta packages are available for Linux x86_64 and aarch64 on the [GitHub release page](https://github.com/selun3/llamancer/releases/tag/v0.1.0-beta.5). Download the matching archive and its SHA-256 file, then run:
 
 ```sh
 # Choose x86_64 or aarch64 to match uname -m

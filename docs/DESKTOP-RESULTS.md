@@ -73,13 +73,13 @@ OMP 19.2.0 and isolated Pi 1.6.0 (Node 22.23.2) passed authenticated streaming, 
 
 The same checksum-pinned SmolVLM-256M and projector used by CPU CI passed actual single-model and router image inference on both Vulkan0 and ROCm0, using official managed b12726, context 4096 and 99 requested GPU layers. All four runs returned "The image is red." See branch test/desktop-gpu-vision for the reproducible opt-in GPU test. Exact vision-tensor placement is not independently measured.
 
-The pinned source helper on branch feature/pinned-source-build fetched official commit 81ff0cab06cf97b445c647d278594c7f97b39740 and built native CPU and gfx1201 ROCm versions on Andromeda. Both passed authenticated single-model/router inference after removal of the intermediate build tree. At this stage Vulkan source compilation was blocked by missing development headers; subsequent [PR #58](https://github.com/0xlillith/llamancer/pull/58) verified a private SDK-prefix build and authenticated single/router inference with Vulkan0, without sudo or global header installation. Managed archive Vulkan inference also remains verified.
+The pinned source helper on branch feature/pinned-source-build fetched official commit 81ff0cab06cf97b445c647d278594c7f97b39740 and built native CPU and gfx1201 ROCm versions on Andromeda. Both passed authenticated single-model/router inference after removal of the intermediate build tree. At this stage Vulkan source compilation was blocked by missing development headers; subsequent [PR #58](https://github.com/selun3/llamancer/pull/58) verified a private SDK-prefix build and authenticated single/router inference with Vulkan0, without sudo or global header installation. Managed archive Vulkan inference also remains verified.
 
 Read-only upstream release discovery on branch feature/backend-update-check identified b12728 prerelease CPU/Vulkan/ROCm assets with published SHA-256 digests; no unreviewed archive was installed.
 
 Manual dependency inventory review: 174/177 external packages in the conservative all-target locked graph had discovered source notices. Both Linux target graphs contain 159 packages including Llamancer, and every external package in each has a discovered notice. The three missing all-target notices (r-efi 6.0.0, winapi-i686-pc-windows-gnu 0.4.0 and winapi-x86_64-pc-windows-gnu 0.4.0) are outside both Linux graphs. Ring's original Apache/ISC/BoringSSL and other notices, Unicode data notices and CDLA-Permissive webpki-roots texts are retained by the existing release collector. This is inventory evidence, not final legal certification or a comprehensive security audit.
 
-Agent follow-up: Pi passed one constrained-system-prompt read-tool exact-marker test, but a later randomized fixture failed. Both agents independently executed the tool and transported the actual result. These exact-marker trials were unreliable. Later [PR #53](https://github.com/0xlillith/llamancer/pull/53) passed two independent randomized seven-word read-tool trials per agent, requiring the actual tool result and exact answer; arbitrary model/tool fidelity remains unguaranteed.
+Agent follow-up: Pi passed one constrained-system-prompt read-tool exact-marker test, but a later randomized fixture failed. Both agents independently executed the tool and transported the actual result. These exact-marker trials were unreliable. Later [PR #53](https://github.com/selun3/llamancer/pull/53) passed two independent randomized seven-word read-tool trials per agent, requiring the actual tool result and exact answer; arbitrary model/tool fidelity remains unguaranteed.
 
 ## Existing agent configuration and ordinary exit
 
@@ -89,7 +89,7 @@ Reproduce with `python3 tests/agent_kitty_live.py target/release/llamancer /path
 
 ## Authenticated profile isolation and terminal shutdown
 
-[PR #60](https://github.com/0xlillith/llamancer/pull/60) verified owned server cleanup when a real controlling PTY closes and on explicit SIGTERM/SIGHUP. [PR #61](https://github.com/0xlillith/llamancer/pull/61) verified an authenticated OMP graphical session with a stale synthetic stored provider and broker: a real ROCm Qwen3-4B response, normal exit, unchanged stored provider, and no remaining scoped daemon. The private profile is not a sandbox for agent or project code. No personal configuration compatibility is claimed.
+[PR #60](https://github.com/selun3/llamancer/pull/60) verified owned server cleanup when a real controlling PTY closes and on explicit SIGTERM/SIGHUP. [PR #61](https://github.com/selun3/llamancer/pull/61) verified an authenticated OMP graphical session with a stale synthetic stored provider and broker: a real ROCm Qwen3-4B response, normal exit, unchanged stored provider, and no remaining scoped daemon. The private profile is not a sandbox for agent or project code. No personal configuration compatibility is claimed.
 
 
 ## Workspace and backend expansion
