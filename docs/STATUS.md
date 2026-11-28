@@ -1,6 +1,6 @@
 # Development status
 
-The current Linux beta is v0.1.0-beta.5, not a production-ready claim.
+The current Linux beta is v0.1.0-beta.6, not a production-ready claim.
 
 | Area | Implemented and validated | Outstanding release evidence |
 | --- | --- | --- |
@@ -10,6 +10,12 @@ The current Linux beta is v0.1.0-beta.5, not a production-ready claim.
 | Hub | Public and authorized gated checksum/index verification, real multi-root pause/resume, pinned directory identity, scoped credential discovery, quarantine and restore | Broader private-repository configurations |
 | Agents | Real OMP/Pi read-tool execution, graphical normal exit, configured-default precedence, scoped authenticated OMP profile/daemon, custom Kitty launch | Broader versions, arbitrary project extensions and model-specific fidelity |
 | Release | Native x86_64/aarch64, Rust 1.88, Arch packaging, checksum archives and current RustSec audit | Broader hardware and distribution compatibility; registry publication |
+
+## Beta.6 scope
+
+Offline recovery validates every pinned complete staged shard using independent buffered and direct reads before publication, with explicit same-inode device-number rebind. Tool preflight rejects duplicate JSON keys, mixed SSE identities and out-of-order completions; it accepts corroborated output-item completion from llama.cpp without claiming full protocol conformance, and remains diagnostic rather than a guarantee.
+
+The original pinned DavidAU IQ3_S bundle (83,617,879,456 bytes) was successfully recovered on the desktop on 2026-11-28 after both buffered and direct SHA-256 matched the authoritative hashes for both shards. The new recovery command recorded ownership receipts, with no redownload or overwrite. A bounded 8192-context ROCm b12726 server reproduced the original synthetic Chat Completions test with valid arguments in both recommended thinking and original non-thinking greedy modes. The initial Responses diagnostic isolated a missing argument-specific completion event: the function output-item completion, streamed bytes and final arguments agreed. The parser now tests this corroborated format. This is not a claim of universal model reliability or a hardware stability certification.
 
 ## Beta.5 scope
 

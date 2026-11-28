@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.0-beta.6 — 2026-11-28
+
+- Offline recovery of complete SHA-256-pinned staging bundles, requiring both buffered and independent direct reads before any staged part is published.
+- Explicit same-inode device-number rebind for recovered staging files after Linux disk enumeration changes; no automatic rebind or overwrite.
+- Reject duplicate tool argument keys, mixed Responses SSE call identities/indices and out-of-order argument completion in diagnostic tool probes; accept corroborated output-item completion from llama.cpp when its identity, stream and final arguments all agree.
+- Updated canonical GitHub repository references after the account rename.
+
 ## 0.1.0-beta.5 — 2026-11-26
 
 - Strict dual-read SHA-256 audits with exact managed-bundle selection via CLI.

@@ -1,11 +1,11 @@
 # Screenshot gallery — model-first workflow
 
 These seven images are rasterized from real Kitty terminal cell captures of the
-development build following beta.4. The Andromeda theme and optional Nerd Font
+v0.1.0-beta.6 release candidate. The Andromeda theme and optional Nerd Font
 icons are enabled. Public GGUF fixtures, a public Hugging Face repository,
 temporary project folders and an isolated loopback inference session were used.
 No personal configuration, private project contents, or credentials are included.
-The version in the header is the development package version, not a new release.
+The version in the header is v0.1.0-beta.6. The Server capture shows a real bounded CPU inference session with a public Qwen3-0.6B fixture.
 
 | Screen | Capture |
 | --- | --- |

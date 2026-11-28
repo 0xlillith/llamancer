@@ -114,3 +114,97 @@ fn verify_exact_target_audits_all_shards_without_touching_other_models() {
         assert_eq!(fs::read(path).unwrap(), b"badbad");
     }
 }
+
+#[test]
+fn recover_refuses_bad_bundle_without_publishing_verified_sibling() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("models");
+    fs::create_dir(&root).unwrap();
+    let cfg = tmp.path().join("config/llamancer");
+    fs::create_dir_all(&cfg).unwrap();
+    let queue = cfg.join("downloads.toml");
+    let good = vec![17u8; 4096];
+    let files: Vec<_> = (1..=2)
+        .map(|i| File {
+            repo: "owner/model".into(),
+            revision: "a".repeat(40),
+            name: format!("test-{i:05}-of-00002.gguf"),
+            size: good.len() as u64,
+            sha256: Some(format!("{:x}", Sha256::digest(&good))),
+        })
+        .collect();
+    let paths: Vec<_> = files
+        .iter()
+        .map(|f| root.join(&f.repo).join(&f.revision).join(&f.name))
+        .collect();
+    let parts: Vec<_> = paths
+        .iter()
+        .map(|p| p.with_file_name(format!("{}.part", p.file_name().unwrap().to_str().unwrap())))
+        .collect();
+    fs::create_dir_all(paths[0].parent().unwrap()).unwrap();
+    fs::write(&parts[0], &good).unwrap();
+    fs::write(&parts[1], vec![19u8; 4096]).unwrap();
+    let mut d = Controller::new(queue.clone()).unwrap();
+    d.add(files, root).unwrap();
+    let run = || {
+        Command::new(env!("CARGO_BIN_EXE_llamancer"))
+            .args(["recover", "--model"])
+            .arg(&paths[0])
+            .env("XDG_CONFIG_HOME", cfg.parent().unwrap())
+            .output()
+            .unwrap()
+    };
+    let out = run();
+    assert!(!out.status.success());
+    assert!(paths.iter().all(|p| !p.exists()));
+    assert_eq!(fs::read(&parts[0]).unwrap(), good);
+    assert_eq!(fs::read(&parts[1]).unwrap(), vec![19u8; 4096]);
+    fs::write(&parts[1], &good).unwrap();
+    let mut saved: toml::Value = toml::from_str(&fs::read_to_string(&queue).unwrap()).unwrap();
+    let items = saved["items"].as_array_mut().unwrap();
+    for item in items {
+        item["root_identity"]["device"] = toml::Value::String("0".into());
+    }
+    fs::write(&queue, toml::to_string(&saved).unwrap()).unwrap();
+    let denied = run();
+    assert!(!denied.status.success());
+    assert!(String::from_utf8_lossy(&denied.stderr).contains("root was replaced"));
+    assert!(paths.iter().all(|p| !p.exists()));
+    let run_rebind = || {
+        Command::new(env!("CARGO_BIN_EXE_llamancer"))
+            .args(["recover", "--model"])
+            .arg(&paths[0])
+            .arg("--rebind-device")
+            .env("XDG_CONFIG_HOME", cfg.parent().unwrap())
+            .output()
+            .unwrap()
+    };
+    let mut wrong = saved.clone();
+    wrong["items"].as_array_mut().unwrap()[0]["root_identity"]["inode"] =
+        toml::Value::String("0".into());
+    fs::write(&queue, toml::to_string(&wrong).unwrap()).unwrap();
+    assert!(!run_rebind().status.success());
+    assert!(paths.iter().all(|p| !p.exists()));
+    fs::write(&queue, toml::to_string(&saved).unwrap()).unwrap();
+    let out = run_rebind();
+    // Strict O_DIRECT is intentionally not available on every filesystem.
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            err.contains("Invalid argument") || err.contains("not supported"),
+            "{out:?}"
+        );
+        assert!(paths.iter().all(|p| !p.exists()));
+        return;
+    }
+    assert!(String::from_utf8_lossy(&out.stdout).contains("2 staged parts"));
+    let q = Queue::load(&queue).unwrap();
+    assert!(q
+        .items
+        .iter()
+        .all(|i| i.state == State::Complete && i.receipt.is_some() && i.integrity_error.is_none()));
+    for p in &paths {
+        assert_eq!(fs::read(p).unwrap(), good);
+    }
+    assert!(parts.iter().all(|p| !p.exists()));
+}

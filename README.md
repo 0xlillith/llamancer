@@ -8,7 +8,7 @@
 
 [![CI](https://github.com/selun3/llamancer/actions/workflows/ci.yml/badge.svg)](https://github.com/selun3/llamancer/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-bd93f9.svg)](LICENSE)
-[![Beta: 0.1.0-beta.5](https://img.shields.io/badge/beta-0.1.0--beta.5-bd93f9)](https://github.com/selun3/llamancer/releases/tag/v0.1.0-beta.5)
+[![Beta: 0.1.0-beta.6](https://img.shields.io/badge/beta-0.1.0--beta.6-bd93f9)](https://github.com/selun3/llamancer/releases/tag/v0.1.0-beta.6)
 
 **A lightweight Rust TUI for llama.cpp model and inference management.**
 **OMP-first. Not OMP-only.**
@@ -19,7 +19,7 @@ Llamancer brings local GGUF model discovery, inference preferences, server contr
 
 ## Status
 
-Linux beta: 0.1.0-beta.5. See [the illustrated user guide](docs/USAGE.md) for the model-first workflow. Native Linux x86_64 and aarch64 CI, managed CPU text/vision inference, checksum-verified public and authorized gated Hub downloads, systemd lifecycle, Arch package installation, AMD Vulkan/ROCm text and vision inference, pinned CPU/Vulkan/ROCm source builds, real OMP/Pi tool use and graphical agent exit have passed their documented acceptance tests. Authenticated OMP uses an isolated temporary profile. No general model compatibility, comprehensive security audit or stable-release certification is implied. See [verified status](docs/STATUS.md), [desktop results](docs/DESKTOP-RESULTS.md) and [release review](docs/BETA-REVIEW.md).
+Linux beta: 0.1.0-beta.6. See [the illustrated user guide](docs/USAGE.md) for the model-first workflow. Native Linux x86_64 and aarch64 CI, managed CPU text/vision inference, checksum-verified public and authorized gated Hub downloads, systemd lifecycle, Arch package installation, AMD Vulkan/ROCm text and vision inference, pinned CPU/Vulkan/ROCm source builds, real OMP/Pi tool use and graphical agent exit have passed their documented acceptance tests. Authenticated OMP uses an isolated temporary profile. No general model compatibility, comprehensive security audit or stable-release certification is implied. See [verified status](docs/STATUS.md), [desktop results](docs/DESKTOP-RESULTS.md) and [release review](docs/BETA-REVIEW.md).
 
 | Workspace | Current functionality |
 | --- | --- |
@@ -31,7 +31,7 @@ Linux beta: 0.1.0-beta.5. See [the illustrated user guide](docs/USAGE.md) for th
 
 ## Screenshots
 
-Real terminal captures of the model-first interface introduced in beta.5 (captured before the version bump) (Andromeda theme, optional Nerd Font icons). See the [illustrated user guide](docs/USAGE.md) for the full workflow.
+Real terminal captures of beta.6 (Andromeda theme, optional Nerd Font icons). See the [illustrated user guide](docs/USAGE.md) for the full workflow.
 
 ![Library: indexed models and metadata](assets/screenshots/workflow-library.png)
 
@@ -63,7 +63,7 @@ Keyless OMP launches use the documented LLAMA_CPP_BASE_URL runtime override; che
 
 ## Installation packages
 
-Beta packages are available for Linux x86_64 and aarch64 on the [GitHub release page](https://github.com/selun3/llamancer/releases/tag/v0.1.0-beta.5). Download the matching archive and its SHA-256 file, then run:
+Beta packages are available for Linux x86_64 and aarch64 on the [GitHub release page](https://github.com/selun3/llamancer/releases/tag/v0.1.0-beta.6). Download the matching archive and its SHA-256 file, then run:
 
 ```sh
 # Choose x86_64 or aarch64 to match uname -m
@@ -223,7 +223,7 @@ Local TOML settings and download queues are bounded to 16 MiB; custom themes to 
 
 ### Agent tool compatibility and reasoning
 
-In Library's Launch model menu, OMP thinking can be inherited or set per model. The setting becomes an explicit OMP `--thinking` argument; other agents do not receive this flag. The optional Tool compatibility preflight sends a fixed synthetic two-tool request to the ready local server before the Library's combined model/agent launch. It never runs commands, opens files or sends project content. OMP uses the Responses SSE probe, other agents use Chat Completions; the test checks the exact tool name and arguments, including completion and streamed argument consistency. A failure or rejected request requires explicit Enter to continue or Esc to cancel opening the agent. It is a diagnostic, not a guarantee or a sandbox, and uses a bounded synthetic request using effective server sampling rather than the full coding-agent prompt. Results are scoped to that launch, not reused after model or backend changes. The separate advanced Server agent shortcut does not run this opt-in preflight.
+In Library's Launch model menu, OMP thinking can be inherited or set per model. The setting becomes an explicit OMP `--thinking` argument; other agents do not receive this flag. The optional Tool compatibility preflight sends a fixed synthetic two-tool request to the ready local server before the Library's combined model/agent launch. It never runs commands, opens files or sends project content. OMP uses the Responses SSE probe, other agents use Chat Completions; the test checks the exact tool name and arguments, including completion and streamed argument consistency. For compatible llama.cpp Responses implementations that omit the argument-specific done event, a matching function output-item completion is accepted only when its item identity, call ID, index, name, streamed bytes and final arguments agree. Duplicate JSON fields and mixed tool streams are rejected. A failure or rejected request requires explicit Enter to continue or Esc to cancel opening the agent. It is a diagnostic, not a guarantee or a sandbox, and uses a bounded synthetic request using effective server sampling rather than the full coding-agent prompt. Results are scoped to that launch, not reused after model or backend changes. The separate advanced Server agent shortcut does not run this opt-in preflight.
 
 Reviewed model-card defaults are resolved per model and reasoning mode (see Model-aware inference defaults below). Explicit overrides are preserved. Changing engine or sampler preferences restarts a managed single model on confirmed relaunch; router changes require restart.
 
@@ -310,3 +310,10 @@ before running this command. The supervisor and TUI both exclude known suspect
 models from managed inference and share the configuration session lock.
 
 For host-integrity investigations, use `llamancer verify --strict` to require both buffered and independent direct SHA-256 reads, even if the first matches. Use `--model /absolute/path/to/a-managed-shard.gguf` to audit just that complete pinned bundle. Strict mode records an inconclusive direct-read failure rather than certifying a file it could not independently read. A filesystem without direct-I/O support may fail strict verification; ordinary verification remains available, but prior inconsistent reads still require successful independent revalidation. Verification never repairs or replaces model bytes.
+
+
+### Offline recovery of completed partials
+
+After closing the TUI and managed server, use `llamancer recover --model /absolute/path/to/managed-shard.gguf` when every missing shard is already staged as its exact `.gguf.part` filename in the pinned managed destination. No network transfer is performed. Every part must have an authoritative SHA-256; buffered and direct reads must both match before any staged shard is published. Invalid files are retained and no final file is overwritten. The command records normal ownership receipts on successful publication.
+
+If Linux has reassigned a device number after reboot, and you have independently confirmed the same filesystem and directory, append `--rebind-device`. The root inode must still match, and only the selected staged parts are rebound following successful verification. This does not rebind existing ownership receipts or authorize a different directory. Direct I/O support is required. Use `verify --strict --model ...` for read-only revalidation. Stop inference before recovery.

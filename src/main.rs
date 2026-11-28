@@ -312,11 +312,59 @@ fn verify_cli(mut args: impl Iterator<Item = std::ffi::OsString>) -> io::Result<
         _ => Err(io::Error::other("Integrity audit incomplete or failed")),
     }
 }
+fn recover_cli(mut args: impl Iterator<Item = std::ffi::OsString>) -> io::Result<()> {
+    if args.next().as_deref() != Some(std::ffi::OsStr::new("--model")) {
+        return Err(io::Error::other(
+            "Usage: llamancer recover --model ABSOLUTE_GGUF_PATH [--rebind-device]",
+        ));
+    }
+    let path = std::path::PathBuf::from(
+        args.next()
+            .ok_or_else(|| io::Error::other("Missing model path"))?,
+    );
+    let rebind_device = match args.next() {
+        None => false,
+        Some(flag) if flag == "--rebind-device" => true,
+        _ => return Err(io::Error::other("Unknown recovery flag")),
+    };
+    if args.next().is_some() || !path.is_absolute() {
+        return Err(io::Error::other(
+            "Use exactly one absolute managed GGUF path",
+        ));
+    }
+    let root = llamancer::config::config_dir()?;
+    let _lock = llamancer::diagnostics::SessionLock::acquire(&root)?;
+    let mut d = llamancer::downloads::Controller::new(root.join("downloads.toml"))?;
+    let cancel = Arc::new(AtomicBool::new(false));
+    for signal in [libc::SIGINT, libc::SIGTERM, libc::SIGHUP] {
+        signal_hook::flag::register(signal, Arc::clone(&cancel))?;
+    }
+    let last = std::cell::Cell::new(Instant::now() - Duration::from_secs(2));
+    let count = d.recover_staged(
+        &path,
+        rebind_device,
+        &cancel,
+        &|name, stage, bytes, total| {
+            if last.get().elapsed() >= Duration::from_secs(1) || bytes == total {
+                eprintln!(
+                    "{}: {stage} — {bytes} / {total}",
+                    name.chars().filter(|c| !c.is_control()).collect::<String>()
+                );
+                last.set(Instant::now());
+            }
+        },
+    )?;
+    println!("Offline recovery: {count} staged parts verified and published");
+    Ok(())
+}
 fn main() -> io::Result<()> {
     let mut args = std::env::args_os().skip(1);
     if let Some(arg) = args.next() {
         if arg == "backend" {
             return backend_cli(args);
+        }
+        if arg == "recover" {
+            return recover_cli(args);
         }
         if arg == "verify" {
             return verify_cli(args);
@@ -335,7 +383,7 @@ fn main() -> io::Result<()> {
                 return Ok(());
             }
             Some("--help" | "-h") => {
-                println!("Llamancer — Summon your models.\n\nUsage: llamancer [serve|backend|doctor|verify|--help|--version]\n  serve   Supervise a local router without a TUI\n  doctor  Check local setup offline without exposing paths or tokens\n  verify [--strict] [--model ABSOLUTE_GGUF_PATH]\n          Audit completed managed parts; strict requires independent direct reads\n  backend list | check | install KIND [VERSION] | probe KIND [VERSION]");
+                println!("Llamancer — Summon your models.\n\nUsage: llamancer [serve|backend|doctor|verify|recover|--help|--version]\n  serve   Supervise a local router without a TUI\n  doctor  Check local setup offline without exposing paths or tokens\n  verify [--strict] [--model ABSOLUTE_GGUF_PATH]\n          Audit completed managed parts; strict requires independent direct reads\n  recover --model ABSOLUTE_GGUF_PATH [--rebind-device]\n          Offline dual-read verification and publication of complete .part files\n  backend list | check | install KIND [VERSION] | probe KIND [VERSION]");
                 return Ok(());
             }
             _ => {

@@ -612,7 +612,7 @@ checksum = "02b614978e47ce529faee66579f2b2fe19c94aa96d910a6a9a8043b2b02d8175"
 
 [[package]]
 name = "llamancer"
-version = "0.1.0-beta.5"
+version = "0.1.0-beta.6"
 dependencies = [
  "crossterm",
  "flate2",
