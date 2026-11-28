@@ -393,29 +393,39 @@ mod tests {
         item.receipt = Some(Receipt::from_metadata(&fs::metadata(&path).unwrap()));
         (item, path)
     }
-    fn endpoint() -> String {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        format!("http://{}", listener.local_addr().unwrap())
-    }
+    // Let the actual guard take a fresh ephemeral port when it binds.
+    const EPHEMERAL_ENDPOINT: &str = "http://127.0.0.1:0";
     #[test]
     fn refuses_unowned_open_and_conflicting_files() {
         let root = tempfile::tempdir().unwrap();
         let (item, path) = fixture(root.path());
         let mut unowned = item.clone();
         unowned.receipt = None;
-        assert!(move_items(vec![unowned], false, &endpoint(), &AtomicBool::new(false)).is_err());
+        assert!(move_items(
+            vec![unowned],
+            false,
+            EPHEMERAL_ENDPOINT,
+            &AtomicBool::new(false)
+        )
+        .is_err());
         let open = File::open(&path).unwrap();
         assert!(move_items(
             vec![item.clone()],
             false,
-            &endpoint(),
+            EPHEMERAL_ENDPOINT,
             &AtomicBool::new(false)
         )
         .is_err());
         drop(open);
         let trash = path.with_file_name(quarantine_name("model.gguf"));
         fs::write(&trash, b"external").unwrap();
-        assert!(move_items(vec![item], false, &endpoint(), &AtomicBool::new(false)).is_err());
+        assert!(move_items(
+            vec![item],
+            false,
+            EPHEMERAL_ENDPOINT,
+            &AtomicBool::new(false)
+        )
+        .is_err());
         assert_eq!(fs::read(path).unwrap(), b"abcdef");
         assert_eq!(fs::read(trash).unwrap(), b"external");
     }
@@ -500,7 +510,7 @@ mod tests {
             Some(move_items(
                 vec![item],
                 false,
-                &endpoint(),
+                EPHEMERAL_ENDPOINT,
                 &AtomicBool::new(false),
             ))
         } else {
@@ -529,7 +539,12 @@ mod tests {
         };
         assert_ne!(mapping, libc::MAP_FAILED);
         drop(file);
-        let result = move_items(vec![item], false, &endpoint(), &AtomicBool::new(false));
+        let result = move_items(
+            vec![item],
+            false,
+            EPHEMERAL_ENDPOINT,
+            &AtomicBool::new(false),
+        );
         // SAFETY: mapping was successfully created above and has not been unmapped.
         assert_eq!(unsafe { libc::munmap(mapping, 6) }, 0);
         assert!(result.is_err());
@@ -549,7 +564,13 @@ mod tests {
         .is_err());
         drop(listener);
         fs::write(&path, b"change").unwrap();
-        assert!(move_items(vec![item], false, &endpoint(), &AtomicBool::new(false)).is_err());
+        assert!(move_items(
+            vec![item],
+            false,
+            EPHEMERAL_ENDPOINT,
+            &AtomicBool::new(false)
+        )
+        .is_err());
         assert_eq!(fs::read(path).unwrap(), b"change");
     }
     #[test]
@@ -558,7 +579,7 @@ mod tests {
         let (mut item, path) = fixture(root.path());
         let trash = path.with_file_name(quarantine_name("model.gguf"));
         let cancel = AtomicBool::new(false);
-        move_items(vec![item.clone()], false, &endpoint(), &cancel).unwrap();
+        move_items(vec![item.clone()], false, EPHEMERAL_ENDPOINT, &cancel).unwrap();
         assert!(!path.exists());
         assert_eq!(fs::read(&trash).unwrap(), b"abcdef");
         // The queue may still say Complete after a crash; loading reconciles it.
@@ -573,7 +594,7 @@ mod tests {
             .items
             .remove(0);
         assert_eq!(item.state, State::Quarantined);
-        move_items(vec![item.clone()], true, &endpoint(), &cancel).unwrap();
+        move_items(vec![item.clone()], true, EPHEMERAL_ENDPOINT, &cancel).unwrap();
         reconcile(&mut item);
         assert_eq!(item.state, State::Complete);
         assert!(!trash.exists());
