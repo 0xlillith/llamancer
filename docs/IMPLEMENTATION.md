@@ -11,7 +11,7 @@ Define stable model IDs, source roots, canonical paths and metadata. Scan recurs
 Acceptance: fixtures cover malformed/truncated headers, duplicate paths, multipart gaps, read-only roots and safe removal.
 
 ## Phase 2 — Inference
-Probe installed llama-server version/help and documented API; pin compatibility fixtures. Implement external attach, owned child process and optional systemd user service. External servers are never stopped implicitly. Bind loopback by default; validate endpoint and redact credentials. Independent server/model state machines, health polling with backoff, timeouts, bounded logs, graceful stop and explicit restart. Discover CPU/Vulkan/ROCm/CUDA builds without installing drivers. Translate profiles only to supported flags; router load/unload/switch only when supported. Expose web UI and btop launch.
+Probe installed llama-server version/help and documented API; pin compatibility fixtures. Implement external attach, owned child process and optional systemd user service. External servers are never stopped implicitly. Bind loopback by default; validate endpoint and redact credentials. Independent server/model state machines, health polling with backoff, timeouts, bounded logs, graceful stop and explicit restart. Discover CPU and AMD Vulkan/ROCm builds without installing drivers. Translate profiles only to supported flags; router load/unload/switch only when supported. Expose web UI and btop launch.
 Acceptance: mock HTTP tests and real small-GGUF smoke tests, model switching, failure recovery, external ownership safety. Benchmark AMD backends on Andromeda.
 
 ## Phase 3 — Discovery and downloads

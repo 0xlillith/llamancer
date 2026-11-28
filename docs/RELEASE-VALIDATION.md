@@ -19,7 +19,7 @@ The Dependency audit workflow inventories license metadata and uses RustSec carg
 
 The completed CPU-side gates include isolated Arch x86_64 package installation, an actual ARM64 systemd user-service lifecycle, recoverable quarantine safety tests, and real single-model/router multimodal CPU inference. Installed-agent protocol tests cover authenticated streaming and a read-tool round trip using controlled responses. See [development status](STATUS.md) for the linked evidence and limits.
 
-The first beta has documented acceptance for the actual CachyOS desktop, managed AMD Vulkan/ROCm, Qwen architecture and measured KV overhead, authorized gated access, real model-selected OMP/Pi tools and graphical Kitty integration. See the [beta review](BETA-REVIEW.md) for the latest combined native and license review. A stable tag requires broader real-world coverage; CI alone is not a stable-release guarantee.
+The first beta has documented acceptance for the actual CachyOS desktop, managed AMD Vulkan/ROCm, Qwen architecture and measured KV overhead, authorized gated access, real model-selected OMP/Pi tools and graphical Kitty integration. See the [current release status](STATUS.md) for the Andromeda validation of v0.1.0 and the [beta review](BETA-REVIEW.md) for earlier evidence.
 
 Use the [desktop acceptance runbook](DESKTOP-ACCEPTANCE.md) to execute the remaining gates. Distribution archives include original third-party Cargo notices and a conservative all-target inventory; missing or incomplete notices still require review before publishing.
 

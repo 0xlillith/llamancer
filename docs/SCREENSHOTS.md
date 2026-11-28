@@ -116,7 +116,7 @@ A real managed Vulkan router, with Qwen2.5 loaded and three other indexed models
 
 ## Refreshed terminal interface
 
-These six images are rasterizations of actual Kitty ANSI buffers from the updated application on Andromeda. The demo used temporary public model copies and synthetic workspace directories. Benchmark results are actual measurements; CUDA was not measured.
+These six images are rasterizations of actual Kitty ANSI buffers from the updated application on Andromeda. The demo used temporary public model copies and synthetic workspace directories. Benchmark results are actual measurements for the tested backends.
 
 ### Andromeda
 

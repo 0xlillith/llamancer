@@ -43,7 +43,7 @@ def main():
                 settle()
             raise AssertionError(f"server did not report context {n}: {str(last)[:300]}\n"+"\n".join("".join(r) for r in screen.rows))
         try:
-            wait("Scan complete");click("Run model");wait("Launch model")
+            wait("Scan complete");click("Indexed", double=True);wait("Launch model")
             assert "Advanced settings" in "\n".join("".join(r) for r in screen.rows)
             click("Presets");wait("Context size (tokens)");click("Custom value");send(b"4096\r")
             wait("Context for this model: 4096")
@@ -63,7 +63,7 @@ def main():
             send(b"2");click("Sort:");wait("Sort by");send(b"\x1b")
             click("Filters");wait("Filter models");click("Quantization");wait("Quantization (repository variants)");send(b"\x1b")
             send(b"\t");os.write(m,b"q");read_until(m,p,b"\x1b[?1049l");assert p.wait(timeout=10)==0
-            print("Mouse launch, presets, context restart (actual API context), stop, theme and discovery selectors passed.")
+            print("Library row double-click, launch, presets, context restart (actual API context), stop, theme and discovery selectors passed.")
         finally:
             if p.poll() is None:p.terminate();p.wait(timeout=20)
             os.close(m);os.close(s)

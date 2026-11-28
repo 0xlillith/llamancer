@@ -55,7 +55,7 @@ cargo run --locked --release
 ```
 
 1. Press G for guided setup; confirm a model directory and use B to select a backend.
-2. Open Discover (2), type a query and press Enter. Open a repository, select a model variant and confirm its download destination once. All shards download automatically and the Library refreshes when complete. For existing models, open Library (1), inspect with Enter and edit the inference profile with p.
+2. Open Discover (2), type a query and press Enter. Open a repository, select a model variant and confirm its download destination once. All shards download automatically and the Library refreshes when complete. for existing models, open Library (1), inspect with j and edit the inference profile with p.
 3. Select a complete model in Library and press Enter twice (or double-click, then click **Run model + open coding agent**). Llamancer starts inference, waits for readiness and opens the configured agent in an independent Kitty window. Choose **Run model only** for inference without an agent.
 4. For advanced router operation, use Server (4). Press Enter on a ready server model to open the agent window. Existing shortcuts remain available.
 5. Press x in Server to stop an owned session. External servers are never stopped by Llamancer.
@@ -155,7 +155,7 @@ See [Backend Manager](docs/BACKENDS.md) for verification, platform requirements 
 The default Dracula theme is joined by **Andromeda** (pastel violet, pink and cyan on a deep navy background), Catppuccin Mocha, Tokyo Night, Nord, Rosé Pine, Gruvbox Dark and High Contrast. Press uppercase `T` in Settings to cycle built-ins instantly, or edit the Theme field by name. Custom TOML themes remain supported. The header shows the active agent/project and theme; selected rows retain a textual marker and colored emphasis. Nerd Fonts are optional: in Settings, press uppercase `I` to cycle `auto → nerd → plain`, or edit the Icons field. Auto checks a compatible local graphical terminal and optional Fontconfig glyph coverage once at startup, then uses portable Unicode symbols if the result is uncertain (including SSH and terminal multiplexers). The terminal's configured font ultimately determines glyph rendering; force `nerd` when appropriate, or `plain` for a portable fallback. No font is downloaded, no terminal configuration is changed, and no new runtime dependency is required.
 
 ## Responsive interface
-The TUI uses accent-colored navigation, model and project status chips, contextual shortcut bars, an expandable model inspector, and adaptive side panels for discovery, transfers, backend management, preferences and guided setup. Wide terminals show extra context; narrower terminals retain the main list. Press Enter in Library for the full inspector and PageUp/PageDown to scroll. Live activity indicators run only while work is active; the idle event loop remains non-redrawing.
+The TUI uses accent-colored navigation, model and project status chips, contextual shortcut bars, an expandable model inspector, and adaptive side panels for discovery, transfers, backend management, preferences and guided setup. Wide terminals show extra context; narrower terminals retain the main list. Press j in Library for the full inspector and PageUp/PageDown to scroll. Live activity indicators run only while work is active; the idle event loop remains non-redrawing.
 
 ## Terminal accessibility
 
