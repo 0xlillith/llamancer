@@ -237,7 +237,7 @@ pub fn content(app: &App, body: Rect) -> (&'static str, String) {
                     } else {
                         "not installed"
                     },
-                    asset.total_size() as f64 / 1048576.0,
+                    asset.size as f64 / 1048576.0,
                     if selected { " | SELECTED" } else { "" }
                 )
             } else {

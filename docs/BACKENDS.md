@@ -17,9 +17,3 @@ python3 tests/backend_ui_live.py target/release/llamancer /path/to/small.gguf
 The initial manager deliberately ships a reviewed, pinned catalog, not an auto-updater. Multiple pinned release selection and rollback are supported with v/u or an optional CLI version argument. The c key or backend check command queries eight recent official releases without credentials or redirects, reports newer compatible builds with published SHA-256 metadata, and never changes the reviewed install catalog. Reproducible source builds are separate work. No automatic driver changes, system services, PATH modification or model downloads.
 
 Version management regression: fresh isolated b12721 and b12726 CPU installs, TUI switching and rollback, rejection of removal while a separately configured supervisor was running, and removal after stopping the supervisor passed on Andromeda. Run `python3 tests/backend_versions_live.py target/release/llamancer /path/to/small.gguf`. Both b12726 CPU and Vulkan archives also installed in the desktop managed store; Vulkan device discovery passed.
-
-## Experimental CUDA
-
-Reviewed x86_64 CUDA 12.8 and aarch64 CUDA 13.5 assets for both pinned releases include a separately verified official cudart companion archive. The installer stages both archives independently, rejects conflicting libraries, and publishes only after verification. A compatible NVIDIA driver is required; no driver or global toolkit is installed. Device probing must succeed before selection. NVIDIA hardware inference remains unverified.
-
-The x86_64 b12726 archive and companion (814,939,138 bytes combined) were installed in isolated XDG storage on AMD-only Andromeda. Archive checksums, staged executable version and installation receipts passed. The real device probe reported (none); selection must refuse CUDA. The isolated installation was removed. No NVIDIA driver or hardware inference test.

@@ -190,7 +190,7 @@ fn backend_cli(mut args: impl Iterator<Item = std::ffi::OsString>) -> io::Result
                         } else {
                             "not installed"
                         },
-                        asset.total_size()
+                        asset.size
                     );
                 } else {
                     println!("{}: unavailable on this architecture", kind.name());

@@ -36,8 +36,6 @@ fn suffix(kind: Kind, arch: &str) -> Option<&'static str> {
         ("x86_64", Kind::Cpu) => Some("x64"),
         ("x86_64", Kind::Vulkan) => Some("vulkan-x64"),
         ("x86_64", Kind::Rocm) => Some("rocm-10.0-x64"),
-        ("x86_64", Kind::Cuda) => Some("cuda-12.8-x64"),
-        ("aarch64", Kind::Cuda) => Some("cuda-13.5-arm64"),
         ("aarch64", Kind::Cpu) => Some("arm64"),
         ("aarch64", Kind::Vulkan) => Some("vulkan-arm64"),
         _ => None,
@@ -79,24 +77,6 @@ fn parse(bytes: &[u8], arch: &str) -> io::Result<String> {
                 .is_some_and(|d| d.len() == 64 && d.bytes().all(|c| c.is_ascii_hexdigit()))
             {
                 continue;
-            }
-            if kind == Kind::Cuda {
-                let companion = format!("cudart-{filename}");
-                let mut found = release.assets.iter().filter(|a| a.name == companion);
-                let Some(runtime) = found.next() else {
-                    continue;
-                };
-                if found.next().is_some()
-                    || runtime.size == 0
-                    || runtime.size > 8 * 1024 * 1024 * 1024
-                    || !runtime
-                        .digest
-                        .as_deref()
-                        .and_then(|d| d.strip_prefix("sha256:"))
-                        .is_some_and(|d| d.len() == 64 && d.bytes().all(|c| c.is_ascii_hexdigit()))
-                {
-                    continue;
-                }
             }
             kinds.push(kind.name());
         }

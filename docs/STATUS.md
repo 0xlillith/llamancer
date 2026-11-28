@@ -1,12 +1,12 @@
 # Development status
 
-The current Linux beta is v0.1.0-beta.6, not a production-ready claim.
+The current Linux release is v0.1.0. Supported GPU workflows use AMD ROCm or Vulkan.
 
 | Area | Implemented and validated | Outstanding release evidence |
 | --- | --- | --- |
 | Foundation | Native CI, bounded local state, high-contrast theme, actual mouse/keyboard modal tests, narrow confirmations and shutdown restoration | Broader terminal, assistive technology and theme testing |
 | Library | GGUF and shard inspection, profiles, search/import/hide, recoverable quarantine, Qwen2.5/Qwen3 measured KV validation | Qwen3.5 hybrid text inference and bounded CPU memory failure/recovery verified; broader hybrid architectures and GPU OOM remain |
-| Inference | Managed CPU/Vulkan/ROCm; experimental CUDA archive installation; official and pinned source builds, desktop text and GPU vision, lifecycle/authentication, systemd and terminal hangup cleanup | Actual NVIDIA inference; larger model/device combinations |
+| Inference | Managed CPU/Vulkan/ROCm; official and pinned source builds, desktop text and GPU vision, lifecycle/authentication, systemd and terminal hangup cleanup | Larger model/device combinations |
 | Hub | Public and authorized gated checksum/index verification, real multi-root pause/resume, pinned directory identity, scoped credential discovery, quarantine and restore | Broader private-repository configurations |
 | Agents | Real OMP/Pi read-tool execution, graphical normal exit, configured-default precedence, scoped authenticated OMP profile/daemon, custom Kitty launch | Broader versions, arbitrary project extensions and model-specific fidelity |
 | Release | Native x86_64/aarch64, Rust 1.88, Arch packaging, checksum archives and current RustSec audit | Broader hardware and distribution compatibility; registry publication |
@@ -19,7 +19,7 @@ The original pinned DavidAU IQ3_S bundle (83,617,879,456 bytes) was successfully
 
 ## Beta.5 scope
 
-Model-first workflow PRs #110–#115 cover reviewed sampling provenance, optional official Hub transport, pinned multipart downloads, fail-closed integrity audits and native workspace dialogs. The new model-workflow acceptance suite checks real small-model server parameters and interrupted Hub transfers on independent hosted runners. Flash Next large-model inference and host data-integrity investigation remain separate issues (#80 and #100); NVIDIA #66 remains experimental.
+Model-first workflow PRs #110–#115 cover reviewed sampling provenance, optional official Hub transport, pinned multipart downloads, fail-closed integrity audits and native workspace dialogs. The new model-workflow acceptance suite checks real small-model server parameters and interrupted Hub transfers on independent hosted runners. Flash Next large-model inference and host data-integrity findings are recorded in issues #80 and #100.
 
 ## Evidence
 
