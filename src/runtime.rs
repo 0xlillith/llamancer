@@ -1754,11 +1754,7 @@ impl Runtime {
                 _ => Err(io::Error::other("Unknown backend action")),
             }
         })?;
-        self.backend = Some((
-            job,
-            progress,
-            if action == 'i' { asset.total_size() } else { 0 },
-        ));
+        self.backend = Some((job, progress, if action == 'i' { asset.size } else { 0 }));
         self.app.backend_busy = true;
         self.app.backend_status = "Working…".into();
         Ok(())

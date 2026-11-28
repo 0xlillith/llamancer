@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.0 — 2026-11-28
+
+- First stable Linux release of the model-first Library, Discover, Downloads, inference profiles and independent Kitty/OMP workflow.
+- Managed GPU backend catalog, discovery and installation scoped to AMD ROCm and Vulkan. The CPU backend remains available.
+- Updated Linux and CachyOS installation instructions and refreshed the Kitty screenshot gallery.
+
 ## 0.1.0-beta.6 — 2026-11-28
 
 - Offline recovery of complete SHA-256-pinned staging bundles, requiring both buffered and independent direct reads before any staged part is published.

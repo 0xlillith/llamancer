@@ -1,6 +1,6 @@
 # Llamancer user guide
 
-This guide describes Llamancer v0.1.0-beta.6.
+This guide describes Llamancer v0.1.0.
 Llamancer runs on Linux and manages local GGUF inference through llama.cpp.
 It is not a model trainer or a GPU driver installer.
 
@@ -10,7 +10,6 @@ Run `llamancer` (or `cargo run --locked --release` from the source tree).
 Click tabs or use 1–5; press G for guided setup. Confirm a model directory.
 In Server or Settings, press B for Backend Manager. Select CPU, Vulkan or
 ROCm, install a reviewed backend if necessary, probe devices, then select it.
-CUDA is experimental and has not been verified on NVIDIA hardware.
 
 ![Library](../assets/screenshots/workflow-library.png)
 

@@ -8,7 +8,7 @@
 
 [![CI](https://github.com/selun3/llamancer/actions/workflows/ci.yml/badge.svg)](https://github.com/selun3/llamancer/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-bd93f9.svg)](LICENSE)
-[![Beta: 0.1.0-beta.6](https://img.shields.io/badge/beta-0.1.0--beta.6-bd93f9)](https://github.com/selun3/llamancer/releases/tag/v0.1.0-beta.6)
+[![Release: 0.1.0](https://img.shields.io/badge/release-0.1.0-bd93f9)](https://github.com/selun3/llamancer/releases/tag/v0.1.0)
 
 **A lightweight Rust TUI for llama.cpp model and inference management.**
 **OMP-first. Not OMP-only.**
@@ -19,7 +19,7 @@ Llamancer brings local GGUF model discovery, inference preferences, server contr
 
 ## Status
 
-Linux beta: 0.1.0-beta.6. See [the illustrated user guide](docs/USAGE.md) for the model-first workflow. Native Linux x86_64 and aarch64 CI, managed CPU text/vision inference, checksum-verified public and authorized gated Hub downloads, systemd lifecycle, Arch package installation, AMD Vulkan/ROCm text and vision inference, pinned CPU/Vulkan/ROCm source builds, real OMP/Pi tool use and graphical agent exit have passed their documented acceptance tests. Authenticated OMP uses an isolated temporary profile. No general model compatibility, comprehensive security audit or stable-release certification is implied. See [verified status](docs/STATUS.md), [desktop results](docs/DESKTOP-RESULTS.md) and [release review](docs/BETA-REVIEW.md).
+Llamancer 0.1.0 is the first stable Linux release. The supported GPU workflows are AMD ROCm and Vulkan. A CPU backend is available for diagnostics and CPU inference. See the [illustrated user guide](docs/USAGE.md) and [validation status](docs/STATUS.md) for tested hardware, models and limitations.
 
 | Workspace | Current functionality |
 | --- | --- |
@@ -31,7 +31,7 @@ Linux beta: 0.1.0-beta.6. See [the illustrated user guide](docs/USAGE.md) for th
 
 ## Screenshots
 
-Real terminal captures of beta.6 (Andromeda theme, optional Nerd Font icons). See the [illustrated user guide](docs/USAGE.md) for the full workflow.
+Real terminal captures of v0.1.0 on CachyOS with Kitty and KDE Wayland (Andromeda theme, optional Nerd Font icons). See the [illustrated user guide](docs/USAGE.md) for the full workflow.
 
 ![Library: indexed models and metadata](assets/screenshots/workflow-library.png)
 
@@ -45,16 +45,17 @@ Real terminal captures of beta.6 (Andromeda theme, optional Nerd Font icons). Se
 
 ## Quick start
 
-Requirements: Linux, a terminal, Rust 1.88 or newer to build from source, and a compatible llama-server for inference (installed through Backend Manager or separately). OMP or Pi is optional. Install external software from its official source; Llamancer does not install or upgrade it.
+Prebuilt archives need Linux and a compatible terminal. Source builds need Rust 1.88 or newer and a C toolchain. Inference needs a compatible llama-server from Backend Manager or a separate installation. AMD Vulkan needs a Vulkan loader and driver (for example RADV on CachyOS). ROCm needs the compatible HIP and math runtimes for the selected llama.cpp build. For agent sessions, install OMP and Kitty separately. See [Backend Manager](docs/BACKENDS.md) for driver checks.
 
 ```sh
 git clone https://github.com/selun3/llamancer.git
 cd llamancer
+git checkout v0.1.0
 cargo run --locked --release
 ```
 
 1. Press G for guided setup; confirm a model directory and use B to select a backend.
-2. Open Discover (2), type a query and press Enter. Open a repository, select a model variant and confirm its download destination once. All shards download automatically and the Library refreshes when complete. For existing models, open Library (1), inspect with Enter and edit the inference profile with p.
+2. Open Discover (2), type a query and press Enter. Open a repository, select a model variant and confirm its download destination once. All shards download automatically and the Library refreshes when complete. for existing models, open Library (1), inspect with j and edit the inference profile with p.
 3. Select a complete model in Library and press Enter twice (or double-click, then click **Run model + open coding agent**). Llamancer starts inference, waits for readiness and opens the configured agent in an independent Kitty window. Choose **Run model only** for inference without an agent.
 4. For advanced router operation, use Server (4). Press Enter on a ready server model to open the agent window. Existing shortcuts remain available.
 5. Press x in Server to stop an owned session. External servers are never stopped by Llamancer.
@@ -63,7 +64,7 @@ Keyless OMP launches use the documented LLAMA_CPP_BASE_URL runtime override; che
 
 ## Installation packages
 
-Beta packages are available for Linux x86_64 and aarch64 on the [GitHub release page](https://github.com/selun3/llamancer/releases/tag/v0.1.0-beta.6). Download the matching archive and its SHA-256 file, then run:
+Release packages are available for Linux x86_64 and aarch64 on the [GitHub release page](https://github.com/selun3/llamancer/releases/tag/v0.1.0). Download the matching archive and its SHA-256 file, then run:
 
 ```sh
 # Choose x86_64 or aarch64 to match uname -m
@@ -111,7 +112,7 @@ Llamancer can install official llama.cpp distributions itself. No Unsloth, packa
 
 | Action | Key |
 |---|---|
-| Select CPU, Vulkan, ROCm or CUDA | Up / Down |
+| Select CPU, Vulkan or ROCm | Up / Down |
 | Browse newer/older reviewed release (upgrade/rollback) | v / u |
 | Check recent upstream releases (read-only) | c |
 | Download and install the pinned official build | i, then y |
@@ -121,7 +122,7 @@ Llamancer can install official llama.cpp distributions itself. No Unsloth, packa
 | Remove an unused managed backend | d, then y |
 | Cancel a running operation / return | x / Esc |
 
-The reviewed catalog pins llama.cpp **b12721 and b12726**, with SHA-256 and archive sizes obtained from official GitHub release metadata. CPU and Vulkan are available on x86_64 and aarch64; ROCm is available on x86_64. Experimental managed CUDA pairs the official backend with its separately checksum-pinned runtime companion (CUDA 12.8 x86_64, CUDA 13.5 aarch64); an appropriate NVIDIA driver is still required. GPU inference on NVIDIA has not yet been hardware-validated. Installations live under `$XDG_DATA_HOME/llamancer/backends` (default `~/.local/share/llamancer/backends`). Downloads are verified before extraction and published as private versioned directories. GPU selection refuses backends that expose no compatible device. Vulkan, ROCm and CUDA still require compatible system GPU runtimes/drivers; no drivers are installed automatically.
+The reviewed catalog pins llama.cpp **b12721 and b12726**, with SHA-256 and archive sizes obtained from official GitHub release metadata. CPU and Vulkan are available on x86_64 and aarch64; ROCm is available on x86_64. Installations live under `$XDG_DATA_HOME/llamancer/backends` (default `~/.local/share/llamancer/backends`). Downloads are verified before extraction and published as private versioned directories. GPU selection refuses backends that expose no compatible device. Vulkan and ROCm require compatible system GPU runtimes/drivers; no drivers are installed automatically.
 
 Select a complete single-file GGUF of at most 512 MiB in Library before benchmarking. The quick test uses 128 prompt tokens, 32 generation tokens, two threads, two repetitions and eight GPU layers (zero for CPU). Stop all inference first. Confirm the selected GPU device in Settings, particularly on multi-GPU systems. Do not start unmanaged programs from Llamancer-owned backend directories during removal. External executable paths remain supported. Versions install side-by-side; select an installed version explicitly to switch or roll back. The reviewed catalog is updated through Llamancer releases; The read-only upstream check reports compatible newer builds with published SHA-256 metadata; unreviewed builds are not installable. Source compilation is a separate workflow.
 
@@ -154,7 +155,7 @@ See [Backend Manager](docs/BACKENDS.md) for verification, platform requirements 
 The default Dracula theme is joined by **Andromeda** (pastel violet, pink and cyan on a deep navy background), Catppuccin Mocha, Tokyo Night, Nord, Rosé Pine, Gruvbox Dark and High Contrast. Press uppercase `T` in Settings to cycle built-ins instantly, or edit the Theme field by name. Custom TOML themes remain supported. The header shows the active agent/project and theme; selected rows retain a textual marker and colored emphasis. Nerd Fonts are optional: in Settings, press uppercase `I` to cycle `auto → nerd → plain`, or edit the Icons field. Auto checks a compatible local graphical terminal and optional Fontconfig glyph coverage once at startup, then uses portable Unicode symbols if the result is uncertain (including SSH and terminal multiplexers). The terminal's configured font ultimately determines glyph rendering; force `nerd` when appropriate, or `plain` for a portable fallback. No font is downloaded, no terminal configuration is changed, and no new runtime dependency is required.
 
 ## Responsive interface
-The TUI uses accent-colored navigation, model and project status chips, contextual shortcut bars, an expandable model inspector, and adaptive side panels for discovery, transfers, backend management, preferences and guided setup. Wide terminals show extra context; narrower terminals retain the main list. Press Enter in Library for the full inspector and PageUp/PageDown to scroll. Live activity indicators run only while work is active; the idle event loop remains non-redrawing.
+The TUI uses accent-colored navigation, model and project status chips, contextual shortcut bars, an expandable model inspector, and adaptive side panels for discovery, transfers, backend management, preferences and guided setup. Wide terminals show extra context; narrower terminals retain the main list. Press j in Library for the full inspector and PageUp/PageDown to scroll. Live activity indicators run only while work is active; the idle event loop remains non-redrawing.
 
 ## Terminal accessibility
 

@@ -1,15 +1,30 @@
 # Development status
 
-The current Linux beta is v0.1.0-beta.6, not a production-ready claim.
+The current Linux release is v0.1.0. Supported GPU workflows use AMD ROCm or Vulkan.
 
 | Area | Implemented and validated | Outstanding release evidence |
 | --- | --- | --- |
 | Foundation | Native CI, bounded local state, high-contrast theme, actual mouse/keyboard modal tests, narrow confirmations and shutdown restoration | Broader terminal, assistive technology and theme testing |
 | Library | GGUF and shard inspection, profiles, search/import/hide, recoverable quarantine, Qwen2.5/Qwen3 measured KV validation | Qwen3.5 hybrid text inference and bounded CPU memory failure/recovery verified; broader hybrid architectures and GPU OOM remain |
-| Inference | Managed CPU/Vulkan/ROCm; experimental CUDA archive installation; official and pinned source builds, desktop text and GPU vision, lifecycle/authentication, systemd and terminal hangup cleanup | Actual NVIDIA inference; larger model/device combinations |
+| Inference | Managed CPU/Vulkan/ROCm; official and pinned source builds, desktop text and GPU vision, lifecycle/authentication, systemd and terminal hangup cleanup | Larger model/device combinations |
 | Hub | Public and authorized gated checksum/index verification, real multi-root pause/resume, pinned directory identity, scoped credential discovery, quarantine and restore | Broader private-repository configurations |
 | Agents | Real OMP/Pi read-tool execution, graphical normal exit, configured-default precedence, scoped authenticated OMP profile/daemon, custom Kitty launch | Broader versions, arbitrary project extensions and model-specific fidelity |
 | Release | Native x86_64/aarch64, Rust 1.88, Arch packaging, checksum archives and current RustSec audit | Broader hardware and distribution compatibility; registry publication |
+
+## v0.1.0 on Andromeda
+
+CachyOS x86_64, KDE Wayland, Kitty 0.51.1, OMP 19.2.0, 64 GB installed RAM and an AMD Radeon RX 9070 XT with 16 GB VRAM. Fresh isolated installs of the pinned b12726 Vulkan and ROCm backends both detected the GPU. The application passed authenticated single-model and router inference, explicit router load and unload, and loopback listener cleanup with Qwen3-0.6B. Both backends reported an actual 131072-token automatic context and generated output on the checksum-pinned Qwen3.5-0.8B hybrid fixture.
+
+The exact recovered DavidAU Qwen3.8 Flash Next IQ3_S revision `096fef2f967efa50c25529adda0c59637e2b4477` matched the pinned SHA-256 values and exact byte counts for both shards, via buffered and independent direct reads. In separate b12726 sessions at 8192 context, 12 GPU layers and one slot, the model generated a Python calculator on each backend. Each program passed eight independent cases in a temporary read-only, network-isolated execution environment.
+
+| Backend | Prompt tokens/s | Generation tokens/s | System VRAM used after generation |
+| --- | ---: | ---: | ---: |
+| ROCm | 43.9 | 11.0 | 14.9 GiB |
+| Vulkan (RADV) | 32.9 | 11.6 | 14.5 GiB |
+
+Each run processed 59 prompt tokens and produced 82 tokens. These measurements describe one short prompt on each backend. The large model stayed at 8192 context because memory headroom on the 16 GB GPU was limited. The 128K result applies to the smaller hybrid fixture.
+
+A separate real Kitty run with Qwen3-0.6B confirmed that OMP opens in its own window, that closing the agent releases agent-owned inference and that model-only inference stays active until stopped. The screenshot gallery used a temporary workspace, real public Hub discovery and a completed public download.
 
 ## Beta.6 scope
 
@@ -19,7 +34,7 @@ The original pinned DavidAU IQ3_S bundle (83,617,879,456 bytes) was successfully
 
 ## Beta.5 scope
 
-Model-first workflow PRs #110–#115 cover reviewed sampling provenance, optional official Hub transport, pinned multipart downloads, fail-closed integrity audits and native workspace dialogs. The new model-workflow acceptance suite checks real small-model server parameters and interrupted Hub transfers on independent hosted runners. Flash Next large-model inference and host data-integrity investigation remain separate issues (#80 and #100); NVIDIA #66 remains experimental.
+Model-first workflow PRs #110–#115 cover reviewed sampling provenance, optional official Hub transport, pinned multipart downloads, fail-closed integrity audits and native workspace dialogs. The new model-workflow acceptance suite checks real small-model server parameters and interrupted Hub transfers on independent hosted runners. Flash Next large-model inference and host data-integrity findings are recorded in issues #80 and #100.
 
 ## Evidence
 
@@ -35,5 +50,3 @@ Follow [open issues](https://github.com/selun3/llamancer/issues) and [release va
 See [desktop validation evidence](DESKTOP-RESULTS.md) for measured AMD backend, native CachyOS, systemd and Kitty results on the initial desktop hardware.
 
 The [beta review](BETA-REVIEW.md) records the current combined review and explicitly distinguishes verified scope from limitations.
-
-The beta.3 Library launch menu uses a separate Kitty window for keyless agent sessions and waits for inference readiness. See [desktop results](DESKTOP-RESULTS.md). CUDA hardware validation and the original large-file checksum discrepancy remain open.

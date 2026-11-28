@@ -1,11 +1,11 @@
 # Screenshot gallery — model-first workflow
 
 These seven images are rasterized from real Kitty terminal cell captures of the
-v0.1.0-beta.6 release candidate. The Andromeda theme and optional Nerd Font
+v0.1.0 build on Andromeda (CachyOS, KDE Wayland). The Andromeda theme and optional Nerd Font
 icons are enabled. Public GGUF fixtures, a public Hugging Face repository,
 temporary project folders and an isolated loopback inference session were used.
 No personal configuration, private project contents, or credentials are included.
-The version in the header is v0.1.0-beta.6. The Server capture shows a real bounded CPU inference session with a public Qwen3-0.6B fixture.
+The version in the header is v0.1.0. The Server capture shows a real bounded CPU inference session with a public Qwen3-0.6B fixture.
 
 | Screen | Capture |
 | --- | --- |
@@ -116,7 +116,7 @@ A real managed Vulkan router, with Qwen2.5 loaded and three other indexed models
 
 ## Refreshed terminal interface
 
-These six images are rasterizations of actual Kitty ANSI buffers from the updated application on Andromeda. The demo used temporary public model copies and synthetic workspace directories. Benchmark results are actual measurements; CUDA was not measured.
+These six images are rasterizations of actual Kitty ANSI buffers from the updated application on Andromeda. The demo used temporary public model copies and synthetic workspace directories. Benchmark results are actual measurements for the tested backends.
 
 ### Andromeda
 
