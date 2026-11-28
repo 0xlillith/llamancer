@@ -24,6 +24,8 @@ The exact recovered DavidAU Qwen3.8 Flash Next IQ3_S revision `096fef2f967efa50c
 
 Each run processed 59 prompt tokens and produced 82 tokens. These measurements describe one short prompt on each backend. The large model stayed at 8192 context because memory headroom on the 16 GB GPU was limited. The 128K result applies to the smaller hybrid fixture.
 
+An additional Flash Next ROCm run through OMP 19.2.0 wrote a calculator that passed all eight independent cases. OMP repeated the write and reached the 90-second deadline before reporting completion.
+
 A separate real Kitty run with Qwen3-0.6B confirmed that OMP opens in its own window, that closing the agent releases agent-owned inference and that model-only inference stays active until stopped. The screenshot gallery used a temporary workspace, real public Hub discovery and a completed public download.
 
 ## Beta.6 scope
